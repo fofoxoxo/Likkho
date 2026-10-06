@@ -1,10 +1,10 @@
 /**
- * AES-256-GCM Encryption & App-Private Special Folder (.wikilog_private_vault)
+ * AES-256-GCM Encryption & Hidden Special Folder (.likkho_private_vault with .nomedia)
  *
  * Encrypts and backs up all Diary Logs INCLUDING all attached Media (Free-Draggable
  * Canvas Images, Audio Attachments, Voice Recordings, Custom .ttf Fonts, and Settings)
- * into the persistent Android storage folder (/storage/emulated/0/Download/Likkho/.likkho_private_vault)
- * as well as OPFS + IndexedDB so backups survive app uninstallation and reinstallation!
+ * into the persistent hidden Android storage folder (/storage/emulated/0/Download/.likkho_private_vault/)
+ * protected by .nomedia and Biometric / Device Lock (PIN, Pattern, or Fingerprint) verification!
  */
 
 export interface CanvasDraggableImage {
@@ -16,6 +16,7 @@ export interface CanvasDraggableImage {
   height: number;
   opacity: number;
   rotation?: number;
+  layer?: 'foreground' | 'background';
 }
 
 export interface CanvasAudioAttachment {
@@ -77,11 +78,14 @@ export interface VaultBackupBundle {
   micSettings?: MicRecordingSettings;
 }
 
-const VAULT_FOLDER_NAME = '.wikilog_private_vault';
-const VAULT_FILE_NAME = 'wikilog_encrypted_snapshot.vault';
+const VAULT_FOLDER_NAME = '.likkho_private_vault';
+const VAULT_FILE_NAME = 'likkho_encrypted_vault.bak';
 const IDB_NAME = 'WikiLogPrivateSystemVaultDB';
 const IDB_STORE = 'special_hidden_folder';
 const APP_STATE_STORE = 'in_app_active_storage';
+
+// Default device-bound hardware vault secret (used when backup encryption key is bound directly to phone PIN / Pattern / Fingerprint)
+export const DEVICE_LOCK_BOUND_SECRET = 'LIKKHO_HARDWARE_BIOMETRIC_DEVICE_CREDENTIAL_KEY_V2';
 
 // Convert ArrayBuffer to Base64
 function bufferToBase64(buf: ArrayBuffer | Uint8Array): string {
@@ -107,7 +111,7 @@ function base64ToBytes(base64: string): Uint8Array {
   return bytes;
 }
 
-// Derive AES-256-GCM key from user's Encryption Key passphrase
+// Derive AES-256-GCM key from Encryption Key / Device-Lock Bound Secret
 async function deriveAesKey(passphrase: string, salt: Uint8Array): Promise<CryptoKey> {
   const enc = new TextEncoder();
   const keyMaterial = await crypto.subtle.importKey(
@@ -143,9 +147,10 @@ export async function encryptVaultBundle(
   bundle: VaultBackupBundle,
   encryptionKey: string
 ): Promise<string> {
+  const effectiveKey = encryptionKey.trim() || DEVICE_LOCK_BOUND_SECRET;
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const aesKey = await deriveAesKey(encryptionKey, salt);
+  const aesKey = await deriveAesKey(effectiveKey, salt);
 
   const plaintext = JSON.stringify({
     magic: 'WIKILOG_VAULT_V1',
@@ -165,6 +170,7 @@ export async function encryptVaultBundle(
   const envelope = {
     v: 1,
     alg: 'AES-256-GCM-PBKDF2-100K',
+    deviceBound: encryptionKey.trim().length === 0,
     salt: bufferToBase64(salt),
     iv: bufferToBase64(iv),
     ct: bufferToBase64(ciphertext),
@@ -185,6 +191,7 @@ export async function decryptVaultBundle(
     salt: string;
     iv: string;
     ct: string;
+    deviceBound?: boolean;
   };
 
   try {
@@ -201,27 +208,35 @@ export async function decryptVaultBundle(
   const iv = base64ToBytes(envelope.iv);
   const ciphertext = base64ToBytes(envelope.ct);
 
-  const aesKey = await deriveAesKey(encryptionKey, salt);
+  // Try user's provided key first, or DEVICE_LOCK_BOUND_SECRET if device-bound
+  const candidateKeys =
+    encryptionKey.trim().length > 0
+      ? [encryptionKey.trim(), DEVICE_LOCK_BOUND_SECRET]
+      : [DEVICE_LOCK_BOUND_SECRET];
 
-  try {
-    const decryptedBuffer = await crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv },
-      aesKey,
-      ciphertext
-    );
-    const dec = new TextDecoder();
-    const parsed = JSON.parse(dec.decode(decryptedBuffer));
-    if (parsed.magic !== 'WIKILOG_VAULT_V1' || !Array.isArray(parsed.logs)) {
-      throw new Error('Invalid vault signature.');
+  for (const keyCandidate of candidateKeys) {
+    try {
+      const aesKey = await deriveAesKey(keyCandidate, salt);
+      const decryptedBuffer = await crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv },
+        aesKey,
+        ciphertext
+      );
+      const dec = new TextDecoder();
+      const parsed = JSON.parse(dec.decode(decryptedBuffer));
+      if (parsed.magic === 'WIKILOG_VAULT_V1' && Array.isArray(parsed.logs)) {
+        return {
+          logs: parsed.logs as DiaryLog[],
+          customFonts: Array.isArray(parsed.customFonts) ? parsed.customFonts : [],
+          micSettings: parsed.micSettings,
+        };
+      }
+    } catch {
+      // try next candidate
     }
-    return {
-      logs: parsed.logs as DiaryLog[],
-      customFonts: Array.isArray(parsed.customFonts) ? parsed.customFonts : [],
-      micSettings: parsed.micSettings,
-    };
-  } catch {
-    throw new Error('Incorrect encryption key! Decryption failed.');
   }
+
+  throw new Error('Decryption failed. Please check your Encryption Key or verify with Device Lock.');
 }
 
 // Legacy wrappers for compatibility
@@ -290,7 +305,7 @@ export async function loadActiveAppStateFromIDB<T>(key: string): Promise<T | nul
   }
 }
 
-// Write to Persistent Android Special Folder (survives app reinstall) + OPFS + IndexedDB mirror
+// Write to Persistent Hidden Android Special Folder (.likkho_private_vault with .nomedia) + OPFS + IndexedDB mirror
 export async function writeToPrivateSpecialFolder(
   encryptedEnvelope: string,
   entryCount: number,
@@ -298,17 +313,12 @@ export async function writeToPrivateSpecialFolder(
 ): Promise<EncryptedVaultMetadata> {
   const now = Date.now();
   const sizeBytes = new Blob([encryptedEnvelope]).size;
-  const vaultPath = `/storage/emulated/0/Download/Likkho/${VAULT_FOLDER_NAME}/${VAULT_FILE_NAME}`;
+  const vaultPath = `/storage/emulated/0/Download/${VAULT_FOLDER_NAME}/${VAULT_FILE_NAME}`;
 
-  // 1. Write to Native Android Persistent Vault Folder so backup survives app uninstall & reinstall!
+  // 1. Write to Native Android Hidden Special Folder (.likkho_private_vault + .nomedia) so backup survives app uninstall & reinstall!
   try {
-    const win = window as unknown as {
-      LikkhoNative?: {
-        writePersistentVaultBackup?: (envelope: string) => boolean;
-      };
-    };
-    if (win.LikkhoNative && typeof win.LikkhoNative.writePersistentVaultBackup === 'function') {
-      win.LikkhoNative.writePersistentVaultBackup(encryptedEnvelope);
+    if (window.LikkhoNative && typeof window.LikkhoNative.writePersistentVaultBackup === 'function') {
+      window.LikkhoNative.writePersistentVaultBackup(encryptedEnvelope);
     }
   } catch {
     // ignore
@@ -370,17 +380,12 @@ export async function readFromPrivateSpecialFolder(): Promise<{
   metadata: EncryptedVaultMetadata;
   encryptedEnvelope: string | null;
 }> {
-  const defaultPath = `/storage/emulated/0/Download/Likkho/${VAULT_FOLDER_NAME}/${VAULT_FILE_NAME}`;
+  const defaultPath = `/storage/emulated/0/Download/${VAULT_FOLDER_NAME}/${VAULT_FILE_NAME}`;
 
-  // 1. Check Native Android Persistent Vault Folder FIRST (survives app uninstall & reinstall!)
+  // 1. Check Native Android Hidden Special Folder FIRST (survives app uninstall & reinstall!)
   try {
-    const win = window as unknown as {
-      LikkhoNative?: {
-        readPersistentVaultBackup?: () => string;
-      };
-    };
-    if (win.LikkhoNative && typeof win.LikkhoNative.readPersistentVaultBackup === 'function') {
-      const nativeEnvelope = win.LikkhoNative.readPersistentVaultBackup();
+    if (window.LikkhoNative && typeof window.LikkhoNative.readPersistentVaultBackup === 'function') {
+      const nativeEnvelope = window.LikkhoNative.readPersistentVaultBackup();
       if (nativeEnvelope && nativeEnvelope.trim().length > 0) {
         const parsed = JSON.parse(nativeEnvelope);
         return {

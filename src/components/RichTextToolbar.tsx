@@ -1108,9 +1108,99 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     onContentChange();
   };
 
-  // Start or Stop Microphone Voice Recording — Runs with Android Foreground Service so recording continues in background & when swiped from recents!
+  // Start or Stop Microphone Voice Recording — Uses Native Android MicForegroundService (AudioRecord + Overlay) so recording continues even if app is cleared from Recent Apps!
+  useEffect(() => {
+    window.__onLikkhoNativeMicFinished = async (base64Wav: string, durationSec: number) => {
+      if (recordTimerRef.current) {
+        window.clearInterval(recordTimerRef.current);
+        recordTimerRef.current = null;
+      }
+      setIsRecording(false);
+      if (!base64Wav) return;
+
+      try {
+        const binary = atob(base64Wav);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+          bytes[i] = binary.charCodeAt(i);
+        }
+        const wavBlob = new Blob([bytes], { type: 'audio/wav' });
+        const dataUrl = await finalizeRecordedAudioToDataUrl(wavBlob, micSettings);
+
+        const timeLabel = new Date().toLocaleTimeString('en-IN', {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: true,
+        });
+
+        onAddAudioAttachment({
+          id: `rec_${Date.now()}`,
+          name: `Voice Recording (${timeLabel}).${micSettings.format}`,
+          format: micSettings.format,
+          dataUrl,
+          durationSec: Math.max(1, durationSec || 1),
+          createdAt: Date.now(),
+        });
+        showBriefHint(`Saved voice recording (.${micSettings.format})`);
+      } catch {
+        // fallback direct wav data url
+        const timeLabel = new Date().toLocaleTimeString('en-IN', {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: true,
+        });
+        onAddAudioAttachment({
+          id: `rec_${Date.now()}`,
+          name: `Voice Recording (${timeLabel}).wav`,
+          format: 'wav',
+          dataUrl: `data:audio/wav;base64,${base64Wav}`,
+          durationSec: Math.max(1, durationSec || 1),
+          createdAt: Date.now(),
+        });
+        showBriefHint('Saved voice recording (.wav)');
+      }
+    };
+
+    // If user swiped app from Recent Apps while recording and reopened Likkho, re-attach to active native recording!
+    if (
+      window.LikkhoNative?.isNativeMicRecordingActive &&
+      window.LikkhoNative.isNativeMicRecordingActive()
+    ) {
+      setIsRecording(true);
+      const elapsed = window.LikkhoNative.getNativeMicRecordingSeconds
+        ? window.LikkhoNative.getNativeMicRecordingSeconds()
+        : 0;
+      setRecordingSeconds(elapsed);
+      if (recordTimerRef.current) window.clearInterval(recordTimerRef.current);
+      recordTimerRef.current = window.setInterval(() => {
+        if (
+          window.LikkhoNative?.isNativeMicRecordingActive &&
+          !window.LikkhoNative.isNativeMicRecordingActive()
+        ) {
+          if (recordTimerRef.current) {
+            window.clearInterval(recordTimerRef.current);
+            recordTimerRef.current = null;
+          }
+          setIsRecording(false);
+          return;
+        }
+        setRecordingSeconds((s) => s + 1);
+      }, 1000);
+    }
+
+    return () => {
+      window.__onLikkhoNativeMicFinished = undefined;
+    };
+  }, [micSettings, onAddAudioAttachment]);
+
   const handleToggleMicRecording = async () => {
     if (isRecording) {
+      if (window.LikkhoNative?.stopNativeMicRecording) {
+        window.LikkhoNative.stopNativeMicRecording();
+        return;
+      }
       if (window.LikkhoNative?.stopForegroundMicService) {
         window.LikkhoNative.stopForegroundMicService();
       }
@@ -1122,6 +1212,29 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
         recordTimerRef.current = null;
       }
       setIsRecording(false);
+      return;
+    }
+
+    // Use Native Android Foreground Service AudioRecord when running in APK (survives Recent Apps clear + shows floating overlay badge)
+    if (window.LikkhoNative && typeof window.LikkhoNative.startNativeMicRecording === 'function') {
+      window.LikkhoNative.startNativeMicRecording(micSettings.sampleRate, micSettings.bitRate);
+      setIsRecording(true);
+      setRecordingSeconds(0);
+      if (recordTimerRef.current) window.clearInterval(recordTimerRef.current);
+      recordTimerRef.current = window.setInterval(() => {
+        if (
+          window.LikkhoNative?.isNativeMicRecordingActive &&
+          !window.LikkhoNative.isNativeMicRecordingActive()
+        ) {
+          if (recordTimerRef.current) {
+            window.clearInterval(recordTimerRef.current);
+            recordTimerRef.current = null;
+          }
+          setIsRecording(false);
+          return;
+        }
+        setRecordingSeconds((s) => s + 1);
+      }, 1000);
       return;
     }
 
@@ -1145,7 +1258,6 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
       recordStreamRef.current = stream;
       recordedChunksRef.current = [];
 
-      // Start Android Foreground Service with PARTIAL_WAKE_LOCK so recording never stops in background or when swiped from recent apps
       if (window.LikkhoNative?.startForegroundMicService) {
         window.LikkhoNative.startForegroundMicService();
       }
@@ -1201,7 +1313,6 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
         showBriefHint(`Saved voice recording (.${micSettings.format})`);
       };
 
-      // Request data chunks every 1000ms so background recording buffers continuously
       recorder.start(1000);
       setIsRecording(true);
       setRecordingSeconds(0);

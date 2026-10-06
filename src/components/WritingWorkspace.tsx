@@ -11,6 +11,10 @@ import {
   Volume2,
   Move,
   RotateCw,
+  RotateCcw,
+  ZoomIn,
+  ZoomOut,
+  Layers,
 } from 'lucide-react';
 import {
   CanvasAudioAttachment,
@@ -292,7 +296,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
       const angle = (Math.atan2(pts[1].y - pts[0].y, pts[1].x - pts[0].x) * 180) / Math.PI;
 
       const scale = dist / pinchInitialRef.current.dist;
-      const nextWidth = Math.min(360, Math.max(60, Math.round(pinchInitialRef.current.startWidth * scale)));
+      const nextWidth = Math.min(420, Math.max(50, Math.round(pinchInitialRef.current.startWidth * scale)));
       const deltaAngle = angle - pinchInitialRef.current.angle;
       const nextRotation = Math.round(pinchInitialRef.current.startRotation + deltaAngle);
       const targetId = pinchInitialRef.current.id;
@@ -327,6 +331,8 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
       setActiveDragId(null);
     }
   };
+
+  const selectedCanvasImage = canvasImages.find((c) => c.id === selectedCanvasImgId) || null;
 
   return (
     <div className="flex h-full w-full flex-col bg-[var(--wiki-bg)] text-[var(--wiki-text)]">
@@ -443,7 +449,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
       {reminderAt && reminderAt > Date.now() && (
         <div className="flex items-center justify-between border-b border-[var(--wiki-hairline)] bg-[#3366cc]/10 px-4 py-1.5 text-[11px]">
           <span className="font-wiki-mono text-[var(--wiki-text)]">
-            🔔 Notification scheduled for{' '}
+            🔔{' '}
             <strong>
               {new Date(reminderAt).toLocaleString('en-IN', {
                 day: '2-digit',
@@ -461,6 +467,139 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
           >
             Edit
           </button>
+        </div>
+      )}
+
+      {/* Selected Canvas Image Control Bar: Resize (-/+), Rotate (Left/Right), Layer (Behind Text / Over Text), Delete */}
+      {selectedCanvasImage && (
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#3366cc] bg-[var(--wiki-surface)] px-3 py-1.5 text-xs z-30">
+          <div className="flex items-center gap-1.5 overflow-x-auto">
+            {/* Resize Buttons */}
+            <button
+              type="button"
+              onClick={() =>
+                setCanvasImages((prev) =>
+                  prev.map((c) =>
+                    c.id === selectedCanvasImage.id
+                      ? { ...c, width: Math.max(50, c.width - 20) }
+                      : c
+                  )
+                )
+              }
+              className="flex h-7 items-center gap-1 border border-[var(--wiki-border)] bg-[var(--wiki-bg)] px-2 font-semibold hover:border-[#3366cc]"
+              title="Smaller Size"
+            >
+              <ZoomOut className="h-3.5 w-3.5 text-[#3366cc]" />
+              <span>Size -</span>
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                setCanvasImages((prev) =>
+                  prev.map((c) =>
+                    c.id === selectedCanvasImage.id
+                      ? { ...c, width: Math.min(420, c.width + 20) }
+                      : c
+                  )
+                )
+              }
+              className="flex h-7 items-center gap-1 border border-[var(--wiki-border)] bg-[var(--wiki-bg)] px-2 font-semibold hover:border-[#3366cc]"
+              title="Larger Size"
+            >
+              <ZoomIn className="h-3.5 w-3.5 text-[#3366cc]" />
+              <span>Size +</span>
+            </button>
+
+            {/* Rotate Buttons */}
+            <button
+              type="button"
+              onClick={() =>
+                setCanvasImages((prev) =>
+                  prev.map((c) =>
+                    c.id === selectedCanvasImage.id
+                      ? { ...c, rotation: ((c.rotation || 0) - 15) % 360 }
+                      : c
+                  )
+                )
+              }
+              className="flex h-7 items-center gap-1 border border-[var(--wiki-border)] bg-[var(--wiki-bg)] px-2 font-semibold hover:border-[#3366cc]"
+              title="Rotate Left 15°"
+            >
+              <RotateCcw className="h-3.5 w-3.5 text-[#3366cc]" />
+              <span>-15°</span>
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                setCanvasImages((prev) =>
+                  prev.map((c) =>
+                    c.id === selectedCanvasImage.id
+                      ? { ...c, rotation: ((c.rotation || 0) + 15) % 360 }
+                      : c
+                  )
+                )
+              }
+              className="flex h-7 items-center gap-1 border border-[var(--wiki-border)] bg-[var(--wiki-bg)] px-2 font-semibold hover:border-[#3366cc]"
+              title="Rotate Right 15°"
+            >
+              <RotateCw className="h-3.5 w-3.5 text-[#3366cc]" />
+              <span>+15°</span>
+            </button>
+
+            {/* Background vs Foreground Toggle (Text covers image vs Image covers text) */}
+            <button
+              type="button"
+              onClick={() =>
+                setCanvasImages((prev) =>
+                  prev.map((c) =>
+                    c.id === selectedCanvasImage.id
+                      ? {
+                          ...c,
+                          layer:
+                            c.layer === 'background' ? 'foreground' : 'background',
+                        }
+                      : c
+                  )
+                )
+              }
+              className={`flex h-7 items-center gap-1 border px-2.5 font-semibold transition-colors ${
+                selectedCanvasImage.layer === 'background'
+                  ? 'border-[#3366cc] bg-[#3366cc] text-white'
+                  : 'border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-text)] hover:border-[#3366cc]'
+              }`}
+              title="Toggle whether image stays behind text or in front of text"
+            >
+              <Layers className="h-3.5 w-3.5" />
+              <span>
+                {selectedCanvasImage.layer === 'background'
+                  ? 'Behind Text (BG)'
+                  : 'In Front of Text (FG)'}
+              </span>
+            </button>
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => {
+                setCanvasImages((prev) =>
+                  prev.filter((c) => c.id !== selectedCanvasImage.id)
+                );
+                setSelectedCanvasImgId(null);
+              }}
+              className="flex h-7 items-center gap-1 border border-[#b32424]/40 bg-[#b32424]/10 px-2 font-semibold text-[#b32424]"
+              title="Remove image"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedCanvasImgId(null)}
+              className="flex h-7 items-center px-1.5 text-[var(--wiki-muted)]"
+            >
+              Done
+            </button>
+          </div>
         </div>
       )}
 
@@ -488,6 +627,12 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
         {/* Free-Draggable, Pinch-Resizable & Pinch-Rotatable Images Layer on Canvas */}
         {canvasImages.map((img) => {
           const isSelected = selectedCanvasImgId === img.id;
+          const isBehindText = img.layer === 'background';
+          // Text layer is z-10.
+          // If Behind Text (background): zIndex = 5 (when unselected) so text (z-10) covers image; when selected, zIndex = 25 so user can still drag/pinch it easily.
+          // If In Front of Text (foreground): zIndex = 20 so image covers text.
+          const computedZIndex = isSelected ? 25 : isBehindText ? 5 : 20;
+
           return (
             <div
               key={img.id}
@@ -506,7 +651,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
                 width: `${img.width}px`,
                 transform: `rotate(${img.rotation || 0}deg)`,
                 transformOrigin: 'center center',
-                zIndex: isSelected ? 25 : 20,
+                zIndex: computedZIndex,
               }}
               className={`group touch-none select-none cursor-move ${
                 isSelected ? 'ring-2 ring-[#3366cc]' : 'hover:ring-1 hover:ring-[var(--wiki-border)]'
@@ -529,7 +674,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
                       setCanvasImages((prev) =>
                         prev.map((c) =>
                           c.id === img.id
-                            ? { ...c, width: Math.max(60, c.width - 25) }
+                            ? { ...c, width: Math.max(50, c.width - 20) }
                             : c
                         )
                       );
@@ -546,7 +691,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
                       setCanvasImages((prev) =>
                         prev.map((c) =>
                           c.id === img.id
-                            ? { ...c, width: Math.min(360, c.width + 25) }
+                            ? { ...c, width: Math.min(420, c.width + 20) }
                             : c
                         )
                       );
@@ -563,15 +708,55 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
                       setCanvasImages((prev) =>
                         prev.map((c) =>
                           c.id === img.id
+                            ? { ...c, rotation: ((c.rotation || 0) - 15) % 360 }
+                            : c
+                        )
+                      );
+                    }}
+                    className="px-1 text-[11px] hover:text-[#6699ff]"
+                    title="Rotate Left 15°"
+                  >
+                    <RotateCcw className="h-3 w-3" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setCanvasImages((prev) =>
+                        prev.map((c) =>
+                          c.id === img.id
                             ? { ...c, rotation: ((c.rotation || 0) + 15) % 360 }
                             : c
                         )
                       );
                     }}
                     className="px-1 text-[11px] hover:text-[#6699ff]"
-                    title="Rotate 15°"
+                    title="Rotate Right 15°"
                   >
                     <RotateCw className="h-3 w-3" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setCanvasImages((prev) =>
+                        prev.map((c) =>
+                          c.id === img.id
+                            ? {
+                                ...c,
+                                layer:
+                                  c.layer === 'background'
+                                    ? 'foreground'
+                                    : 'background',
+                              }
+                            : c
+                        )
+                      );
+                    }}
+                    className="px-1 text-[10px] font-bold text-[#6699ff] hover:text-white"
+                    title="Toggle BG / FG"
+                  >
+                    {isBehindText ? 'BG' : 'FG'}
                   </button>
                   <button
                     type="button"
@@ -591,20 +776,41 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
           );
         })}
 
-        <div className="relative z-10 mx-auto max-w-3xl">
+        <div className="relative z-10 mx-auto max-w-3xl pointer-events-none">
           {/* Rich Text Editable Canvas */}
           <div
             ref={editorRef}
             contentEditable
             suppressContentEditableWarning
-            onClick={handleEditorClick}
+            onClick={(e) => {
+              // If user taps at a coordinate covered by a Background (Behind Text) image while not typing, allow selecting that background image via double tap or tap when empty
+              handleEditorClick(e);
+            }}
+            onDoubleClick={(e) => {
+              // Double-tap anywhere over a background image to select and move/resize it
+              const rect = canvasContainerRef.current?.getBoundingClientRect();
+              if (!rect) return;
+              const clickX = e.clientX - rect.left + (canvasContainerRef.current?.scrollLeft || 0);
+              const clickY = e.clientY - rect.top + (canvasContainerRef.current?.scrollTop || 0);
+              const hitBgImg = canvasImages.find(
+                (img) =>
+                  img.layer === 'background' &&
+                  clickX >= img.x &&
+                  clickX <= img.x + img.width &&
+                  clickY >= img.y &&
+                  clickY <= img.y + (img.height || img.width)
+              );
+              if (hitBgImg) {
+                setSelectedCanvasImgId(hitBgImg.id);
+              }
+            }}
             data-placeholder="Start writing..."
-            className="wiki-editor-content min-h-[55vh] pb-8"
+            className="wiki-editor-content min-h-[55vh] pb-8 pointer-events-auto"
           />
 
           {/* Attached Audio & Voice Recordings Section inside Canvas */}
           {audioAttachments.length > 0 && (
-            <div className="mt-4 space-y-2 border-t border-[var(--wiki-hairline)] pt-4 pb-10">
+            <div className="mt-4 space-y-2 border-t border-[var(--wiki-hairline)] pt-4 pb-10 pointer-events-auto">
               {audioAttachments.map((aud) => (
                 <div
                   key={aud.id}
@@ -691,6 +897,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
                 height,
                 opacity,
                 rotation: 0,
+                layer: 'foreground',
               },
             ]);
             setSelectedCanvasImgId(newId);

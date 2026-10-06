@@ -8,14 +8,23 @@ declare global {
       saveExportedFile?: (base64Data: string, filename: string, mimeType: string) => void;
       writePersistentVaultBackup?: (envelope: string) => boolean;
       readPersistentVaultBackup?: () => string;
+      pickVaultBackupFile?: () => void;
       authenticateBiometric?: () => void;
+      authenticateDeviceLockForBackup?: () => void;
       scheduleNativeReminder?: (logId: string, title: string, body: string, triggerAtMs: number) => void;
       cancelNativeReminder?: (logId: string) => void;
       startForegroundMicService?: () => void;
       stopForegroundMicService?: () => void;
+      startNativeMicRecording?: (sampleRate: number, bitRate: number) => void;
+      stopNativeMicRecording?: () => void;
+      isNativeMicRecordingActive?: () => boolean;
+      getNativeMicRecordingSeconds?: () => number;
     };
     __handleLikkhoAndroidBack?: () => string;
     __onLikkhoBiometricResult?: (success: boolean, message?: string) => void;
+    __onLikkhoDeviceLockBackupResult?: (success: boolean, message?: string) => void;
+    __onLikkhoNativeMicFinished?: (base64Wav: string, durationSec: number) => void;
+    __onLikkhoVaultFilePicked?: (envelope: string) => void;
   }
 }
 
