@@ -10,6 +10,7 @@ import {
   X,
   Volume2,
   Move,
+  RotateCw,
 } from 'lucide-react';
 import {
   CanvasAudioAttachment,
@@ -18,6 +19,7 @@ import {
   DiaryLog,
   MicRecordingSettings,
 } from '../utils/cryptoVault';
+import { scheduleAndroidNativeReminder } from '../utils/notificationSound';
 import { ImageCropperModal } from './ImageCropperModal';
 import { ReminderModal } from './ReminderModal';
 import { RichTextToolbar } from './RichTextToolbar';
@@ -51,6 +53,10 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
   micSettings,
   registerBackHandler,
 }) => {
+  const stableLogIdRef = useRef<string>(
+    initialLog?.id || `log_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
+  );
+
   const [heading, setHeading] = useState<string>(initialLog?.heading || '');
   const [pfpDataUrl, setPfpDataUrl] = useState<string | null>(
     initialLog?.pfpDataUrl || null
@@ -77,10 +83,18 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
   // Media Picker Image Studio state (22+ filters, crop, adjustments, transparency)
   const [rawMediaStudioImage, setRawMediaStudioImage] = useState<string | null>(null);
 
-  // Free-dragging state for canvas images
+  // Free-dragging + 2-finger pinch resize & rotate state for canvas images
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [dragOffset, setDragOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [selectedCanvasImgId, setSelectedCanvasImgId] = useState<string | null>(null);
+  const imgPointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const pinchInitialRef = useRef<{
+    id: string;
+    dist: number;
+    angle: number;
+    startWidth: number;
+    startRotation: number;
+  } | null>(null);
 
   const [showReminderModal, setShowReminderModal] = useState<boolean>(false);
   const [savedIndicator, setSavedIndicator] = useState<boolean>(false);
@@ -97,13 +111,17 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
   }, [initialLog]);
 
   // Build a DiaryLog object from current workspace state (including all media attachments)
-  const buildCurrentLogObject = (): {
+  const buildCurrentLogObject = (
+    overrideReminderAt?: number | null
+  ): {
     log: DiaryLog;
     hasAnyEntry: boolean;
   } => {
     const rawHtml = editorRef.current ? editorRef.current.innerHTML : '';
     const plainPreview = stripHtmlToSingleLine(rawHtml);
     const trimmedHeading = heading.trim();
+    const effectiveReminder =
+      overrideReminderAt !== undefined ? overrideReminderAt : reminderAt;
 
     const hasAnyEntry =
       trimmedHeading.length > 0 ||
@@ -111,7 +129,8 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
       pfpDataUrl !== null ||
       canvasBgDataUrl !== null ||
       canvasImages.length > 0 ||
-      audioAttachments.length > 0;
+      audioAttachments.length > 0 ||
+      effectiveReminder !== null;
 
     const now = Date.now();
     const dateObj = initialLog ? new Date(initialLog.createdAt) : new Date(now);
@@ -129,7 +148,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     });
 
     const log: DiaryLog = {
-      id: initialLog?.id || `log_${now}_${Math.random().toString(36).slice(2, 7)}`,
+      id: stableLogIdRef.current,
       heading: trimmedHeading || (plainPreview.slice(0, 40) || 'Untitled Entry'),
       contentHtml: rawHtml,
       plainPreview:
@@ -138,15 +157,17 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
           ? `Audio attachment (${audioAttachments[0].name})`
           : canvasImages.length > 0
           ? `Image attachment (${canvasImages.length})`
-          : 'No additional text content.'),
+          : 'Reminder scheduled.'),
       pfpDataUrl,
       createdAt: initialLog?.createdAt || now,
       updatedAt: now,
       dateStamp,
       timeStamp,
-      reminderAt,
+      reminderAt: effectiveReminder,
       reminderFired:
-        reminderAt && reminderAt > Date.now() ? false : initialLog?.reminderFired,
+        effectiveReminder && effectiveReminder > Date.now()
+          ? false
+          : initialLog?.reminderFired,
       pinned: initialLog?.pinned || false,
       canvasBgDataUrl,
       canvasBgOpacity,
@@ -161,6 +182,12 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
   const handleExitWorkspace = () => {
     const { log, hasAnyEntry } = buildCurrentLogObject();
     if (hasAnyEntry) {
+      scheduleAndroidNativeReminder(
+        log.id,
+        `Likkho: ${log.heading}`,
+        log.plainPreview,
+        log.reminderAt
+      );
       onSaveLog(log, true);
     } else {
       onExitWithoutSave();
@@ -179,6 +206,12 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     if (!hasAnyEntry) {
       return;
     }
+    scheduleAndroidNativeReminder(
+      log.id,
+      `Likkho: ${log.heading}`,
+      log.plainPreview,
+      log.reminderAt
+    );
     onSaveLog(log, false);
     setSavedIndicator(true);
     setTimeout(() => setSavedIndicator(false), 1800);
@@ -215,23 +248,66 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     }
   };
 
-  // Pointer drag handlers for Free-Draggable Canvas Images
+  // Pointer drag + 2-finger pinch resize & rotate handlers for Canvas Images
   const handleStartDragImage = (
     e: React.PointerEvent<HTMLDivElement>,
     img: CanvasDraggableImage
   ) => {
     e.stopPropagation();
-    setSelectedCanvasImgId(img.id);
-    setActiveDragId(img.id);
-    setDragOffset({
-      x: e.clientX - img.x,
-      y: e.clientY - img.y,
-    });
     e.currentTarget.setPointerCapture(e.pointerId);
+    setSelectedCanvasImgId(img.id);
+
+    imgPointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (imgPointersRef.current.size === 2) {
+      const pts = Array.from(imgPointersRef.current.values());
+      const dist = Math.max(10, Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y));
+      const angle = (Math.atan2(pts[1].y - pts[0].y, pts[1].x - pts[0].x) * 180) / Math.PI;
+      pinchInitialRef.current = {
+        id: img.id,
+        dist,
+        angle,
+        startWidth: img.width,
+        startRotation: img.rotation || 0,
+      };
+      setActiveDragId(null);
+    } else if (imgPointersRef.current.size === 1) {
+      setActiveDragId(img.id);
+      setDragOffset({
+        x: e.clientX - img.x,
+        y: e.clientY - img.y,
+      });
+    }
   };
 
   const handleMoveDragImage = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!activeDragId) return;
+    if (imgPointersRef.current.has(e.pointerId)) {
+      imgPointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    }
+
+    if (imgPointersRef.current.size === 2 && pinchInitialRef.current) {
+      e.stopPropagation();
+      const pts = Array.from(imgPointersRef.current.values());
+      const dist = Math.max(10, Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y));
+      const angle = (Math.atan2(pts[1].y - pts[0].y, pts[1].x - pts[0].x) * 180) / Math.PI;
+
+      const scale = dist / pinchInitialRef.current.dist;
+      const nextWidth = Math.min(360, Math.max(60, Math.round(pinchInitialRef.current.startWidth * scale)));
+      const deltaAngle = angle - pinchInitialRef.current.angle;
+      const nextRotation = Math.round(pinchInitialRef.current.startRotation + deltaAngle);
+      const targetId = pinchInitialRef.current.id;
+
+      setCanvasImages((prev) =>
+        prev.map((item) =>
+          item.id === targetId
+            ? { ...item, width: nextWidth, rotation: nextRotation }
+            : item
+        )
+      );
+      return;
+    }
+
+    if (!activeDragId || imgPointersRef.current.size !== 1) return;
     e.stopPropagation();
     const nextX = Math.max(0, e.clientX - dragOffset.x);
     const nextY = Math.max(0, e.clientY - dragOffset.y);
@@ -243,9 +319,13 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
   };
 
   const handleEndDragImage = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!activeDragId) return;
-    e.stopPropagation();
-    setActiveDragId(null);
+    imgPointersRef.current.delete(e.pointerId);
+    if (imgPointersRef.current.size < 2) {
+      pinchInitialRef.current = null;
+    }
+    if (imgPointersRef.current.size === 0) {
+      setActiveDragId(null);
+    }
   };
 
   return (
@@ -384,7 +464,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
         </div>
       )}
 
-      {/* Wikipedia Article Canvas with Custom Background Image, Free-Draggable Images & Audio Attachments */}
+      {/* Wikipedia Article Canvas with Custom Background Image, Free-Draggable/Pinchable Images & Audio Attachments */}
       <div
         ref={canvasContainerRef}
         className="relative flex-1 overflow-y-auto px-4 py-5 sm:px-8 cursor-text"
@@ -405,7 +485,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
           />
         )}
 
-        {/* Free-Draggable Images Layer on Canvas */}
+        {/* Free-Draggable, Pinch-Resizable & Pinch-Rotatable Images Layer on Canvas */}
         {canvasImages.map((img) => {
           const isSelected = selectedCanvasImgId === img.id;
           return (
@@ -414,6 +494,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
               onPointerDown={(e) => handleStartDragImage(e, img)}
               onPointerMove={handleMoveDragImage}
               onPointerUp={handleEndDragImage}
+              onPointerCancel={handleEndDragImage}
               onClick={(e) => {
                 e.stopPropagation();
                 setSelectedCanvasImgId(img.id);
@@ -423,6 +504,8 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
                 left: `${img.x}px`,
                 top: `${img.y}px`,
                 width: `${img.width}px`,
+                transform: `rotate(${img.rotation || 0}deg)`,
+                transformOrigin: 'center center',
                 zIndex: isSelected ? 25 : 20,
               }}
               className={`group touch-none select-none cursor-move ${
@@ -437,7 +520,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
                 className="block h-auto w-full pointer-events-none"
               />
               {isSelected && (
-                <div className="absolute -top-7 right-0 flex items-center gap-1 bg-[#101418]/90 px-1.5 py-0.5 text-white shadow-md">
+                <div className="absolute -top-8 right-0 flex items-center gap-1 bg-[#101418]/90 px-1.5 py-0.5 text-white shadow-md whitespace-nowrap">
                   <Move className="h-3 w-3 text-[#6699ff]" />
                   <button
                     type="button"
@@ -446,7 +529,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
                       setCanvasImages((prev) =>
                         prev.map((c) =>
                           c.id === img.id
-                            ? { ...c, width: Math.max(80, c.width - 25) }
+                            ? { ...c, width: Math.max(60, c.width - 25) }
                             : c
                         )
                       );
@@ -463,7 +546,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
                       setCanvasImages((prev) =>
                         prev.map((c) =>
                           c.id === img.id
-                            ? { ...c, width: Math.min(340, c.width + 25) }
+                            ? { ...c, width: Math.min(360, c.width + 25) }
                             : c
                         )
                       );
@@ -477,10 +560,27 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
+                      setCanvasImages((prev) =>
+                        prev.map((c) =>
+                          c.id === img.id
+                            ? { ...c, rotation: ((c.rotation || 0) + 15) % 360 }
+                            : c
+                        )
+                      );
+                    }}
+                    className="px-1 text-[11px] hover:text-[#6699ff]"
+                    title="Rotate 15°"
+                  >
+                    <RotateCw className="h-3 w-3" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
                       setCanvasImages((prev) => prev.filter((c) => c.id !== img.id));
                       setSelectedCanvasImgId(null);
                     }}
-                    className="ml-1 text-[#ff6b6b] hover:text-white"
+                    className="ml-0.5 text-[#ff6b6b] hover:text-white"
                     title="Remove image"
                   >
                     <X className="h-3.5 w-3.5" />
@@ -590,6 +690,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
                 width,
                 height,
                 opacity,
+                rotation: 0,
               },
             ]);
             setSelectedCanvasImgId(newId);
@@ -598,13 +699,23 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
         />
       )}
 
-      {/* Reminder Date & Time Modal */}
+      {/* Reminder Date & Time Modal — Immediately persists log & schedules Android OS Alarm */}
       {showReminderModal && (
         <ReminderModal
           currentReminder={reminderAt}
           heading={heading}
           onClose={() => setShowReminderModal(false)}
-          onSaveReminder={(ts) => setReminderAt(ts)}
+          onSaveReminder={(ts) => {
+            setReminderAt(ts);
+            const { log } = buildCurrentLogObject(ts);
+            scheduleAndroidNativeReminder(
+              log.id,
+              `Likkho: ${log.heading}`,
+              log.plainPreview,
+              ts
+            );
+            onSaveLog(log, false);
+          }}
         />
       )}
     </div>

@@ -6,8 +6,16 @@ declare global {
       requestFilesAndMediaPermission?: () => void;
       requestMicPermission?: () => void;
       saveExportedFile?: (base64Data: string, filename: string, mimeType: string) => void;
+      writePersistentVaultBackup?: (envelope: string) => boolean;
+      readPersistentVaultBackup?: () => string;
+      authenticateBiometric?: () => void;
+      scheduleNativeReminder?: (logId: string, title: string, body: string, triggerAtMs: number) => void;
+      cancelNativeReminder?: (logId: string) => void;
+      startForegroundMicService?: () => void;
+      stopForegroundMicService?: () => void;
     };
     __handleLikkhoAndroidBack?: () => string;
+    __onLikkhoBiometricResult?: (success: boolean, message?: string) => void;
   }
 }
 

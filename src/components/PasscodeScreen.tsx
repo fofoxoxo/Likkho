@@ -1,20 +1,82 @@
-import React, { useState } from 'react';
-import { Lock, Delete, ShieldAlert } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Lock, Delete, ShieldAlert, Fingerprint } from 'lucide-react';
 
 interface PasscodeScreenProps {
   savedPasscode: string;
+  biometricsEnabled: boolean;
   onUnlock: () => void;
 }
 
 export const PasscodeScreen: React.FC<PasscodeScreenProps> = ({
   savedPasscode,
+  biometricsEnabled,
   onUnlock,
 }) => {
   const [entered, setEntered] = useState<string>('');
   const [error, setError] = useState<boolean>(false);
+  const [bioMessage, setBioMessage] = useState<string>('');
+
+  const triggerBiometricUnlock = () => {
+    setBioMessage('');
+    if (window.LikkhoNative && typeof window.LikkhoNative.authenticateBiometric === 'function') {
+      window.LikkhoNative.authenticateBiometric();
+      return;
+    }
+
+    // Fallback WebAuthn platform authenticator check for browser preview
+    if (window.PublicKeyCredential) {
+      navigator.credentials
+        .create({
+          publicKey: {
+            challenge: crypto.getRandomValues(new Uint8Array(32)),
+            rp: { name: 'Likkho' },
+            user: {
+              id: crypto.getRandomValues(new Uint8Array(16)),
+              name: 'user@likkho',
+              displayName: 'Likkho User',
+            },
+            pubKeyCredParams: [{ alg: -7, type: 'public-key' }],
+            authenticatorSelection: {
+              authenticatorAttachment: 'platform',
+              userVerification: 'required',
+            },
+            timeout: 30000,
+          },
+        })
+        .then(() => {
+          onUnlock();
+        })
+        .catch(() => {
+          setBioMessage('Please use your PIN or Android Biometric sensor.');
+        });
+    }
+  };
+
+  useEffect(() => {
+    window.__onLikkhoBiometricResult = (success: boolean, message?: string) => {
+      if (success) {
+        onUnlock();
+      } else if (message) {
+        setBioMessage(message);
+      }
+    };
+
+    // Automatically prompt biometric authentication when lock screen opens if enabled
+    if (biometricsEnabled && window.LikkhoNative?.authenticateBiometric) {
+      const timer = window.setTimeout(() => {
+        window.LikkhoNative?.authenticateBiometric?.();
+      }, 250);
+      return () => window.clearTimeout(timer);
+    }
+
+    return () => {
+      window.__onLikkhoBiometricResult = undefined;
+    };
+  }, [biometricsEnabled, onUnlock]);
 
   const handleDigit = (digit: string) => {
     setError(false);
+    setBioMessage('');
     const next = (entered + digit).slice(0, savedPasscode.length || 4);
     setEntered(next);
 
@@ -47,7 +109,9 @@ export const PasscodeScreen: React.FC<PasscodeScreenProps> = ({
           Likkho Locked
         </h1>
         <p className="mt-1 text-xs text-[var(--wiki-muted)]">
-          Enter your passcode to unlock
+          {biometricsEnabled
+            ? 'Unlock with Biometrics or enter your passcode'
+            : 'Enter your passcode to unlock'}
         </p>
       </div>
 
@@ -76,6 +140,11 @@ export const PasscodeScreen: React.FC<PasscodeScreenProps> = ({
             Incorrect passcode
           </p>
         )}
+        {bioMessage && !error && (
+          <p className="mt-3 text-center text-xs text-[var(--wiki-muted)]">
+            {bioMessage}
+          </p>
+        )}
       </div>
 
       {/* Keypad */}
@@ -90,7 +159,21 @@ export const PasscodeScreen: React.FC<PasscodeScreenProps> = ({
             {digit}
           </button>
         ))}
-        <div />
+
+        {biometricsEnabled ? (
+          <button
+            type="button"
+            onClick={triggerBiometricUnlock}
+            className="flex h-14 items-center justify-center border border-[#3366cc] bg-[#3366cc]/10 text-[#3366cc] active:bg-[#3366cc] active:text-white transition-colors"
+            title="Unlock with Biometrics"
+            aria-label="Unlock with Biometrics"
+          >
+            <Fingerprint className="h-6 w-6" />
+          </button>
+        ) : (
+          <div />
+        )}
+
         <button
           type="button"
           onClick={() => handleDigit('0')}

@@ -1,7 +1,5 @@
 /**
- * Android-Style Notification & Web Audio Ringtone Synthesizer
- * Rings like a normal Android app notification with vibration and visual heads-up toast
- * even when system notifications are restricted inside an embedded preview.
+ * Android-Style Notification & Web Audio Ringtone Synthesizer + Native Android Alarm Notification Bridge
  */
 
 class NotificationSoundManager {
@@ -10,12 +8,13 @@ class NotificationSoundManager {
 
   public playAndroidNotificationRing() {
     try {
-      // Trigger Android vibration pattern if supported
       if (typeof navigator !== 'undefined' && navigator.vibrate) {
         navigator.vibrate([300, 150, 300, 150, 400]);
       }
 
-      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const AudioCtx =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       if (!this.ctx) {
         this.ctx = new AudioCtx();
       }
@@ -27,7 +26,6 @@ class NotificationSoundManager {
         if (!this.ctx) return;
         const now = this.ctx.currentTime;
 
-        // Classic pleasant 3-note Android notification chime (D6 -> F#6 -> A6)
         const freqs = [1174.66, 1479.98, 1760.0];
         freqs.forEach((freq, idx) => {
           if (!this.ctx) return;
@@ -49,7 +47,6 @@ class NotificationSoundManager {
       };
 
       playChimeSequence();
-      // Repeat chime 3 times like a real reminder alarm ring
       let count = 1;
       if (this.intervalId) window.clearInterval(this.intervalId);
       this.intervalId = window.setInterval(() => {
@@ -79,8 +76,43 @@ class NotificationSoundManager {
 
 export const soundManager = new NotificationSoundManager();
 
+export function scheduleAndroidNativeReminder(
+  logId: string,
+  title: string,
+  body: string,
+  triggerAtMs: number | null
+) {
+  try {
+    if (triggerAtMs && triggerAtMs > Date.now()) {
+      if (window.LikkhoNative?.scheduleNativeReminder) {
+        window.LikkhoNative.scheduleNativeReminder(logId, title, body, triggerAtMs);
+      }
+    } else {
+      if (window.LikkhoNative?.cancelNativeReminder) {
+        window.LikkhoNative.cancelNativeReminder(logId);
+      }
+    }
+  } catch {
+    // ignore
+  }
+}
+
 export async function triggerSystemNotification(title: string, body: string) {
   soundManager.playAndroidNotificationRing();
+
+  // Also post immediate native Android OS notification if in APK
+  try {
+    if (window.LikkhoNative?.scheduleNativeReminder) {
+      window.LikkhoNative.scheduleNativeReminder(
+        `now_${Date.now()}`,
+        title,
+        body,
+        Date.now() + 200
+      );
+    }
+  } catch {
+    // ignore
+  }
 
   if (typeof window !== 'undefined' && 'Notification' in window) {
     try {
@@ -89,7 +121,7 @@ export async function triggerSystemNotification(title: string, body: string) {
           body,
           icon: '/icon.svg',
           badge: '/icon.svg',
-          tag: 'wikilog-reminder',
+          tag: 'likkho-reminder',
         });
       } else if (Notification.permission !== 'denied') {
         const perm = await Notification.requestPermission();

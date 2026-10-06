@@ -3,7 +3,8 @@
  *
  * Encrypts and backs up all Diary Logs INCLUDING all attached Media (Free-Draggable
  * Canvas Images, Audio Attachments, Voice Recordings, Custom .ttf Fonts, and Settings)
- * into the app-private hidden vault folder.
+ * into the persistent Android storage folder (/storage/emulated/0/Download/Likkho/.likkho_private_vault)
+ * as well as OPFS + IndexedDB so backups survive app uninstallation and reinstallation!
  */
 
 export interface CanvasDraggableImage {
@@ -14,6 +15,7 @@ export interface CanvasDraggableImage {
   width: number;
   height: number;
   opacity: number;
+  rotation?: number;
 }
 
 export interface CanvasAudioAttachment {
@@ -235,7 +237,6 @@ export async function decryptLogsPayload(rawEnvelope: string, encryptionKey: str
 function openPrivateVaultDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     try {
-      // Open without hardcoded version first so it never fails with VersionError
       const req = indexedDB.open(IDB_NAME, 2);
       req.onupgradeneeded = () => {
         const db = req.result;
@@ -289,7 +290,7 @@ export async function loadActiveAppStateFromIDB<T>(key: string): Promise<T | nul
   }
 }
 
-// Write to App-Private Special Folder (OPFS + IndexedDB mirror)
+// Write to Persistent Android Special Folder (survives app reinstall) + OPFS + IndexedDB mirror
 export async function writeToPrivateSpecialFolder(
   encryptedEnvelope: string,
   entryCount: number,
@@ -297,8 +298,23 @@ export async function writeToPrivateSpecialFolder(
 ): Promise<EncryptedVaultMetadata> {
   const now = Date.now();
   const sizeBytes = new Blob([encryptedEnvelope]).size;
-  const vaultPath = `/data/user/0/com.likkho.diary/files/${VAULT_FOLDER_NAME}/${VAULT_FILE_NAME}`;
+  const vaultPath = `/storage/emulated/0/Download/Likkho/${VAULT_FOLDER_NAME}/${VAULT_FILE_NAME}`;
 
+  // 1. Write to Native Android Persistent Vault Folder so backup survives app uninstall & reinstall!
+  try {
+    const win = window as unknown as {
+      LikkhoNative?: {
+        writePersistentVaultBackup?: (envelope: string) => boolean;
+      };
+    };
+    if (win.LikkhoNative && typeof win.LikkhoNative.writePersistentVaultBackup === 'function') {
+      win.LikkhoNative.writePersistentVaultBackup(encryptedEnvelope);
+    }
+  } catch {
+    // ignore
+  }
+
+  // 2. Write to OPFS
   try {
     if (navigator.storage && typeof navigator.storage.getDirectory === 'function') {
       const rootDir = await navigator.storage.getDirectory();
@@ -316,24 +332,29 @@ export async function writeToPrivateSpecialFolder(
     // Fallback to IndexedDB private store if OPFS writable is restricted
   }
 
-  const db = await openPrivateVaultDB();
-  await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction(IDB_STORE, 'readwrite');
-    const store = tx.objectStore(IDB_STORE);
-    store.put(
-      {
-        encryptedEnvelope,
-        lastBackupAt: now,
-        entryCount,
-        vaultPath,
-        sizeBytes,
-        keyHintHash,
-      },
-      VAULT_FILE_NAME
-    );
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
+  // 3. Write to IndexedDB
+  try {
+    const db = await openPrivateVaultDB();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      const store = tx.objectStore(IDB_STORE);
+      store.put(
+        {
+          encryptedEnvelope,
+          lastBackupAt: now,
+          entryCount,
+          vaultPath,
+          sizeBytes,
+          keyHintHash,
+        },
+        VAULT_FILE_NAME
+      );
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch {
+    // ignore
+  }
 
   return {
     exists: true,
@@ -349,8 +370,37 @@ export async function readFromPrivateSpecialFolder(): Promise<{
   metadata: EncryptedVaultMetadata;
   encryptedEnvelope: string | null;
 }> {
-  const defaultPath = `/data/user/0/com.likkho.diary/files/${VAULT_FOLDER_NAME}/${VAULT_FILE_NAME}`;
+  const defaultPath = `/storage/emulated/0/Download/Likkho/${VAULT_FOLDER_NAME}/${VAULT_FILE_NAME}`;
 
+  // 1. Check Native Android Persistent Vault Folder FIRST (survives app uninstall & reinstall!)
+  try {
+    const win = window as unknown as {
+      LikkhoNative?: {
+        readPersistentVaultBackup?: () => string;
+      };
+    };
+    if (win.LikkhoNative && typeof win.LikkhoNative.readPersistentVaultBackup === 'function') {
+      const nativeEnvelope = win.LikkhoNative.readPersistentVaultBackup();
+      if (nativeEnvelope && nativeEnvelope.trim().length > 0) {
+        const parsed = JSON.parse(nativeEnvelope);
+        return {
+          metadata: {
+            exists: true,
+            lastBackupAt: parsed.createdAt || Date.now(),
+            entryCount: parsed.count || 0,
+            vaultPath: defaultPath,
+            sizeBytes: new Blob([nativeEnvelope]).size,
+            keyHintHash: null,
+          },
+          encryptedEnvelope: nativeEnvelope,
+        };
+      }
+    }
+  } catch {
+    // Continue to IndexedDB check
+  }
+
+  // 2. Check IndexedDB
   try {
     const db = await openPrivateVaultDB();
     const record = await new Promise<{
@@ -385,6 +435,7 @@ export async function readFromPrivateSpecialFolder(): Promise<{
     // Continue to OPFS check
   }
 
+  // 3. Check OPFS
   try {
     if (navigator.storage && typeof navigator.storage.getDirectory === 'function') {
       const rootDir = await navigator.storage.getDirectory();

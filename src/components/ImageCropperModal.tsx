@@ -19,6 +19,11 @@ export const ImageCropperModal: React.FC<ImageCropperModalProps> = ({
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [dragStart, setDragStart] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
 
+  // Multi-touch pinch-to-zoom tracking
+  const activePointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const pinchStartDistRef = useRef<number | null>(null);
+  const pinchStartZoomRef = useRef<number>(1);
+
   const CROP_SIZE = 280;
 
   useEffect(() => {
@@ -40,11 +45,9 @@ export const ImageCropperModal: React.FC<ImageCropperModalProps> = ({
 
     ctx.clearRect(0, 0, CROP_SIZE, CROP_SIZE);
 
-    // Fill neutral background
     ctx.fillStyle = '#101418';
     ctx.fillRect(0, 0, CROP_SIZE, CROP_SIZE);
 
-    // Calculate base scale to cover 1:1 square
     const minDim = Math.min(imgElement.width, imgElement.height);
     const baseScale = CROP_SIZE / minDim;
     const finalScale = baseScale * zoom;
@@ -57,7 +60,6 @@ export const ImageCropperModal: React.FC<ImageCropperModalProps> = ({
 
     ctx.drawImage(imgElement, drawX, drawY, drawWidth, drawHeight);
 
-    // Draw subtle 1:1 rule-of-thirds Wikipedia crop grid overlay
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.32)';
     ctx.lineWidth = 1;
     const third = CROP_SIZE / 3;
@@ -74,26 +76,60 @@ export const ImageCropperModal: React.FC<ImageCropperModalProps> = ({
   }, [imgElement, zoom, offset]);
 
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    setIsDragging(true);
-    setDragStart({ x: e.clientX - offset.x, y: e.clientY - offset.y });
+    e.currentTarget.setPointerCapture(e.pointerId);
+    activePointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (activePointersRef.current.size === 2) {
+      const pts = Array.from(activePointersRef.current.values());
+      const dist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+      pinchStartDistRef.current = Math.max(10, dist);
+      pinchStartZoomRef.current = zoom;
+      setIsDragging(false);
+    } else if (activePointersRef.current.size === 1) {
+      setIsDragging(true);
+      setDragStart({ x: e.clientX - offset.x, y: e.clientY - offset.y });
+    }
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!isDragging) return;
+    if (activePointersRef.current.has(e.pointerId)) {
+      activePointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    }
+
+    if (activePointersRef.current.size === 2 && pinchStartDistRef.current) {
+      const pts = Array.from(activePointersRef.current.values());
+      const dist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+      const scaleFactor = dist / pinchStartDistRef.current;
+      const nextZoom = Math.min(4.0, Math.max(1.0, +(pinchStartZoomRef.current * scaleFactor).toFixed(2)));
+      setZoom(nextZoom);
+      return;
+    }
+
+    if (!isDragging || activePointersRef.current.size !== 1) return;
     setOffset({
       x: e.clientX - dragStart.x,
       y: e.clientY - dragStart.y,
     });
   };
 
-  const handlePointerUp = () => {
-    setIsDragging(false);
+  const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    activePointersRef.current.delete(e.pointerId);
+    if (activePointersRef.current.size < 2) {
+      pinchStartDistRef.current = null;
+    }
+    if (activePointersRef.current.size === 1) {
+      const remaining = Array.from(activePointersRef.current.values())[0];
+      setIsDragging(true);
+      setDragStart({ x: remaining.x - offset.x, y: remaining.y - offset.y });
+    } else if (activePointersRef.current.size === 0) {
+      setIsDragging(false);
+    }
   };
 
   const handleConfirmCrop = () => {
     if (!imgElement) return;
     const outCanvas = document.createElement('canvas');
-    const OUTPUT_RES = 400; // crisp 400x400 1:1 square PFP
+    const OUTPUT_RES = 400;
     outCanvas.width = OUTPUT_RES;
     outCanvas.height = OUTPUT_RES;
     const outCtx = outCanvas.getContext('2d');
@@ -127,7 +163,7 @@ export const ImageCropperModal: React.FC<ImageCropperModalProps> = ({
               Crop Image (1:1 Square)
             </h3>
             <p className="text-xs text-[var(--wiki-muted)]">
-              Drag to reposition and adjust zoom before setting entry PFP
+              Pinch with two fingers to zoom or drag to reposition
             </p>
           </div>
           <button
@@ -150,7 +186,7 @@ export const ImageCropperModal: React.FC<ImageCropperModalProps> = ({
               onPointerDown={handlePointerDown}
               onPointerMove={handlePointerMove}
               onPointerUp={handlePointerUp}
-              onPointerLeave={handlePointerUp}
+              onPointerCancel={handlePointerUp}
               className="cursor-move touch-none block"
             />
           </div>
@@ -168,7 +204,7 @@ export const ImageCropperModal: React.FC<ImageCropperModalProps> = ({
             <input
               type="range"
               min={1}
-              max={3.5}
+              max={4}
               step={0.05}
               value={zoom}
               onChange={(e) => setZoom(parseFloat(e.target.value))}
@@ -176,7 +212,7 @@ export const ImageCropperModal: React.FC<ImageCropperModalProps> = ({
             />
             <button
               type="button"
-              onClick={() => setZoom((z) => Math.min(3.5, +(z + 0.15).toFixed(2)))}
+              onClick={() => setZoom((z) => Math.min(4, +(z + 0.15).toFixed(2)))}
               className="flex h-9 w-9 items-center justify-center border border-[var(--wiki-border)] bg-[var(--wiki-surface)]"
               aria-label="Zoom in"
             >

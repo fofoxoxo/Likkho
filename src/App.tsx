@@ -14,6 +14,7 @@ import {
   FileDown,
   Search,
   CheckCircle2,
+  AlertTriangle,
 } from 'lucide-react';
 import {
   CustomFontItem,
@@ -41,6 +42,7 @@ type PageRoute = 'home' | 'workspace' | 'settings' | 'backup';
 const STORAGE_LOGS_KEY = 'wikilog_in_app_logs_v1';
 const STORAGE_DARK_KEY = 'wikilog_dark_theme_v1';
 const STORAGE_PIN_KEY = 'wikilog_passcode_v1';
+const STORAGE_BIO_KEY = 'wikilog_biometrics_enabled_v1';
 const STORAGE_ENC_HASH_KEY = 'wikilog_encryption_key_hash_v1';
 const STORAGE_MIC_SETTINGS_KEY = 'wikilog_mic_settings_v1';
 const IDB_LOGS_KEY = 'active_diary_logs_with_media';
@@ -135,6 +137,14 @@ export default function App() {
     }
   });
 
+  const [biometricsEnabled, setBiometricsEnabled] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(STORAGE_BIO_KEY) === 'true';
+    } catch {
+      return false;
+    }
+  });
+
   const [savedKeyHash, setSavedKeyHash] = useState<string | null>(() => {
     try {
       return localStorage.getItem(STORAGE_ENC_HASH_KEY) || null;
@@ -160,10 +170,11 @@ export default function App() {
   const [isSearchOpen, setIsSearchOpen] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>('');
 
-  // 3-dots menu & Export modal states
+  // 3-dots menu, Export modal & Delete Confirmation Modal states
   const [openMenuLogId, setOpenMenuLogId] = useState<string | null>(null);
   const [exportingLog, setExportingLog] = useState<DiaryLog | null>(null);
   const [exportStatusBanner, setExportStatusBanner] = useState<string | null>(null);
+  const [pendingDeleteLog, setPendingDeleteLog] = useState<DiaryLog | null>(null);
 
   // Active ringing Android notification alert banner
   const [ringingAlert, setRingingAlert] = useState<{
@@ -271,8 +282,11 @@ export default function App() {
   // Sync browser/Android Hardware Back Button:
   // "User agar App me homepage ke alawa kisi aur page par ho to back karne par pahle homepage par aayega fir back hoga"
   useEffect(() => {
-    // Register native Android hardware back handler called from MainActivity.java OnBackPressedCallback
     window.__handleLikkhoAndroidBack = () => {
+      if (pendingDeleteLog) {
+        setPendingDeleteLog(null);
+        return 'HANDLED';
+      }
       if (exportingLog) {
         setExportingLog(null);
         return 'HANDLED';
@@ -295,6 +309,11 @@ export default function App() {
     };
 
     const handlePopState = () => {
+      if (pendingDeleteLog) {
+        setPendingDeleteLog(null);
+        window.history.pushState({ page: route }, '');
+        return;
+      }
       if (exportingLog) {
         setExportingLog(null);
         window.history.pushState({ page: route }, '');
@@ -317,7 +336,7 @@ export default function App() {
     return () => {
       window.removeEventListener('popstate', handlePopState);
     };
-  }, [route, isSearchOpen, exportingLog]);
+  }, [route, isSearchOpen, exportingLog, pendingDeleteLog]);
 
   const navigateTo = (target: PageRoute, logToEdit: DiaryLog | null = null) => {
     setOpenMenuLogId(null);
@@ -326,7 +345,6 @@ export default function App() {
       setEditingLog(null);
       window.history.replaceState({ page: 'home' }, '');
     } else {
-      // Push or replace state so that pressing Back from ANY non-home page (even backup -> home) goes directly to home first
       if (route === 'home') {
         window.history.pushState({ page: target }, '');
       } else {
@@ -396,9 +414,23 @@ export default function App() {
     }
   };
 
-  const handleDeleteLog = (id: string) => {
-    setLogs((prev) => prev.filter((l) => l.id !== id));
+  // Request confirmation popup before deleting ANY entry
+  const requestDeleteLogConfirmation = (id: string) => {
     setOpenMenuLogId(null);
+    const target = logs.find((l) => l.id === id) || editingLog;
+    if (target) {
+      setPendingDeleteLog(target);
+    }
+  };
+
+  const confirmDeleteLog = () => {
+    if (!pendingDeleteLog) return;
+    const id = pendingDeleteLog.id;
+    if (window.LikkhoNative?.cancelNativeReminder) {
+      window.LikkhoNative.cancelNativeReminder(id);
+    }
+    setLogs((prev) => prev.filter((l) => l.id !== id));
+    setPendingDeleteLog(null);
     if (route !== 'home') {
       navigateTo('home');
     }
@@ -500,13 +532,14 @@ export default function App() {
       {isLocked && savedPasscode ? (
         <PasscodeScreen
           savedPasscode={savedPasscode}
+          biometricsEnabled={biometricsEnabled}
           onUnlock={() => setIsLocked(false)}
         />
       ) : route === 'workspace' ? (
         <WritingWorkspace
           initialLog={editingLog}
           onSaveLog={handleUpsertLog}
-          onDeleteLog={handleDeleteLog}
+          onDeleteLog={requestDeleteLogConfirmation}
           onExitWithoutSave={() => navigateTo('home')}
           customFonts={customFonts}
           onAddCustomFont={(font) => setCustomFonts((prev) => [...prev, font])}
@@ -527,6 +560,15 @@ export default function App() {
             } else {
               localStorage.removeItem(STORAGE_PIN_KEY);
               setIsLocked(false);
+            }
+          }}
+          biometricsEnabled={biometricsEnabled}
+          onToggleBiometrics={(enabled) => {
+            setBiometricsEnabled(enabled);
+            try {
+              localStorage.setItem(STORAGE_BIO_KEY, String(enabled));
+            } catch {
+              // ignore
             }
           }}
           onOpenBackupRestore={() => navigateTo('backup')}
@@ -749,7 +791,7 @@ export default function App() {
 
                           <button
                             type="button"
-                            onClick={() => handleDeleteLog(log.id)}
+                            onClick={() => requestDeleteLogConfirmation(log.id)}
                             className="flex w-full items-center gap-2.5 border-t border-[var(--wiki-hairline)] px-3.5 py-2.5 text-left text-xs font-medium text-[#b32424] hover:bg-[var(--wiki-surface)]"
                           >
                             <Trash2 className="h-4 w-4" />
@@ -774,6 +816,60 @@ export default function App() {
             <Plus className="h-5 w-5" />
             <span className="font-wiki-serif text-base tracking-wide">Create</span>
           </button>
+        </div>
+      )}
+
+      {/* Delete Entry Confirmation Pop-Up Modal */}
+      {pendingDeleteLog && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs"
+          onClick={() => setPendingDeleteLog(null)}
+        >
+          <div
+            className="w-full max-w-sm border border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-text)] shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-[var(--wiki-hairline)] bg-[var(--wiki-surface)] px-4 py-3">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="h-4 w-4 text-[#b32424]" />
+                <h3 className="font-wiki-serif text-lg font-bold">
+                  Delete Entry?
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPendingDeleteLog(null)}
+                className="flex h-8 w-8 items-center justify-center text-[var(--wiki-muted)] hover:text-[var(--wiki-text)]"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="p-4">
+              <p className="text-xs leading-relaxed text-[var(--wiki-text)]">
+                Are you sure you want to permanently delete{' '}
+                <strong>"{pendingDeleteLog.heading}"</strong>? This action cannot be undone.
+              </p>
+
+              <div className="mt-4 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPendingDeleteLog(null)}
+                  className="h-10 border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-4 text-xs font-medium text-[var(--wiki-text)]"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmDeleteLog}
+                  className="flex h-10 items-center gap-1.5 bg-[#b32424] px-4 text-xs font-semibold text-white hover:bg-[#941d1d]"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  Delete
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 

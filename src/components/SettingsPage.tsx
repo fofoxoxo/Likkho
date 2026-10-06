@@ -9,6 +9,7 @@ import {
   Check,
   Trash2,
   Mic,
+  Fingerprint,
 } from 'lucide-react';
 import {
   AudioFormatOption,
@@ -20,6 +21,8 @@ interface SettingsPageProps {
   onToggleDarkMode: () => void;
   savedPasscode: string | null;
   onUpdatePasscode: (newPasscode: string | null) => void;
+  biometricsEnabled: boolean;
+  onToggleBiometrics: (enabled: boolean) => void;
   onOpenBackupRestore: () => void;
   onBackToHome: () => void;
   micSettings: MicRecordingSettings;
@@ -57,6 +60,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   onToggleDarkMode,
   savedPasscode,
   onUpdatePasscode,
+  biometricsEnabled,
+  onToggleBiometrics,
   onOpenBackupRestore,
   onBackToHome,
   micSettings,
@@ -65,7 +70,14 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const [showPasscodeModal, setShowPasscodeModal] = useState<boolean>(false);
   const [pinInput, setPinInput] = useState<string>(savedPasscode || '');
   const [pinError, setPinError] = useState<string>('');
-  const [pinSavedToast, setPinSavedToast] = useState<boolean>(false);
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
+
+  const showToast = (msg: string) => {
+    setToastMsg(msg);
+    setTimeout(() => {
+      setToastMsg((prev) => (prev === msg ? null : prev));
+    }, 2600);
+  };
 
   const handleSavePin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -76,8 +88,39 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     }
     onUpdatePasscode(cleaned);
     setShowPasscodeModal(false);
-    setPinSavedToast(true);
-    setTimeout(() => setPinSavedToast(false), 2500);
+    showToast('Passcode saved.');
+  };
+
+  const handleBiometricToggleClick = () => {
+    if (!savedPasscode) {
+      setPinInput('');
+      setPinError('Please set a Passcode first to enable Biometric unlock.');
+      setShowPasscodeModal(true);
+      return;
+    }
+
+    const nextState = !biometricsEnabled;
+    if (nextState) {
+      // Request Android biometric permission / verification when enabling
+      if (window.LikkhoNative && typeof window.LikkhoNative.authenticateBiometric === 'function') {
+        window.__onLikkhoBiometricResult = (success: boolean) => {
+          if (success) {
+            onToggleBiometrics(true);
+            showToast('Biometric unlock enabled.');
+          } else {
+            showToast('Biometric verification cancelled.');
+          }
+          window.__onLikkhoBiometricResult = undefined;
+        };
+        window.LikkhoNative.authenticateBiometric();
+        return;
+      }
+      onToggleBiometrics(true);
+      showToast('Biometric unlock enabled.');
+    } else {
+      onToggleBiometrics(false);
+      showToast('Biometric unlock disabled.');
+    }
   };
 
   return (
@@ -101,10 +144,10 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
       {/* Main Settings List */}
       <div className="flex-1 overflow-y-auto px-4 py-5 space-y-5">
-        {pinSavedToast && (
+        {toastMsg && (
           <div className="flex items-center gap-2 border border-[#14866d] bg-[#14866d]/10 px-3 py-2.5 text-xs font-medium text-[var(--wiki-text)]">
             <Check className="h-4 w-4 text-[#14866d]" />
-            Passcode saved.
+            {toastMsg}
           </div>
         )}
 
@@ -170,7 +213,40 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             <ChevronRight className="h-5 w-5 text-[var(--wiki-muted)]" />
           </button>
 
-          {/* 3. Backup & Restore */}
+          {/* 3. Toggle Biometric Unlock */}
+          <button
+            type="button"
+            onClick={handleBiometricToggleClick}
+            className="flex w-full items-center justify-between px-4 py-4 text-left hover:bg-[var(--wiki-surface)] transition-colors"
+          >
+            <div className="flex items-center gap-3.5">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center border border-[var(--wiki-border)] bg-[var(--wiki-surface)]">
+                <Fingerprint className="h-5 w-5 text-[#3366cc]" />
+              </div>
+              <div>
+                <div className="font-wiki-serif text-base font-bold">
+                  Biometric Unlock
+                </div>
+                <div className="text-xs text-[var(--wiki-muted)]">
+                  {biometricsEnabled
+                    ? 'Fingerprint / Face unlock enabled'
+                    : 'Use device biometrics with passcode'}
+                </div>
+              </div>
+            </div>
+
+            <div
+              className={`flex h-6 w-11 shrink-0 items-center rounded-full border p-0.5 transition-colors ${
+                biometricsEnabled
+                  ? 'border-[#3366cc] bg-[#3366cc] justify-end'
+                  : 'border-[var(--wiki-border)] bg-[var(--wiki-surface)] justify-start'
+              }`}
+            >
+              <span className="h-4 w-4 rounded-full bg-white shadow-2xs" />
+            </div>
+          </button>
+
+          {/* 4. Backup & Restore */}
           <button
             type="button"
             onClick={onOpenBackupRestore}
@@ -193,7 +269,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           </button>
         </section>
 
-        {/* 4. Microphone Recording Settings (Format, Sample Rate, Bitrate) */}
+        {/* 5. Microphone Recording Settings (Format, Sample Rate, Bitrate) */}
         <section className="border border-[var(--wiki-border)] bg-[var(--wiki-bg)] p-4 space-y-4">
           <div className="flex items-center gap-2.5 border-b border-[var(--wiki-hairline)] pb-3">
             <div className="flex h-9 w-9 shrink-0 items-center justify-center border border-[var(--wiki-border)] bg-[var(--wiki-surface)]">
@@ -323,6 +399,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                     type="button"
                     onClick={() => {
                       onUpdatePasscode(null);
+                      onToggleBiometrics(false);
                       setShowPasscodeModal(false);
                     }}
                     className="flex h-10 items-center gap-1 border border-[#b32424]/40 px-3 text-xs font-medium text-[#b32424]"

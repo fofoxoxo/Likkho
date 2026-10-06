@@ -371,23 +371,17 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     }
   };
 
-  /**
-   * Restores the exact cursor / selection range in the editor without jumping to the top.
-   * If no saved range exists yet, places the cursor at the END of the editor content.
-   */
   const restoreSavedSelection = (): Range | null => {
     if (!editorRef.current) return null;
     const sel = window.getSelection();
     if (!sel) return null;
 
-    // First check if current live selection is already inside editor
     if (sel.rangeCount > 0) {
       const liveRange = sel.getRangeAt(0);
       if (
         editorRef.current === liveRange.commonAncestorContainer ||
         editorRef.current.contains(liveRange.commonAncestorContainer)
       ) {
-        // If we had a non-collapsed savedRange and liveRange got collapsed by a popover click, prefer savedRange
         if (
           savedRangeRef.current &&
           !savedRangeRef.current.collapsed &&
@@ -416,7 +410,6 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
       return savedRangeRef.current;
     }
 
-    // Fallback: place cursor at the very END of the editor (never at the top!)
     const endRange = document.createRange();
     endRange.selectNodeContents(editorRef.current);
     endRange.collapse(false);
@@ -451,8 +444,18 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     }
   };
 
-  // Move caret outside after an inline wrapper element so all previously typed text inside it stays intact!
-  const breakCursorOutAfterElement = (el: HTMLElement) => {
+  /**
+   * Splits an inline styled element (`el`) RIGHT AT the current cursor position!
+   * Even if the cursor is in the MIDDLE of a word written with a custom px size or custom font:
+   * - The part before the cursor stays in `el` with its custom style.
+   * - The part after the cursor stays in a cloned `el` with its custom style.
+   * - Right at the cursor (between before and after), a clean default-styled text node is placed so
+   *   anything typed from this exact cursor position uses the DEFAULT font / DEFAULT px size!
+   */
+  const splitElementAtCursorToDefault = (
+    el: HTMLElement,
+    cloneAttrName?: string
+  ) => {
     const sel = window.getSelection();
     if (!sel || !el.parentNode) return;
 
@@ -474,24 +477,50 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
       const afterRange = document.createRange();
       afterRange.setStart(range.endContainer, range.endOffset);
       afterRange.setEndAfter(el);
+
+      // Extract everything after the cursor out of `el`
       const trailingFragment = afterRange.extractContents();
 
+      // Create the default-styled cursor anchor node right after `el`
       const zwsp = document.createTextNode('\u200B');
-      if (el.nextSibling) {
-        el.parentNode.insertBefore(zwsp, el.nextSibling);
+      const parent = el.parentNode;
+      const nextSib = el.nextSibling;
+
+      if (nextSib) {
+        parent.insertBefore(zwsp, nextSib);
       } else {
-        el.parentNode.appendChild(zwsp);
+        parent.appendChild(zwsp);
       }
 
-      if (
-        trailingFragment.textContent &&
-        trailingFragment.textContent.replace(/\u200B/g, '').length > 0
-      ) {
-        if (zwsp.nextSibling) {
-          el.parentNode.insertBefore(trailingFragment, zwsp.nextSibling);
-        } else {
-          el.parentNode.appendChild(trailingFragment);
+      // If there was text after the cursor (e.g. cursor was in the middle of a word),
+      // wrap that trailing part in a clone of `el` so the rest of that word keeps its original px/font!
+      const trailingClean = (trailingFragment.textContent || '').replace(/\u200B/g, '');
+      if (trailingClean.length > 0) {
+        let trailingNodeToInsert: Node = trailingFragment;
+        // Check if extractContents already cloned `el` as top-level child
+        if (
+          trailingFragment.childNodes.length === 1 &&
+          trailingFragment.firstChild?.nodeType === Node.ELEMENT_NODE &&
+          (trailingFragment.firstChild as HTMLElement).tagName === el.tagName
+        ) {
+          trailingNodeToInsert = trailingFragment;
+        } else if (cloneAttrName) {
+          const clone = el.cloneNode(false) as HTMLElement;
+          clone.appendChild(trailingFragment);
+          trailingNodeToInsert = clone;
         }
+
+        if (zwsp.nextSibling) {
+          parent.insertBefore(trailingNodeToInsert, zwsp.nextSibling);
+        } else {
+          parent.appendChild(trailingNodeToInsert);
+        }
+      }
+
+      // If `el` before the cursor became empty (cursor was at the very start of the word), remove empty `el`
+      const beforeClean = (el.textContent || '').replace(/\u200B/g, '');
+      if (beforeClean.length === 0) {
+        parent.removeChild(el);
       }
 
       const newRange = document.createRange();
@@ -520,7 +549,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
 
     if (existingAncestor) {
       if (range.collapsed) {
-        breakCursorOutAfterElement(existingAncestor);
+        splitElementAtCursorToDefault(existingAncestor);
       } else {
         unwrapElement(existingAncestor);
       }
@@ -574,7 +603,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     if (color === 'default') {
       if (existingColorSpan) {
         if (range.collapsed) {
-          breakCursorOutAfterElement(existingColorSpan);
+          splitElementAtCursorToDefault(existingColorSpan, 'data-wiki-color');
         } else {
           unwrapElement(existingColorSpan);
         }
@@ -586,7 +615,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     }
 
     if (existingColorSpan && range.collapsed) {
-      breakCursorOutAfterElement(existingColorSpan);
+      splitElementAtCursorToDefault(existingColorSpan, 'data-wiki-color');
       setShowColorPicker(null);
       checkActiveFormats();
       onContentChange();
@@ -639,7 +668,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     if (color === 'transparent') {
       if (existingMark) {
         if (range.collapsed) {
-          breakCursorOutAfterElement(existingMark);
+          splitElementAtCursorToDefault(existingMark);
         } else {
           unwrapElement(existingMark);
         }
@@ -651,7 +680,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     }
 
     if (existingMark && range.collapsed) {
-      breakCursorOutAfterElement(existingMark);
+      splitElementAtCursorToDefault(existingMark);
       setShowColorPicker(null);
       checkActiveFormats();
       onContentChange();
@@ -691,10 +720,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
   };
 
   /**
-   * Enable / Disable Font Family AND Apply to Selected Text while keeping cursor in place:
-   * - Keeps the cursor at its exact position (never jumps to top).
-   * - If text is selected: applies the chosen font to the selected text (making it stylish) and keeps selection intact so user can preview different fonts or continue typing.
-   * - If cursor is collapsed: starts a font span right at the current cursor position; tapping the active font again (or Default Font) disables it by moving the cursor outside the span while keeping previously written text in its font.
+   * Enable / Disable Font Family AND Apply to Selected Text while keeping cursor in place
    */
   const handleToggleFontFamily = (fontFamily: string | null) => {
     const range = restoreSavedSelection();
@@ -708,7 +734,6 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
 
     const hasSelection = !range.collapsed && sel.toString().length > 0;
 
-    // Check if user is toggling OFF the currently active font (or clicked Default Font)
     const isSameFontOnSelection =
       existingFontSpan &&
       existingFontSpan.getAttribute('data-wiki-font') === fontFamily;
@@ -722,10 +747,8 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     if (isTogglingOff) {
       if (existingFontSpan) {
         if (!hasSelection) {
-          // Break cursor out right after the font span so previously typed text stays in its custom font
-          breakCursorOutAfterElement(existingFontSpan);
+          splitElementAtCursorToDefault(existingFontSpan, 'data-wiki-font');
         } else {
-          // Unwrap the selected font span back to default font
           unwrapElement(existingFontSpan);
         }
       }
@@ -737,9 +760,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
       return;
     }
 
-    // Enabling or switching to a specific fontFamily:
     if (hasSelection) {
-      // Apply directly to the selected text!
       if (
         existingFontSpan &&
         existingFontSpan.textContent?.replace(/\u200B/g, '') ===
@@ -767,7 +788,6 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
         savedRangeRef.current = newRange.cloneRange();
       }
     } else {
-      // Cursor is collapsed at a specific position: keep cursor right here and start/update inline font span
       if (existingFontSpan) {
         const clean = (existingFontSpan.textContent || '').replace(/\u200B/g, '');
         if (clean.length === 0) {
@@ -776,7 +796,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
           setActiveFontFamily(fontFamily);
           return;
         }
-        breakCursorOutAfterElement(existingFontSpan);
+        splitElementAtCursorToDefault(existingFontSpan, 'data-wiki-font');
       }
 
       const activeRange = sel.getRangeAt(0);
@@ -801,9 +821,8 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
 
   /**
    * Apply Text Size in px via Slider (10px to 48px):
-   * - Applies to selected text if text is selected.
-   * - Applies to newly typed text at cursor position if no text is selected.
-   * - Remains active until explicitly disabled via the "Disable" button!
+   * - Setting the slider to any number locks in that px size for selected text or cursor typing.
+   * - Tapping Disable splits the span right at the cursor (even inside the middle of a word!) so typing immediately reverts to default 16px while existing text keeps its px size.
    */
   const handleApplyTextPxSlider = (px: number) => {
     setTextPxSize(px);
@@ -854,7 +873,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
           existingPxSpan.setAttribute('data-wiki-px', String(px));
           return;
         }
-        breakCursorOutAfterElement(existingPxSpan);
+        splitElementAtCursorToDefault(existingPxSpan, 'data-wiki-px');
       }
       const activeRange = sel.getRangeAt(0);
       const span = document.createElement('span');
@@ -877,24 +896,28 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
 
   /**
    * Explicitly Disable Custom Text px Size:
-   * - If cursor is collapsed inside a px span, breaks cursor out after the span so earlier text keeps its px size and subsequent typing reverts to default size.
-   * - If text is selected inside a px span, unwraps the px span on the selected text.
+   * - Even if the cursor is right in the middle of a word that was typed with px enabled,
+   *   splits the `data-wiki-px` span at the exact cursor position and places the cursor in default text mode!
    */
   const handleDisableTextPx = () => {
     const range = restoreSavedSelection();
     const sel = window.getSelection();
     if (sel && range && editorRef.current) {
-      const existingPxSpan =
+      let existingPxSpan =
         findAncestorByAttr(range.commonAncestorContainer, 'data-wiki-px') ||
         findAncestorByAttr(range.startContainer, 'data-wiki-px') ||
         findAncestorByAttr(range.endContainer, 'data-wiki-px');
 
-      if (existingPxSpan) {
+      while (existingPxSpan) {
         if (range.collapsed) {
-          breakCursorOutAfterElement(existingPxSpan);
+          splitElementAtCursorToDefault(existingPxSpan, 'data-wiki-px');
         } else {
           unwrapElement(existingPxSpan);
         }
+        const nextRange = sel.rangeCount > 0 ? sel.getRangeAt(0) : null;
+        existingPxSpan = nextRange
+          ? findAncestorByAttr(nextRange.commonAncestorContainer, 'data-wiki-px')
+          : null;
       }
     }
     setIsTextPxEnabled(false);
@@ -941,7 +964,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     const targetEl = findAncestorTag(sel.anchorNode, tagNames);
     if (!targetEl) return false;
 
-    breakCursorOutAfterElement(targetEl);
+    splitElementAtCursorToDefault(targetEl);
     return true;
   };
 
@@ -1000,16 +1023,8 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     onContentChange();
   };
 
-  const insertHtmlAtCursor = (html: string) => {
-    restoreSavedSelection();
-    document.execCommand('insertHTML', false, html);
-    checkActiveFormats();
-    onContentChange();
-  };
-
   /**
    * Insert To-Do Checkbox ONLY (no "Task item" placeholder text)
-   * Places the cursor right beside the checkbox so the user can type immediately.
    */
   const insertChecklist = () => {
     const range = restoreSavedSelection();
@@ -1044,7 +1059,17 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     onContentChange();
   };
 
+  /**
+   * Insert Date & Time Stamp as an atomic, non-inheriting inline chip (`contentEditable="false"`):
+   * - Keeps the exact monospace muted font for the timestamp itself.
+   * - Cursor cannot get trapped inside the timestamp's font style, and pressing Enter or typing after it
+   *   always writes in the normal default editor font!
+   */
   const insertCurrentTimestamp = () => {
+    const range = restoreSavedSelection();
+    const sel = window.getSelection();
+    if (!sel || !range || !editorRef.current) return;
+
     const now = new Date();
     const formatted = now.toLocaleString('en-IN', {
       day: '2-digit',
@@ -1054,14 +1079,41 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
       minute: '2-digit',
       hour12: true,
     });
-    insertHtmlAtCursor(
-      `<span style="font-family:var(--font-mono-wiki);font-size:0.85em;color:var(--wiki-muted);">[${formatted}]</span>&nbsp;`
-    );
+
+    const stampSpan = document.createElement('span');
+    stampSpan.contentEditable = 'false';
+    stampSpan.setAttribute('data-wiki-timestamp', 'true');
+    stampSpan.style.fontFamily = 'var(--font-mono-wiki)';
+    stampSpan.style.fontSize = '0.85em';
+    stampSpan.style.color = 'var(--wiki-muted)';
+    stampSpan.style.userSelect = 'all';
+    stampSpan.textContent = `[${formatted}]`;
+
+    const trailingSpace = document.createTextNode('\u00A0');
+    const frag = document.createDocumentFragment();
+    frag.appendChild(stampSpan);
+    frag.appendChild(trailingSpace);
+
+    range.deleteContents();
+    range.insertNode(frag);
+
+    const nextRange = document.createRange();
+    nextRange.setStartAfter(trailingSpace);
+    nextRange.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(nextRange);
+    savedRangeRef.current = nextRange.cloneRange();
+
+    checkActiveFormats();
+    onContentChange();
   };
 
-  // Start or Stop Microphone Voice Recording — Triggers Android OS / Browser Permission Pop-up if not yet granted
+  // Start or Stop Microphone Voice Recording — Runs with Android Foreground Service so recording continues in background & when swiped from recents!
   const handleToggleMicRecording = async () => {
     if (isRecording) {
+      if (window.LikkhoNative?.stopForegroundMicService) {
+        window.LikkhoNative.stopForegroundMicService();
+      }
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
         mediaRecorderRef.current.stop();
       }
@@ -1093,6 +1145,11 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
       recordStreamRef.current = stream;
       recordedChunksRef.current = [];
 
+      // Start Android Foreground Service with PARTIAL_WAKE_LOCK so recording never stops in background or when swiped from recent apps
+      if (window.LikkhoNative?.startForegroundMicService) {
+        window.LikkhoNative.startForegroundMicService();
+      }
+
       const mimeType = getMimeTypeForFormat(micSettings.format);
       const options: MediaRecorderOptions = {
         audioBitsPerSecond: micSettings.bitRate,
@@ -1112,6 +1169,9 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
       };
 
       recorder.onstop = async () => {
+        if (window.LikkhoNative?.stopForegroundMicService) {
+          window.LikkhoNative.stopForegroundMicService();
+        }
         const durationSec = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
         const rawBlob = new Blob(recordedChunksRef.current, {
           type: recorder.mimeType || 'audio/webm',
@@ -1141,7 +1201,8 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
         showBriefHint(`Saved voice recording (.${micSettings.format})`);
       };
 
-      recorder.start();
+      // Request data chunks every 1000ms so background recording buffers continuously
+      recorder.start(1000);
       setIsRecording(true);
       setRecordingSeconds(0);
       recordTimerRef.current = window.setInterval(() => {
@@ -1152,7 +1213,6 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     }
   };
 
-  // Request Android OS Files & Media permission when opening Media Picker or selecting media
   const triggerAndroidMediaPermission = () => {
     try {
       if (window.LikkhoNative?.requestFilesAndMediaPermission) {
@@ -1163,7 +1223,6 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     }
   };
 
-  // Media Picker: Image or Audio attachment
   const handleMediaImagePicked = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -1315,7 +1374,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
             <span className="h-2.5 w-2.5 rounded-full bg-[#b32424] animate-ping" />
             <span className="font-wiki-mono text-xs font-semibold text-[#b32424]">
               Recording .{micSettings.format} ({Math.floor(recordingSeconds / 60)}:
-              {String(recordingSeconds % 60).padStart(2, '0')})
+              {String(recordingSeconds % 60).padStart(2, '0')}) · Background Active
             </span>
           </div>
           <button
@@ -1397,7 +1456,6 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
             </button>
           </div>
 
-          {/* Upload custom .ttf row */}
           <div className="flex flex-wrap items-center gap-1.5">
             <button
               type="button"
@@ -1429,7 +1487,6 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
             </button>
           </div>
 
-          {/* Default Font + Built-in + Uploaded Custom Fonts with Enable/Disable state */}
           <div className="flex items-center gap-1.5 overflow-x-auto py-1">
             <button
               type="button"
@@ -1897,7 +1954,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
             const existingColorSpan = findAncestorByAttr(anchor, 'data-wiki-color');
             if (existingColorSpan && showColorPicker !== 'text') {
               if (sel && sel.isCollapsed) {
-                breakCursorOutAfterElement(existingColorSpan);
+                splitElementAtCursorToDefault(existingColorSpan, 'data-wiki-color');
               } else {
                 unwrapElement(existingColorSpan);
               }
@@ -1924,7 +1981,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
             const existingMark = findAncestorTag(anchor, ['MARK']);
             if (existingMark && showColorPicker !== 'highlight') {
               if (sel && sel.isCollapsed) {
-                breakCursorOutAfterElement(existingMark);
+                splitElementAtCursorToDefault(existingMark);
               } else {
                 unwrapElement(existingMark);
               }
