@@ -13,6 +13,7 @@ import {
   ZoomIn,
   ZoomOut,
   Layers,
+  Pencil,
 } from 'lucide-react';
 import {
   CanvasAudioAttachment,
@@ -38,6 +39,16 @@ interface WritingWorkspaceProps {
   registerBackHandler?: (fn: () => void) => void;
 }
 
+interface CanvasHistorySnapshot {
+  heading: string;
+  pfpDataUrl: string | null;
+  contentHtml: string;
+  canvasBgDataUrl: string | null;
+  canvasBgOpacity: number;
+  canvasImages: CanvasDraggableImage[];
+  audioAttachments: CanvasAudioAttachment[];
+}
+
 function stripHtmlToSingleLine(html: string): string {
   const temp = document.createElement('div');
   temp.innerHTML = html;
@@ -59,6 +70,9 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     initialLog?.id || `log_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
   );
 
+  // Saved diaries open in Reading Mode by default; new diaries open in Editing Mode
+  const [isReadingMode, setIsReadingMode] = useState<boolean>(() => Boolean(initialLog));
+
   const [heading, setHeading] = useState<string>(initialLog?.heading || '');
   const [pfpDataUrl, setPfpDataUrl] = useState<string | null>(
     initialLog?.pfpDataUrl || null
@@ -78,6 +92,12 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
   const [audioAttachments, setAudioAttachments] = useState<CanvasAudioAttachment[]>(
     initialLog?.audioAttachments || []
   );
+
+  // Full-Canvas Undo & Redo History Stack (tracks text, formatting, fonts, images, background, audio, heading, PFP)
+  const historyStackRef = useRef<CanvasHistorySnapshot[]>([]);
+  const historyIndexRef = useRef<number>(0);
+  const isRestoringHistoryRef = useRef<boolean>(false);
+  const textDebounceTimerRef = useRef<number | null>(null);
 
   // Header 1:1 PFP Cropper state
   const [rawSelectedImage, setRawSelectedImage] = useState<string | null>(null);
@@ -105,12 +125,118 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
   const canvasContainerRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Populate initial HTML into contentEditable once on mount
+  // Populate initial HTML into contentEditable once on mount & initialize history stack
   useEffect(() => {
+    const startHtml = initialLog?.contentHtml || '';
     if (editorRef.current) {
-      editorRef.current.innerHTML = initialLog?.contentHtml || '';
+      editorRef.current.innerHTML = startHtml;
     }
+    const initialSnap: CanvasHistorySnapshot = {
+      heading: initialLog?.heading || '',
+      pfpDataUrl: initialLog?.pfpDataUrl || null,
+      contentHtml: startHtml,
+      canvasBgDataUrl: initialLog?.canvasBgDataUrl || null,
+      canvasBgOpacity: initialLog?.canvasBgOpacity ?? 0.25,
+      canvasImages: JSON.parse(JSON.stringify(initialLog?.canvasImages || [])),
+      audioAttachments: JSON.parse(JSON.stringify(initialLog?.audioAttachments || [])),
+    };
+    historyStackRef.current = [initialSnap];
+    historyIndexRef.current = 0;
   }, [initialLog]);
+
+  // Push a full-canvas snapshot onto the Undo/Redo stack
+  const pushCanvasSnapshot = (overrides?: Partial<CanvasHistorySnapshot>) => {
+    if (isRestoringHistoryRef.current) return;
+    const currentHtml =
+      overrides?.contentHtml !== undefined
+        ? overrides.contentHtml
+        : editorRef.current?.innerHTML || '';
+
+    const snap: CanvasHistorySnapshot = {
+      heading: overrides?.heading !== undefined ? overrides.heading : heading,
+      pfpDataUrl: overrides?.pfpDataUrl !== undefined ? overrides.pfpDataUrl : pfpDataUrl,
+      contentHtml: currentHtml,
+      canvasBgDataUrl:
+        overrides?.canvasBgDataUrl !== undefined
+          ? overrides.canvasBgDataUrl
+          : canvasBgDataUrl,
+      canvasBgOpacity:
+        overrides?.canvasBgOpacity !== undefined
+          ? overrides.canvasBgOpacity
+          : canvasBgOpacity,
+      canvasImages: JSON.parse(
+        JSON.stringify(
+          overrides?.canvasImages !== undefined ? overrides.canvasImages : canvasImages
+        )
+      ),
+      audioAttachments: JSON.parse(
+        JSON.stringify(
+          overrides?.audioAttachments !== undefined
+            ? overrides.audioAttachments
+            : audioAttachments
+        )
+      ),
+    };
+
+    const currentTop = historyStackRef.current[historyIndexRef.current];
+    if (currentTop && JSON.stringify(currentTop) === JSON.stringify(snap)) {
+      return;
+    }
+
+    const nextStack = historyStackRef.current.slice(0, historyIndexRef.current + 1);
+    nextStack.push(snap);
+    if (nextStack.length > 60) {
+      nextStack.shift();
+    }
+    historyStackRef.current = nextStack;
+    historyIndexRef.current = nextStack.length - 1;
+  };
+
+  const applyCanvasSnapshot = (snap: CanvasHistorySnapshot) => {
+    isRestoringHistoryRef.current = true;
+    setHeading(snap.heading);
+    setPfpDataUrl(snap.pfpDataUrl);
+    setCanvasBgDataUrl(snap.canvasBgDataUrl);
+    setCanvasBgOpacity(snap.canvasBgOpacity);
+    setCanvasImages(JSON.parse(JSON.stringify(snap.canvasImages)));
+    setAudioAttachments(JSON.parse(JSON.stringify(snap.audioAttachments)));
+    if (editorRef.current && editorRef.current.innerHTML !== snap.contentHtml) {
+      editorRef.current.innerHTML = snap.contentHtml;
+    }
+    window.setTimeout(() => {
+      isRestoringHistoryRef.current = false;
+    }, 20);
+  };
+
+  const handleCanvasUndo = () => {
+    if (textDebounceTimerRef.current) {
+      window.clearTimeout(textDebounceTimerRef.current);
+      textDebounceTimerRef.current = null;
+      pushCanvasSnapshot();
+    }
+    if (historyIndexRef.current > 0) {
+      historyIndexRef.current -= 1;
+      applyCanvasSnapshot(historyStackRef.current[historyIndexRef.current]);
+    }
+  };
+
+  const handleCanvasRedo = () => {
+    if (historyIndexRef.current < historyStackRef.current.length - 1) {
+      historyIndexRef.current += 1;
+      applyCanvasSnapshot(historyStackRef.current[historyIndexRef.current]);
+    }
+  };
+
+  const scheduleTextHistorySnapshot = () => {
+    if (isRestoringHistoryRef.current) return;
+    if (textDebounceTimerRef.current) {
+      window.clearTimeout(textDebounceTimerRef.current);
+    }
+    textDebounceTimerRef.current = window.setTimeout(() => {
+      pushCanvasSnapshot();
+      textDebounceTimerRef.current = null;
+    }, 350);
+  };
 
   // Build a DiaryLog object from current workspace state (including all media attachments)
   const buildCurrentLogObject = (
@@ -202,7 +328,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     }
   });
 
-  // Handle explicit Save button tap
+  // Handle explicit Save button tap — saves and switches to clean Reading Mode
   const handleExplicitSave = () => {
     const { log, hasAnyEntry } = buildCurrentLogObject();
     if (!hasAnyEntry) {
@@ -215,6 +341,8 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
       log.reminderAt
     );
     onSaveLog(log, false);
+    setSelectedCanvasImgId(null);
+    setIsReadingMode(true);
     setSavedIndicator(true);
     setTimeout(() => setSavedIndicator(false), 1800);
   };
@@ -250,11 +378,12 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     }
   };
 
-  // Pointer drag + 2-finger pinch resize & rotate handlers for Canvas Images
+  // Pointer drag + 2-finger pinch resize & rotate handlers for Canvas Images (active in Edit Mode)
   const handleStartDragImage = (
     e: React.PointerEvent<HTMLDivElement>,
     img: CanvasDraggableImage
   ) => {
+    if (isReadingMode) return;
     e.stopPropagation();
     e.currentTarget.setPointerCapture(e.pointerId);
     setSelectedCanvasImgId(img.id);
@@ -283,6 +412,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
   };
 
   const handleMoveDragImage = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (isReadingMode) return;
     if (imgPointersRef.current.has(e.pointerId)) {
       imgPointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     }
@@ -321,16 +451,31 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
   };
 
   const handleEndDragImage = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (isReadingMode) return;
     imgPointersRef.current.delete(e.pointerId);
     if (imgPointersRef.current.size < 2) {
       pinchInitialRef.current = null;
     }
     if (imgPointersRef.current.size === 0) {
       setActiveDragId(null);
+      pushCanvasSnapshot();
     }
   };
 
-  const selectedCanvasImage = canvasImages.find((c) => c.id === selectedCanvasImgId) || null;
+  const updateCanvasImagesWithHistory = (
+    updater: (prev: CanvasDraggableImage[]) => CanvasDraggableImage[]
+  ) => {
+    setCanvasImages((prev) => {
+      const next = updater(prev);
+      pushCanvasSnapshot({ canvasImages: next });
+      return next;
+    });
+  };
+
+  const selectedCanvasImage =
+    !isReadingMode
+      ? canvasImages.find((c) => c.id === selectedCanvasImgId) || null
+      : null;
 
   return (
     <div className="flex h-full w-full flex-col bg-[var(--wiki-bg)] text-[var(--wiki-text)]">
@@ -343,8 +488,8 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
         className="hidden"
       />
 
-      {/* Workspace Header */}
-      <header className="flex min-h-[58px] shrink-0 items-center justify-between gap-2 border-b border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3 py-2">
+      {/* Workspace Header — Solid background (z-20) so Canvas Background Image NEVER bleeds into Header */}
+      <header className="relative z-20 flex min-h-[58px] shrink-0 items-center justify-between gap-2 border-b border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3 py-2">
         <button
           type="button"
           onClick={handleExitWorkspace}
@@ -359,14 +504,18 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
         <div className="flex flex-1 items-center gap-2.5 min-w-0">
           <button
             type="button"
+            disabled={isReadingMode}
             onClick={() => {
+              if (isReadingMode) return;
               if (window.LikkhoNative?.requestFilesAndMediaPermission) {
                 window.LikkhoNative.requestFilesAndMediaPermission();
               }
               fileInputRef.current?.click();
             }}
-            className="group relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden border border-[var(--wiki-border)] bg-[var(--wiki-bg)] hover:border-[#3366cc]"
-            title="Select & crop 1:1 image from storage"
+            className={`group relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden border border-[var(--wiki-border)] bg-[var(--wiki-bg)] ${
+              isReadingMode ? 'cursor-default' : 'hover:border-[#3366cc]'
+            }`}
+            title={isReadingMode ? 'Diary PFP' : 'Select & crop 1:1 image from storage'}
           >
             {pfpDataUrl ? (
               <img
@@ -384,14 +533,18 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
             <input
               type="text"
               value={heading}
-              onChange={(e) => setHeading(e.target.value)}
+              readOnly={isReadingMode}
+              onChange={(e) => {
+                setHeading(e.target.value);
+                scheduleTextHistorySnapshot();
+              }}
               placeholder="Diary Heading..."
               className="w-full border-b border-transparent bg-transparent font-wiki-serif text-lg font-bold text-[var(--wiki-text)] placeholder:text-[var(--wiki-muted)]/60 focus:border-[#3366cc] outline-none truncate"
             />
           </div>
         </div>
 
-        {/* Reminder Button & Save Button */}
+        {/* Reminder Button & Edit / Save Button */}
         <div className="flex shrink-0 items-center gap-1.5">
           {initialLog && onDeleteLog && (
             <button
@@ -423,29 +576,40 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
             <span className="hidden sm:inline">Reminder</span>
           </button>
 
-          <button
-            type="button"
-            onClick={handleExplicitSave}
-            className="flex h-10 items-center gap-1.5 bg-[#3366cc] px-3.5 text-xs font-semibold text-white hover:bg-[#2a56b0] active:scale-[0.98] transition-all"
-          >
-            {savedIndicator ? (
-              <>
-                <Check className="h-4 w-4" />
-                <span>Saved</span>
-              </>
-            ) : (
-              <>
-                <Save className="h-4 w-4" />
-                <span>Save</span>
-              </>
-            )}
-          </button>
+          {isReadingMode ? (
+            <button
+              type="button"
+              onClick={() => setIsReadingMode(false)}
+              className="flex h-10 items-center gap-1.5 bg-[#3366cc] px-3.5 text-xs font-semibold text-white hover:bg-[#2a56b0] active:scale-[0.98] transition-all"
+            >
+              <Pencil className="h-4 w-4" />
+              <span>Edit</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={handleExplicitSave}
+              className="flex h-10 items-center gap-1.5 bg-[#3366cc] px-3.5 text-xs font-semibold text-white hover:bg-[#2a56b0] active:scale-[0.98] transition-all"
+            >
+              {savedIndicator ? (
+                <>
+                  <Check className="h-4 w-4" />
+                  <span>Saved</span>
+                </>
+              ) : (
+                <>
+                  <Save className="h-4 w-4" />
+                  <span>Save</span>
+                </>
+              )}
+            </button>
+          )}
         </div>
       </header>
 
       {/* Active Reminder Sub-bar if scheduled */}
       {reminderAt && reminderAt > Date.now() && (
-        <div className="flex items-center justify-between border-b border-[var(--wiki-hairline)] bg-[#3366cc]/10 px-4 py-1.5 text-[11px]">
+        <div className="relative z-20 flex items-center justify-between border-b border-[var(--wiki-hairline)] bg-[var(--wiki-surface)] px-4 py-1.5 text-[11px]">
           <span className="font-wiki-mono text-[var(--wiki-text)]">
             🔔{' '}
             <strong>
@@ -470,13 +634,13 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
 
       {/* Selected Canvas Image Control Bar: Resize (-/+), Rotate (Left/Right), Layer (Behind Text / Over Text), Delete */}
       {selectedCanvasImage && (
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#3366cc] bg-[var(--wiki-surface)] px-3 py-1.5 text-xs z-30">
+        <div className="relative z-30 flex flex-wrap items-center justify-between gap-2 border-b border-[#3366cc] bg-[var(--wiki-surface)] px-3 py-1.5 text-xs">
           <div className="flex items-center gap-1.5 overflow-x-auto">
             {/* Resize Buttons */}
             <button
               type="button"
               onClick={() =>
-                setCanvasImages((prev) =>
+                updateCanvasImagesWithHistory((prev) =>
                   prev.map((c) =>
                     c.id === selectedCanvasImage.id
                       ? { ...c, width: Math.max(50, c.width - 20) }
@@ -493,7 +657,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
             <button
               type="button"
               onClick={() =>
-                setCanvasImages((prev) =>
+                updateCanvasImagesWithHistory((prev) =>
                   prev.map((c) =>
                     c.id === selectedCanvasImage.id
                       ? { ...c, width: Math.min(420, c.width + 20) }
@@ -512,7 +676,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
             <button
               type="button"
               onClick={() =>
-                setCanvasImages((prev) =>
+                updateCanvasImagesWithHistory((prev) =>
                   prev.map((c) =>
                     c.id === selectedCanvasImage.id
                       ? { ...c, rotation: ((c.rotation || 0) - 15) % 360 }
@@ -529,7 +693,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
             <button
               type="button"
               onClick={() =>
-                setCanvasImages((prev) =>
+                updateCanvasImagesWithHistory((prev) =>
                   prev.map((c) =>
                     c.id === selectedCanvasImage.id
                       ? { ...c, rotation: ((c.rotation || 0) + 15) % 360 }
@@ -548,7 +712,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
             <button
               type="button"
               onClick={() =>
-                setCanvasImages((prev) =>
+                updateCanvasImagesWithHistory((prev) =>
                   prev.map((c) =>
                     c.id === selectedCanvasImage.id
                       ? {
@@ -580,7 +744,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
             <button
               type="button"
               onClick={() => {
-                setCanvasImages((prev) =>
+                updateCanvasImagesWithHistory((prev) =>
                   prev.filter((c) => c.id !== selectedCanvasImage.id)
                 );
                 setSelectedCanvasImgId(null);
@@ -601,20 +765,11 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
         </div>
       )}
 
-      {/* Wikipedia Article Canvas with Custom Background Image, Free-Draggable/Pinchable Images & Audio Attachments */}
-      <div
-        ref={canvasContainerRef}
-        className="relative flex-1 overflow-y-auto px-4 py-5 sm:px-8 cursor-text"
-        onClick={(e) => {
-          setSelectedCanvasImgId(null);
-          if (e.target === e.currentTarget && editorRef.current) {
-            editorRef.current.focus();
-          }
-        }}
-      >
+      {/* Canvas Viewport Wrapper — Background Image is strictly scoped inside this Canvas area (never in Header!) */}
+      <div className="relative flex-1 overflow-hidden flex flex-col">
         {canvasBgDataUrl && (
           <div
-            className="pointer-events-none fixed inset-0 z-0 bg-cover bg-center bg-no-repeat"
+            className="pointer-events-none absolute inset-0 z-0 bg-cover bg-center bg-no-repeat"
             style={{
               backgroundImage: `url(${canvasBgDataUrl})`,
               opacity: canvasBgOpacity,
@@ -622,140 +777,171 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
           />
         )}
 
-        {/* Free-Draggable, Pinch-Resizable & Pinch-Rotatable Images Layer on Canvas */}
-        {canvasImages.map((img) => {
-          const isSelected = selectedCanvasImgId === img.id;
-          const isBehindText = img.layer === 'background';
-          // Text layer is z-10.
-          // If Behind Text (background): zIndex = 5 (when unselected) so text (z-10) covers image; when selected, zIndex = 25 so user can still drag/pinch it easily.
-          // If In Front of Text (foreground): zIndex = 20 so image covers text.
-          const computedZIndex = isSelected ? 25 : isBehindText ? 5 : 20;
+        <div
+          ref={canvasContainerRef}
+          className={`relative z-10 flex-1 overflow-y-auto px-4 py-5 sm:px-8 ${
+            isReadingMode ? 'cursor-default' : 'cursor-text'
+          }`}
+          onClick={(e) => {
+            setSelectedCanvasImgId(null);
+            if (!isReadingMode && e.target === e.currentTarget && editorRef.current) {
+              editorRef.current.focus({ preventScroll: true });
+            }
+          }}
+        >
+          {/* Free-Draggable, Pinch-Resizable & Pinch-Rotatable Images Layer on Canvas */}
+          {canvasImages.map((img) => {
+            const isSelected = !isReadingMode && selectedCanvasImgId === img.id;
+            const isBehindText = img.layer === 'background';
+            const computedZIndex = isSelected ? 25 : isBehindText ? 5 : 20;
 
-          return (
+            return (
+              <div
+                key={img.id}
+                onPointerDown={(e) => handleStartDragImage(e, img)}
+                onPointerMove={handleMoveDragImage}
+                onPointerUp={handleEndDragImage}
+                onPointerCancel={handleEndDragImage}
+                onClick={(e) => {
+                  if (isReadingMode) return;
+                  e.stopPropagation();
+                  setSelectedCanvasImgId(img.id);
+                }}
+                style={{
+                  position: 'absolute',
+                  left: `${img.x}px`,
+                  top: `${img.y}px`,
+                  width: `${img.width}px`,
+                  transform: `rotate(${img.rotation || 0}deg)`,
+                  transformOrigin: 'center center',
+                  zIndex: computedZIndex,
+                }}
+                className={`group touch-none select-none ${
+                  isReadingMode
+                    ? 'pointer-events-none'
+                    : isSelected
+                    ? 'cursor-move ring-2 ring-[#3366cc]'
+                    : 'cursor-move hover:ring-1 hover:ring-[var(--wiki-border)]'
+                }`}
+              >
+                <img
+                  src={img.dataUrl}
+                  alt="Canvas media"
+                  referrerPolicy="no-referrer"
+                  draggable={false}
+                  className="block h-auto w-full pointer-events-none"
+                />
+              </div>
+            );
+          })}
+
+          <div className="relative z-10 mx-auto max-w-3xl pointer-events-none">
+            {/* Rich Text Editable Canvas */}
             <div
-              key={img.id}
-              onPointerDown={(e) => handleStartDragImage(e, img)}
-              onPointerMove={handleMoveDragImage}
-              onPointerUp={handleEndDragImage}
-              onPointerCancel={handleEndDragImage}
+              ref={editorRef}
+              contentEditable={!isReadingMode}
+              suppressContentEditableWarning
+              onInput={scheduleTextHistorySnapshot}
               onClick={(e) => {
-                e.stopPropagation();
-                setSelectedCanvasImgId(img.id);
+                handleEditorClick(e);
               }}
-              style={{
-                position: 'absolute',
-                left: `${img.x}px`,
-                top: `${img.y}px`,
-                width: `${img.width}px`,
-                transform: `rotate(${img.rotation || 0}deg)`,
-                transformOrigin: 'center center',
-                zIndex: computedZIndex,
+              onDoubleClick={(e) => {
+                if (isReadingMode) return;
+                const rect = canvasContainerRef.current?.getBoundingClientRect();
+                if (!rect) return;
+                const clickX =
+                  e.clientX - rect.left + (canvasContainerRef.current?.scrollLeft || 0);
+                const clickY =
+                  e.clientY - rect.top + (canvasContainerRef.current?.scrollTop || 0);
+                const hitBgImg = canvasImages.find(
+                  (img) =>
+                    img.layer === 'background' &&
+                    clickX >= img.x &&
+                    clickX <= img.x + img.width &&
+                    clickY >= img.y &&
+                    clickY <= img.y + (img.height || img.width)
+                );
+                if (hitBgImg) {
+                  setSelectedCanvasImgId(hitBgImg.id);
+                }
               }}
-              className={`group touch-none select-none cursor-move ${
-                isSelected ? 'ring-2 ring-[#3366cc]' : 'hover:ring-1 hover:ring-[var(--wiki-border)]'
-              }`}
-            >
-              <img
-                src={img.dataUrl}
-                alt="Canvas media"
-                referrerPolicy="no-referrer"
-                draggable={false}
-                className="block h-auto w-full pointer-events-none"
-              />
-            </div>
-          );
-        })}
+              data-placeholder="Start writing..."
+              className="wiki-editor-content min-h-[55vh] pb-8 pointer-events-auto"
+            />
 
-        <div className="relative z-10 mx-auto max-w-3xl pointer-events-none">
-          {/* Rich Text Editable Canvas */}
-          <div
-            ref={editorRef}
-            contentEditable
-            suppressContentEditableWarning
-            onClick={(e) => {
-              // If user taps at a coordinate covered by a Background (Behind Text) image while not typing, allow selecting that background image via double tap or tap when empty
-              handleEditorClick(e);
-            }}
-            onDoubleClick={(e) => {
-              // Double-tap anywhere over a background image to select and move/resize it
-              const rect = canvasContainerRef.current?.getBoundingClientRect();
-              if (!rect) return;
-              const clickX = e.clientX - rect.left + (canvasContainerRef.current?.scrollLeft || 0);
-              const clickY = e.clientY - rect.top + (canvasContainerRef.current?.scrollTop || 0);
-              const hitBgImg = canvasImages.find(
-                (img) =>
-                  img.layer === 'background' &&
-                  clickX >= img.x &&
-                  clickX <= img.x + img.width &&
-                  clickY >= img.y &&
-                  clickY <= img.y + (img.height || img.width)
-              );
-              if (hitBgImg) {
-                setSelectedCanvasImgId(hitBgImg.id);
-              }
-            }}
-            data-placeholder="Start writing..."
-            className="wiki-editor-content min-h-[55vh] pb-8 pointer-events-auto"
-          />
-
-          {/* Attached Audio & Voice Recordings Section inside Canvas */}
-          {audioAttachments.length > 0 && (
-            <div className="mt-4 space-y-2 border-t border-[var(--wiki-hairline)] pt-4 pb-10 pointer-events-auto">
-              {audioAttachments.map((aud) => (
-                <div
-                  key={aud.id}
-                  className="flex flex-col gap-1.5 border border-[var(--wiki-border)] bg-[var(--wiki-surface)] p-2.5"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <Volume2 className="h-4 w-4 shrink-0 text-[#3366cc]" />
-                      <span className="truncate text-xs font-semibold text-[var(--wiki-text)]">
-                        {aud.name}
-                      </span>
+            {/* Attached Audio & Voice Recordings Section inside Canvas */}
+            {audioAttachments.length > 0 && (
+              <div className="mt-4 space-y-2 border-t border-[var(--wiki-hairline)] pt-4 pb-10 pointer-events-auto">
+                {audioAttachments.map((aud) => (
+                  <div
+                    key={aud.id}
+                    className="flex flex-col gap-1.5 border border-[var(--wiki-border)] bg-[var(--wiki-surface)] p-2.5"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <Volume2 className="h-4 w-4 shrink-0 text-[#3366cc]" />
+                        <span className="truncate text-xs font-semibold text-[var(--wiki-text)]">
+                          {aud.name}
+                        </span>
+                      </div>
+                      {!isReadingMode && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAudioAttachments((prev) => {
+                              const next = prev.filter((item) => item.id !== aud.id);
+                              pushCanvasSnapshot({ audioAttachments: next });
+                              return next;
+                            });
+                          }}
+                          className="text-[var(--wiki-muted)] hover:text-[#b32424]"
+                          title="Delete audio"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      )}
                     </div>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setAudioAttachments((prev) =>
-                          prev.filter((item) => item.id !== aud.id)
-                        )
-                      }
-                      className="text-[var(--wiki-muted)] hover:text-[#b32424]"
-                      title="Delete audio"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
+                    <audio controls src={aud.dataUrl} className="h-9 w-full" />
                   </div>
-                  <audio
-                    controls
-                    src={aud.dataUrl}
-                    className="h-9 w-full"
-                  />
-                </div>
-              ))}
-            </div>
-          )}
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* Rich Text Editing Toolbar Docked Directly Above Soft Keyboard */}
-      <RichTextToolbar
-        editorRef={editorRef}
-        onContentChange={() => {}}
-        canvasBgDataUrl={canvasBgDataUrl}
-        canvasBgOpacity={canvasBgOpacity}
-        onChangeCanvasBg={(dataUrl, opacity) => {
-          setCanvasBgDataUrl(dataUrl);
-          setCanvasBgOpacity(opacity);
-        }}
-        onOpenMediaImageStudio={(rawDataUrl) => setRawMediaStudioImage(rawDataUrl)}
-        onAddAudioAttachment={(aud) =>
-          setAudioAttachments((prev) => [...prev, aud])
-        }
-        customFonts={customFonts}
-        onAddCustomFont={onAddCustomFont}
-        micSettings={micSettings}
-      />
+      {/* Rich Text Editing Toolbar — Visible ONLY in Edit Mode */}
+      {!isReadingMode && (
+        <RichTextToolbar
+          editorRef={editorRef}
+          onContentChange={() => {
+            pushCanvasSnapshot();
+          }}
+          onUndoCanvas={handleCanvasUndo}
+          onRedoCanvas={handleCanvasRedo}
+          canvasBgDataUrl={canvasBgDataUrl}
+          canvasBgOpacity={canvasBgOpacity}
+          onChangeCanvasBg={(dataUrl, opacity) => {
+            setCanvasBgDataUrl(dataUrl);
+            setCanvasBgOpacity(opacity);
+            pushCanvasSnapshot({
+              canvasBgDataUrl: dataUrl,
+              canvasBgOpacity: opacity,
+            });
+          }}
+          onOpenMediaImageStudio={(rawDataUrl) => setRawMediaStudioImage(rawDataUrl)}
+          onAddAudioAttachment={(aud) => {
+            setAudioAttachments((prev) => {
+              const next = [...prev, aud];
+              pushCanvasSnapshot({ audioAttachments: next });
+              return next;
+            });
+          }}
+          customFonts={customFonts}
+          onAddCustomFont={onAddCustomFont}
+          micSettings={micSettings}
+        />
+      )}
 
       {/* 1:1 Mandatory Image Cropper Modal before setting Header PFP */}
       {rawSelectedImage && (
@@ -765,6 +951,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
           onCropComplete={(croppedUrl) => {
             setPfpDataUrl(croppedUrl);
             setRawSelectedImage(null);
+            pushCanvasSnapshot({ pfpDataUrl: croppedUrl });
           }}
         />
       )}
@@ -776,20 +963,24 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
           onCancel={() => setRawMediaStudioImage(null)}
           onConfirm={(processedDataUrl, opacity, width, height) => {
             const newId = `img_${Date.now()}`;
-            setCanvasImages((prev) => [
-              ...prev,
-              {
-                id: newId,
-                dataUrl: processedDataUrl,
-                x: 24 + (prev.length * 18) % 100,
-                y: 36 + (prev.length * 24) % 120,
-                width,
-                height,
-                opacity,
-                rotation: 0,
-                layer: 'foreground',
-              },
-            ]);
+            setCanvasImages((prev) => {
+              const next: CanvasDraggableImage[] = [
+                ...prev,
+                {
+                  id: newId,
+                  dataUrl: processedDataUrl,
+                  x: 24 + (prev.length * 18) % 100,
+                  y: 36 + (prev.length * 24) % 120,
+                  width,
+                  height,
+                  opacity,
+                  rotation: 0,
+                  layer: 'foreground',
+                },
+              ];
+              pushCanvasSnapshot({ canvasImages: next });
+              return next;
+            });
             setSelectedCanvasImgId(newId);
             setRawMediaStudioImage(null);
           }}

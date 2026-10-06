@@ -57,8 +57,11 @@ jobs:
 
           MANIFEST="android/app/src/main/AndroidManifest.xml"
           if ! grep -q "FOREGROUND_SERVICE_MICROPHONE" "$MANIFEST"; then
-            sed -i 's/<application/<uses-permission android:name="android.permission.POST_NOTIFICATIONS" \/>\n    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" \/>\n    <uses-permission android:name="android.permission.USE_EXACT_ALARM" \/>\n    <uses-permission android:name="android.permission.VIBRATE" \/>\n    <uses-permission android:name="android.permission.WAKE_LOCK" \/>\n    <uses-permission android:name="android.permission.USE_BIOMETRIC" \/>\n    <uses-permission android:name="android.permission.USE_FINGERPRINT" \/>\n    <uses-permission android:name="android.permission.RECORD_AUDIO" \/>\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" \/>\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" \/>\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" \/>\n    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" \/>\n    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" \/>\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" \/>\n    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" \/>\n    <application android:requestLegacyExternalStorage="true"/' "$MANIFEST"
+            sed -i 's/<application/<uses-permission android:name="android.permission.POST_NOTIFICATIONS" \/>\n    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" \/>\n    <uses-permission android:name="android.permission.USE_EXACT_ALARM" \/>\n    <uses-permission android:name="android.permission.VIBRATE" \/>\n    <uses-permission android:name="android.permission.WAKE_LOCK" \/>\n    <uses-permission android:name="android.permission.USE_BIOMETRIC" \/>\n    <uses-permission android:name="android.permission.USE_FINGERPRINT" \/>\n    <uses-permission android:name="android.permission.RECORD_AUDIO" \/>\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" \/>\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" \/>\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" \/>\n    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" \/>\n    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" \/>\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" \/>\n    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" \/>\n    <application android:requestLegacyExternalStorage="true" android:hardwareAccelerated="true"/' "$MANIFEST"
           fi
+
+          # Ensure MainActivity uses adjustResize for smooth keyboard and toolbar docking
+          sed -i 's/android:name=".MainActivity"/android:name=".MainActivity" android:windowSoftInputMode="adjustResize"/' "$MANIFEST" || true
 
           # Register ReminderReceiver and MicForegroundService (foregroundServiceType="microphone", stopWithTask="false") inside <application>
           if ! grep -q "ReminderReceiver" "$MANIFEST"; then
@@ -485,6 +488,7 @@ jobs:
               private PermissionRequest pendingWebPermissionRequest;
               private ValueCallback<Uri[]> filePathCallback;
               private int pendingMicSampleRate = 44100;
+              private CancellationSignal activeBiometricCancelSignal;
 
               @Override
               public void onCreate(Bundle savedInstanceState) {
@@ -743,33 +747,51 @@ jobs:
                   }
 
                   @JavascriptInterface
+                  public void cancelBiometricPrompt() {
+                      runOnUiThread(() -> {
+                          try {
+                              if (activeBiometricCancelSignal != null && !activeBiometricCancelSignal.isCanceled()) {
+                                  activeBiometricCancelSignal.cancel();
+                              }
+                              activeBiometricCancelSignal = null;
+                          } catch (Exception ignored) {}
+                      });
+                  }
+
+                  @JavascriptInterface
                   public void authenticateBiometric() {
                       runOnUiThread(() -> {
                           try {
+                              if (activeBiometricCancelSignal != null && !activeBiometricCancelSignal.isCanceled()) {
+                                  return;
+                              }
                               if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                                   BiometricPrompt.Builder builder = new BiometricPrompt.Builder(MainActivity.this)
                                       .setTitle("Likkho Biometric Unlock")
-                                      .setSubtitle("Verify your fingerprint, face, or screen lock");
+                                      .setSubtitle("Touch fingerprint sensor or tap Use Passcode")
+                                      .setNegativeButton("Use Passcode", getMainExecutor(), (d, w) -> {
+                                          activeBiometricCancelSignal = null;
+                                          notifyBiometricResult(false, "Cancelled");
+                                      });
 
                                   if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                                      builder.setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG | BiometricManager.Authenticators.BIOMETRIC_WEAK | BiometricManager.Authenticators.DEVICE_CREDENTIAL);
-                                  } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                                      builder.setDeviceCredentialAllowed(true);
-                                  } else {
-                                      builder.setNegativeButton("Use Passcode", getMainExecutor(), (d, w) -> notifyBiometricResult(false, "Cancelled"));
+                                      builder.setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG | BiometricManager.Authenticators.BIOMETRIC_WEAK);
                                   }
 
+                                  activeBiometricCancelSignal = new CancellationSignal();
                                   builder.build().authenticate(
-                                      new CancellationSignal(),
+                                      activeBiometricCancelSignal,
                                       getMainExecutor(),
                                       new BiometricPrompt.AuthenticationCallback() {
                                           @Override
                                           public void onAuthenticationSucceeded(BiometricPrompt.AuthenticationResult result) {
+                                              activeBiometricCancelSignal = null;
                                               notifyBiometricResult(true, "");
                                           }
 
                                           @Override
                                           public void onAuthenticationError(int errorCode, CharSequence errString) {
+                                              activeBiometricCancelSignal = null;
                                               notifyBiometricResult(false, errString != null ? errString.toString() : "Verification cancelled");
                                           }
                                       }
@@ -786,6 +808,7 @@ jobs:
                                   notifyBiometricResult(true, "");
                               }
                           } catch (Exception e) {
+                              activeBiometricCancelSignal = null;
                               notifyBiometricResult(false, e.getMessage());
                           }
                       });

@@ -10,6 +10,7 @@ declare global {
       readPersistentVaultBackup?: () => string;
       pickVaultBackupFile?: () => void;
       authenticateBiometric?: () => void;
+      cancelBiometricPrompt?: () => void;
       authenticateDeviceLockForBackup?: () => void;
       scheduleNativeReminder?: (logId: string, title: string, body: string, triggerAtMs: number) => void;
       cancelNativeReminder?: (logId: string) => void;

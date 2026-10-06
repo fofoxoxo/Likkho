@@ -94,6 +94,30 @@ function extractFullPlainText(html: string): string {
   return (temp.textContent || temp.innerText || '').toLowerCase();
 }
 
+function injectGlobalFontFaceCss(fontFamily: string, dataUrl: string) {
+  try {
+    const styleId = `likkho-font-style-${fontFamily}`;
+    if (!document.getElementById(styleId)) {
+      const styleEl = document.createElement('style');
+      styleEl.id = styleId;
+      styleEl.textContent = `@font-face { font-family: '${fontFamily}'; src: url('${dataUrl}') format('truetype'), url('${dataUrl}'); font-weight: normal; font-style: normal; font-display: swap; }`;
+      document.head.appendChild(styleEl);
+    }
+    const base64Idx = dataUrl.indexOf(',');
+    if (base64Idx >= 0) {
+      const bin = atob(dataUrl.slice(base64Idx + 1));
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) {
+        bytes[i] = bin.charCodeAt(i);
+      }
+      const face = new FontFace(fontFamily, bytes.buffer);
+      face.load().then((loaded) => document.fonts.add(loaded)).catch(() => {});
+    }
+  } catch {
+    // ignore
+  }
+}
+
 export default function App() {
   const [logs, setLogs] = useState<DiaryLog[]>(() => {
     try {
@@ -218,13 +242,7 @@ export default function App() {
         if (idbFonts && Array.isArray(idbFonts) && idbFonts.length > 0) {
           setCustomFonts(idbFonts);
           for (const f of idbFonts) {
-            try {
-              const face = new FontFace(f.fontFamily, `url(${f.dataUrl})`);
-              const loaded = await face.load();
-              document.fonts.add(loaded);
-            } catch {
-              // ignore font reload error
-            }
+            injectGlobalFontFaceCss(f.fontFamily, f.dataUrl);
           }
         }
       }
@@ -591,13 +609,7 @@ export default function App() {
             if (bundle.customFonts && bundle.customFonts.length > 0) {
               setCustomFonts(bundle.customFonts);
               for (const f of bundle.customFonts) {
-                try {
-                  const face = new FontFace(f.fontFamily, `url(${f.dataUrl})`);
-                  const loaded = await face.load();
-                  document.fonts.add(loaded);
-                } catch {
-                  // ignore
-                }
+                injectGlobalFontFaceCss(f.fontFamily, f.dataUrl);
               }
             }
             if (bundle.micSettings) {

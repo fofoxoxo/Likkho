@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Lock, Delete, ShieldAlert, Fingerprint } from 'lucide-react';
 
 interface PasscodeScreenProps {
@@ -16,6 +16,21 @@ export const PasscodeScreen: React.FC<PasscodeScreenProps> = ({
   const [error, setError] = useState<boolean>(false);
   const [bioMessage, setBioMessage] = useState<string>('');
 
+  // Ensure biometric prompt only fires ONCE when lock screen opens, and never interrupts PIN typing!
+  const hasAutoPromptedRef = useRef<boolean>(false);
+  const onUnlockRef = useRef(onUnlock);
+  onUnlockRef.current = onUnlock;
+
+  const cancelActiveBiometricPromptIfAny = () => {
+    try {
+      if (window.LikkhoNative && typeof window.LikkhoNative.cancelBiometricPrompt === 'function') {
+        window.LikkhoNative.cancelBiometricPrompt();
+      }
+    } catch {
+      // ignore
+    }
+  };
+
   const triggerBiometricUnlock = () => {
     setBioMessage('');
     if (window.LikkhoNative && typeof window.LikkhoNative.authenticateBiometric === 'function') {
@@ -23,7 +38,6 @@ export const PasscodeScreen: React.FC<PasscodeScreenProps> = ({
       return;
     }
 
-    // Fallback WebAuthn platform authenticator check for browser preview
     if (window.PublicKeyCredential) {
       navigator.credentials
         .create({
@@ -44,10 +58,10 @@ export const PasscodeScreen: React.FC<PasscodeScreenProps> = ({
           },
         })
         .then(() => {
-          onUnlock();
+          onUnlockRef.current();
         })
         .catch(() => {
-          setBioMessage('Please use your PIN or Android Biometric sensor.');
+          setBioMessage('Use your PIN to unlock.');
         });
     }
   };
@@ -55,26 +69,35 @@ export const PasscodeScreen: React.FC<PasscodeScreenProps> = ({
   useEffect(() => {
     window.__onLikkhoBiometricResult = (success: boolean, message?: string) => {
       if (success) {
-        onUnlock();
-      } else if (message) {
+        onUnlockRef.current();
+      } else if (message && message !== 'Cancelled') {
         setBioMessage(message);
       }
     };
 
-    // Automatically prompt biometric authentication when lock screen opens if enabled
-    if (biometricsEnabled && window.LikkhoNative?.authenticateBiometric) {
+    // Prompt biometric authentication ONLY ONCE when the lock screen first opens
+    if (
+      biometricsEnabled &&
+      !hasAutoPromptedRef.current &&
+      window.LikkhoNative?.authenticateBiometric
+    ) {
+      hasAutoPromptedRef.current = true;
       const timer = window.setTimeout(() => {
         window.LikkhoNative?.authenticateBiometric?.();
-      }, 250);
-      return () => window.clearTimeout(timer);
+      }, 220);
+      return () => {
+        window.clearTimeout(timer);
+      };
     }
 
     return () => {
       window.__onLikkhoBiometricResult = undefined;
     };
-  }, [biometricsEnabled, onUnlock]);
+  }, [biometricsEnabled]);
 
   const handleDigit = (digit: string) => {
+    // As soon as the user starts typing their PIN, cancel any native Biometric dialog so it never forces or interrupts them!
+    cancelActiveBiometricPromptIfAny();
     setError(false);
     setBioMessage('');
     const next = (entered + digit).slice(0, savedPasscode.length || 4);
@@ -82,7 +105,7 @@ export const PasscodeScreen: React.FC<PasscodeScreenProps> = ({
 
     if (next.length === savedPasscode.length) {
       if (next === savedPasscode) {
-        onUnlock();
+        onUnlockRef.current();
       } else {
         setError(true);
         if (typeof navigator !== 'undefined' && navigator.vibrate) {
@@ -94,6 +117,7 @@ export const PasscodeScreen: React.FC<PasscodeScreenProps> = ({
   };
 
   const handleBackspace = () => {
+    cancelActiveBiometricPromptIfAny();
     setError(false);
     setEntered((prev) => prev.slice(0, -1));
   };

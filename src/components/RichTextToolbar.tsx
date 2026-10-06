@@ -49,6 +49,8 @@ import {
 interface RichTextToolbarProps {
   editorRef: React.RefObject<HTMLDivElement | null>;
   onContentChange: () => void;
+  onUndoCanvas?: () => void;
+  onRedoCanvas?: () => void;
   canvasBgDataUrl: string | null;
   canvasBgOpacity: number;
   onChangeCanvasBg: (dataUrl: string | null, opacity: number) => void;
@@ -136,6 +138,8 @@ const BUILTIN_FONTS = [
 export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
   editorRef,
   onContentChange,
+  onUndoCanvas,
+  onRedoCanvas,
   canvasBgDataUrl,
   canvasBgOpacity,
   onChangeCanvasBg,
@@ -155,7 +159,6 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
   const [linkUrl, setLinkUrl] = useState<string>('https://');
   const [selectedTextPreview, setSelectedTextPreview] = useState<string>('');
   const [hintToast, setHintToast] = useState<string | null>(null);
-  const [fontLangType, setFontLangType] = useState<'en' | 'hi'>('en');
 
   // Active Custom Font Family state (null = Default Font active)
   const [activeFontFamily, setActiveFontFamily] = useState<string | null>(null);
@@ -932,18 +935,43 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     const reader = new FileReader();
     reader.onload = async () => {
       if (typeof reader.result === 'string') {
+        const rawDataUrl = reader.result;
+        const base64Idx = rawDataUrl.indexOf(',');
+        const base64Payload = base64Idx >= 0 ? rawDataUrl.slice(base64Idx + 1) : rawDataUrl;
+        const normalizedDataUrl = `data:font/ttf;base64,${base64Payload}`;
         const cleanName = file.name.replace(/\.(ttf|otf|woff2?)$/i, '');
         const familyId = `CustomFont_${Date.now()}`;
+
         try {
-          const fontFace = new FontFace(familyId, `url(${reader.result})`);
-          const loaded = await fontFace.load();
-          document.fonts.add(loaded);
+          // 1. Inject global @font-face CSS rule so non-Google / third-party Hindi & English .ttf fonts always apply on Canvas
+          const styleId = `likkho-font-style-${familyId}`;
+          if (!document.getElementById(styleId)) {
+            const styleEl = document.createElement('style');
+            styleEl.id = styleId;
+            styleEl.textContent = `@font-face { font-family: '${familyId}'; src: url('${normalizedDataUrl}') format('truetype'), url('${rawDataUrl}'); font-weight: normal; font-style: normal; font-display: swap; }`;
+            document.head.appendChild(styleEl);
+          }
+
+          // 2. Also load binary ArrayBuffer directly into document.fonts
+          try {
+            const bin = atob(base64Payload);
+            const bytes = new Uint8Array(bin.length);
+            for (let i = 0; i < bin.length; i++) {
+              bytes[i] = bin.charCodeAt(i);
+            }
+            const fontFace = new FontFace(familyId, bytes.buffer);
+            const loaded = await fontFace.load();
+            document.fonts.add(loaded);
+          } catch {
+            // @font-face style tag above still handles rendering even if strict OTS parser warns
+          }
+
           const item: CustomFontItem = {
             id: familyId,
             name: cleanName,
-            lang: fontLangType,
+            lang: 'custom',
             fontFamily: familyId,
-            dataUrl: reader.result,
+            dataUrl: normalizedDataUrl,
           };
           onAddCustomFont(item);
           handleToggleFontFamily(familyId);
@@ -1574,27 +1602,12 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
               onClick={() => {
                 saveCurrentSelection();
                 triggerAndroidMediaPermission();
-                setFontLangType('en');
                 ttfFontInputRef.current?.click();
               }}
-              className="flex h-8 items-center gap-1 border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-2.5 text-xs font-semibold hover:border-[#3366cc]"
+              className="flex h-8 items-center gap-1.5 border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3 text-xs font-semibold hover:border-[#3366cc]"
             >
               <Upload className="h-3.5 w-3.5 text-[#3366cc]" />
-              English .ttf
-            </button>
-            <button
-              type="button"
-              onMouseDown={preventFocusLoss}
-              onClick={() => {
-                saveCurrentSelection();
-                triggerAndroidMediaPermission();
-                setFontLangType('hi');
-                ttfFontInputRef.current?.click();
-              }}
-              className="flex h-8 items-center gap-1 border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-2.5 text-xs font-semibold hover:border-[#3366cc]"
-            >
-              <Upload className="h-3.5 w-3.5 text-[#3366cc]" />
-              Hindi .ttf
+              Upload .ttf
             </button>
           </div>
 
@@ -1618,7 +1631,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
                 family: bf.family,
               })),
               ...customFonts.map((cf) => ({
-                name: `${cf.name} (${cf.lang.toUpperCase()})`,
+                name: cf.name,
                 family: cf.fontFamily,
               })),
             ].map((f, i) => {
@@ -1833,11 +1846,17 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
         onMouseDown={preventFocusLoss}
         className="flex items-center gap-1 overflow-x-auto px-2 py-1.5 whitespace-nowrap"
       >
-        {/* History */}
+        {/* History (Full-Canvas Undo & Redo) */}
         <button
           type="button"
           onMouseDown={preventFocusLoss}
-          onClick={() => execToggleInline('undo')}
+          onClick={() => {
+            if (onUndoCanvas) {
+              onUndoCanvas();
+            } else {
+              execToggleInline('undo');
+            }
+          }}
           className={getBtnClass(false)}
           title="Undo"
         >
@@ -1846,7 +1865,13 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
         <button
           type="button"
           onMouseDown={preventFocusLoss}
-          onClick={() => execToggleInline('redo')}
+          onClick={() => {
+            if (onRedoCanvas) {
+              onRedoCanvas();
+            } else {
+              execToggleInline('redo');
+            }
+          }}
           className={getBtnClass(false)}
           title="Redo"
         >

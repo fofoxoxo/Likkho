@@ -79,6 +79,8 @@
   word-wrap: break-word;
   user-select: text;
   -webkit-user-select: text;
+  -webkit-overflow-scrolling: touch;
+  transform: translateZ(0);
 }
 
 .wiki-editor-content:empty:before {
