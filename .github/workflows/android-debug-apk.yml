@@ -34,12 +34,12 @@ jobs:
 
       - name: Install Dependencies & Build Web App
         run: |
-          npm install
+          npm install --legacy-peer-deps
           npm run build
 
       - name: Initialize Capacitor Android Project
         run: |
-          npm install @capacitor/core @capacitor/cli @capacitor/android @capacitor/status-bar @capacitor/local-notifications @capacitor/filesystem
+          npm install --legacy-peer-deps @capacitor/core @capacitor/cli @capacitor/android @capacitor/status-bar @capacitor/local-notifications @capacitor/filesystem
           if [ ! -f capacitor.config.json ]; then
             npx cap init "Likkho" "com.likkho.diary" --web-dir dist
           fi
