@@ -1,0 +1,20 @@
+{
+  "appId": "com.likkho.diary",
+  "appName": "Likkho",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  },
+  "plugins": {
+    "StatusBar": {
+      "overlaysWebView": false,
+      "style": "LIGHT",
+      "backgroundColor": "#FFFFFF"
+    },
+    "LocalNotifications": {
+      "smallIcon": "ic_stat_icon_config_sample",
+      "iconColor": "#3366CC",
+      "sound": "beep.wav"
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "WikiLog — Encrypted Wikipedia-Style Diary",
+  "description": "A Wikipedia-themed Android & web writing journal with AES-256 encrypted private vault backups, instant passcode lock, rich text keyboard toolbar, 1:1 PFP cropper, reminders, and GitHub Actions APK builder.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

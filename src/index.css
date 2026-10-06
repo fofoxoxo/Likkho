@@ -1,0 +1,194 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --wiki-bg: #ffffff;
+    --wiki-surface: #f8f9fa;
+    --wiki-border: #a2a9b1;
+    --wiki-hairline: #eaecf0;
+    --wiki-text: #202122;
+    --wiki-muted: #54595d;
+    --wiki-link: #3366cc;
+    --wiki-link-hover: #447ff5;
+    --font-serif-wiki: 'Cormorant Garamond', 'Linux Libertine', Georgia, 'Times New Roman', serif;
+    --font-prose-wiki: 'Lora', Georgia, serif;
+    --font-sans-wiki: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono-wiki: 'IBM Plex Mono', monospace;
+  }
+
+  .dark {
+    --wiki-bg: #101418;
+    --wiki-surface: #1a1f24;
+    --wiki-border: #3a4047;
+    --wiki-hairline: #272d34;
+    --wiki-text: #eaecf0;
+    --wiki-muted: #9aa0a6;
+    --wiki-link: #6699ff;
+    --wiki-link-hover: #88b3ff;
+  }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100dvh;
+    overflow: hidden;
+    background-color: var(--wiki-bg);
+    color: var(--wiki-text);
+    font-family: var(--font-sans-wiki);
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  #root {
+    width: 100%;
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+}
+
+.font-wiki-serif {
+  font-family: var(--font-serif-wiki);
+}
+
+.font-wiki-prose {
+  font-family: var(--font-prose-wiki);
+}
+
+.font-wiki-sans {
+  font-family: var(--font-sans-wiki);
+}
+
+.font-wiki-mono {
+  font-family: var(--font-mono-wiki);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Rich Text Editor Wikipedia Article Styling */
+.wiki-editor-content {
+  font-family: var(--font-prose-wiki);
+  font-size: 16px;
+  line-height: 1.72;
+  color: var(--wiki-text);
+  outline: none;
+  word-wrap: break-word;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.wiki-editor-content:empty:before {
+  content: attr(data-placeholder);
+  color: var(--wiki-muted);
+  opacity: 0.65;
+  pointer-events: none;
+  font-style: italic;
+}
+
+.wiki-editor-content h1 {
+  font-family: var(--font-serif-wiki);
+  font-size: 1.75rem;
+  font-weight: 600;
+  border-bottom: 1px solid var(--wiki-border);
+  padding-bottom: 0.25rem;
+  margin-top: 1.25rem;
+  margin-bottom: 0.75rem;
+  line-height: 1.25;
+}
+
+.wiki-editor-content h2 {
+  font-family: var(--font-serif-wiki);
+  font-size: 1.45rem;
+  font-weight: 600;
+  border-bottom: 1px solid var(--wiki-hairline);
+  padding-bottom: 0.2rem;
+  margin-top: 1.1rem;
+  margin-bottom: 0.6rem;
+  line-height: 1.3;
+}
+
+.wiki-editor-content h3 {
+  font-family: var(--font-sans-wiki);
+  font-size: 1.15rem;
+  font-weight: 600;
+  margin-top: 0.9rem;
+  margin-bottom: 0.45rem;
+}
+
+.wiki-editor-content p {
+  margin-bottom: 0.85rem;
+}
+
+.wiki-editor-content blockquote {
+  border-left: 3px solid var(--wiki-border);
+  background-color: var(--wiki-surface);
+  padding: 0.65rem 1rem;
+  margin: 0.85rem 0;
+  font-style: italic;
+  color: var(--wiki-muted);
+}
+
+.wiki-editor-content pre,
+.wiki-editor-content code {
+  font-family: var(--font-mono-wiki);
+  background-color: var(--wiki-surface);
+  border: 1px solid var(--wiki-hairline);
+  border-radius: 3px;
+  font-size: 0.88em;
+}
+
+.wiki-editor-content pre {
+  padding: 0.75rem;
+  overflow-x: auto;
+  margin: 0.85rem 0;
+}
+
+.wiki-editor-content code {
+  padding: 0.15rem 0.35rem;
+}
+
+.wiki-editor-content ul {
+  list-style-type: disc;
+  padding-left: 1.5rem;
+  margin: 0.65rem 0;
+}
+
+.wiki-editor-content ol {
+  list-style-type: decimal;
+  padding-left: 1.5rem;
+  margin: 0.65rem 0;
+}
+
+.wiki-editor-content hr {
+  border: none;
+  border-top: 1px solid var(--wiki-border);
+  margin: 1.25rem 0;
+}
+
+.wiki-editor-content a {
+  color: var(--wiki-link);
+  text-decoration: underline;
+}
+
+.wiki-editor-content sup.wiki-citation {
+  font-family: var(--font-sans-wiki);
+  font-size: 0.75em;
+  color: var(--wiki-link);
+  font-weight: 600;
+  margin-left: 2px;
+  cursor: pointer;
+}
+
+/* Custom subtle scrollbars */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(162, 169, 177, 0.4);
+  border-radius: 9999px;
+}
+
