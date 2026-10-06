@@ -7,9 +7,7 @@ import {
   ImagePlus,
   Save,
   Trash2,
-  X,
   Volume2,
-  Move,
   RotateCw,
   RotateCcw,
   ZoomIn,
@@ -664,114 +662,6 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
                 draggable={false}
                 className="block h-auto w-full pointer-events-none"
               />
-              {isSelected && (
-                <div className="absolute -top-8 right-0 flex items-center gap-1 bg-[#101418]/90 px-1.5 py-0.5 text-white shadow-md whitespace-nowrap">
-                  <Move className="h-3 w-3 text-[#6699ff]" />
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setCanvasImages((prev) =>
-                        prev.map((c) =>
-                          c.id === img.id
-                            ? { ...c, width: Math.max(50, c.width - 20) }
-                            : c
-                        )
-                      );
-                    }}
-                    className="px-1 text-[11px] font-bold hover:text-[#6699ff]"
-                    title="Shrink image"
-                  >
-                    -
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setCanvasImages((prev) =>
-                        prev.map((c) =>
-                          c.id === img.id
-                            ? { ...c, width: Math.min(420, c.width + 20) }
-                            : c
-                        )
-                      );
-                    }}
-                    className="px-1 text-[11px] font-bold hover:text-[#6699ff]"
-                    title="Enlarge image"
-                  >
-                    +
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setCanvasImages((prev) =>
-                        prev.map((c) =>
-                          c.id === img.id
-                            ? { ...c, rotation: ((c.rotation || 0) - 15) % 360 }
-                            : c
-                        )
-                      );
-                    }}
-                    className="px-1 text-[11px] hover:text-[#6699ff]"
-                    title="Rotate Left 15°"
-                  >
-                    <RotateCcw className="h-3 w-3" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setCanvasImages((prev) =>
-                        prev.map((c) =>
-                          c.id === img.id
-                            ? { ...c, rotation: ((c.rotation || 0) + 15) % 360 }
-                            : c
-                        )
-                      );
-                    }}
-                    className="px-1 text-[11px] hover:text-[#6699ff]"
-                    title="Rotate Right 15°"
-                  >
-                    <RotateCw className="h-3 w-3" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setCanvasImages((prev) =>
-                        prev.map((c) =>
-                          c.id === img.id
-                            ? {
-                                ...c,
-                                layer:
-                                  c.layer === 'background'
-                                    ? 'foreground'
-                                    : 'background',
-                              }
-                            : c
-                        )
-                      );
-                    }}
-                    className="px-1 text-[10px] font-bold text-[#6699ff] hover:text-white"
-                    title="Toggle BG / FG"
-                  >
-                    {isBehindText ? 'BG' : 'FG'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setCanvasImages((prev) => prev.filter((c) => c.id !== img.id));
-                      setSelectedCanvasImgId(null);
-                    }}
-                    className="ml-0.5 text-[#ff6b6b] hover:text-white"
-                    title="Remove image"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              )}
             </div>
           );
         })}

@@ -48,14 +48,19 @@ jobs:
           fi
           npx cap sync android
 
-      - name: Configure Android Permissions, Hidden .nomedia Vault, Biometric/Device-Lock Backup, Reminders & Unkillable Native Mic Service
+      - name: Configure Android Permissions, Hidden .nomedia Backup (/storage/emulated/0/.likkho_backups/) & Microphone Foreground Service
         run: |
-          MANIFEST="android/app/src/main/AndroidManifest.xml"
-          if ! grep -q "MANAGE_EXTERNAL_STORAGE" "$MANIFEST"; then
-            sed -i 's/<application/<uses-permission android:name="android.permission.POST_NOTIFICATIONS" \/>\n    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" \/>\n    <uses-permission android:name="android.permission.USE_EXACT_ALARM" \/>\n    <uses-permission android:name="android.permission.VIBRATE" \/>\n    <uses-permission android:name="android.permission.WAKE_LOCK" \/>\n    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" \/>\n    <uses-permission android:name="android.permission.USE_BIOMETRIC" \/>\n    <uses-permission android:name="android.permission.USE_FINGERPRINT" \/>\n    <uses-permission android:name="android.permission.RECORD_AUDIO" \/>\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" \/>\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" \/>\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" \/>\n    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" \/>\n    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" \/>\n    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" \/>\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" \/>\n    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" \/>\n    <application android:requestLegacyExternalStorage="true"/' "$MANIFEST"
+          # Set targetSdkVersion to 29 in variables.gradle so Android allows direct read/write to /storage/emulated/0/.likkho_backups/ with .nomedia across app reinstalls WITHOUT needing Manage All Files permission!
+          if [ -f android/variables.gradle ]; then
+            sed -i 's/targetSdkVersion = [0-9]*/targetSdkVersion = 29/g' android/variables.gradle || true
           fi
 
-          # Register ReminderReceiver and MicForegroundService inside <application>
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          if ! grep -q "FOREGROUND_SERVICE_MICROPHONE" "$MANIFEST"; then
+            sed -i 's/<application/<uses-permission android:name="android.permission.POST_NOTIFICATIONS" \/>\n    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" \/>\n    <uses-permission android:name="android.permission.USE_EXACT_ALARM" \/>\n    <uses-permission android:name="android.permission.VIBRATE" \/>\n    <uses-permission android:name="android.permission.WAKE_LOCK" \/>\n    <uses-permission android:name="android.permission.USE_BIOMETRIC" \/>\n    <uses-permission android:name="android.permission.USE_FINGERPRINT" \/>\n    <uses-permission android:name="android.permission.RECORD_AUDIO" \/>\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" \/>\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" \/>\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" \/>\n    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" \/>\n    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" \/>\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" \/>\n    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" \/>\n    <application android:requestLegacyExternalStorage="true"/' "$MANIFEST"
+          fi
+
+          # Register ReminderReceiver and MicForegroundService (foregroundServiceType="microphone", stopWithTask="false") inside <application>
           if ! grep -q "ReminderReceiver" "$MANIFEST"; then
             sed -i 's/<\/application>/    <receiver android:name=".ReminderReceiver" android:exported="false" \/>\n        <service android:name=".MicForegroundService" android:exported="false" android:stopWithTask="false" android:foregroundServiceType="microphone" \/>\n    <\/application>/' "$MANIFEST"
           fi
@@ -138,8 +143,9 @@ jobs:
           EOF
 
           # 2. Create MicForegroundService.java:
-          #    - Records audio directly in the Android Foreground Service using native AudioRecord (NOT inside WebView!)
-          #    - Even if the user swipes Likkho away from Recent Apps (destroying MainActivity/WebView), this Service + floating overlay window stays 100% alive and keeps recording until the user stops it!
+          #    - Uses Microphone Foreground Service (foregroundServiceType="microphone") with START_STICKY and persistent Notification Bell
+          #    - Keeps recording when screen is off, phone is locked, or app is swiped away from Recent Apps WITHOUT requiring "Display over other apps" permission!
+          #    - (Future-ready overlay helper method is preserved in commented form at the bottom for future reference if ever needed)
           cat << 'EOF' > "$PKG_DIR/MicForegroundService.java"
           package com.likkho.diary;
 
@@ -152,8 +158,6 @@ jobs:
           import android.content.Context;
           import android.content.Intent;
           import android.content.pm.ServiceInfo;
-          import android.graphics.Color;
-          import android.graphics.PixelFormat;
           import android.media.AudioFormat;
           import android.media.AudioRecord;
           import android.media.MediaRecorder;
@@ -161,14 +165,8 @@ jobs:
           import android.os.IBinder;
           import android.os.PowerManager;
           import android.os.SystemClock;
-          import android.provider.Settings;
-          import android.view.Gravity;
-          import android.view.WindowManager;
-          import android.widget.TextView;
           import androidx.core.app.NotificationCompat;
-          import java.io.ByteArrayOutputStream;
           import java.io.File;
-          import java.io.FileInputStream;
           import java.io.FileOutputStream;
           import java.io.RandomAccessFile;
 
@@ -186,8 +184,6 @@ jobs:
               private PowerManager.WakeLock wakeLock;
               private AudioRecord audioRecord;
               private Thread recordingThread;
-              private WindowManager windowManager;
-              private TextView overlayBadgeView;
               private int sampleRate = 44100;
 
               @Override
@@ -215,8 +211,8 @@ jobs:
                   if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && nm != null) {
                       NotificationChannel channel = new NotificationChannel(
                           CHANNEL_ID,
-                          "Likkho Voice Recording",
-                          NotificationManager.IMPORTANCE_HIGH
+                          "Likkho Microphone Recording",
+                          NotificationManager.IMPORTANCE_LOW
                       );
                       nm.createNotificationChannel(channel);
                   }
@@ -239,13 +235,16 @@ jobs:
                       PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
                   );
 
+                  // Persistent Notification Bell so Android OS never kills the microphone process on screen off / task swipe
                   Notification notification = new NotificationCompat.Builder(this, CHANNEL_ID)
-                      .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-                      .setContentTitle("Likkho Microphone Recording")
-                      .setContentText("Recording continues even if app is closed. Tap Stop when done.")
+                      .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
+                      .setContentTitle("Likkho Microphone Active")
+                      .setContentText("Recording audio in background. Tap Stop to finish.")
                       .setOngoing(true)
+                      .setPriority(NotificationCompat.PRIORITY_LOW)
+                      .setCategory(NotificationCompat.CATEGORY_SERVICE)
                       .setContentIntent(pendingOpen)
-                      .addAction(android.R.drawable.ic_media_pause, "Stop & Save", pendingStop)
+                      .addAction(android.R.drawable.ic_media_pause, "Stop", pendingStop)
                       .build();
 
                   if (Build.VERSION.SDK_INT >= 34) {
@@ -254,59 +253,11 @@ jobs:
                       startForeground(NOTIF_ID, notification);
                   }
 
-                  showFloatingOverlayBadge();
                   if (!isRecording) {
                       startNativeAudioRecordLoop();
                   }
 
                   return START_STICKY;
-              }
-
-              private void showFloatingOverlayBadge() {
-                  if (overlayBadgeView != null) return;
-                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
-                      return;
-                  }
-                  try {
-                      windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
-                      if (windowManager == null) return;
-
-                      overlayBadgeView = new TextView(this);
-                      overlayBadgeView.setText("● REC (Likkho - Tap to Stop)");
-                      overlayBadgeView.setTextColor(Color.WHITE);
-                      overlayBadgeView.setTextSize(11f);
-                      overlayBadgeView.setBackgroundColor(Color.parseColor("#CCb32424"));
-                      overlayBadgeView.setPadding(24, 12, 24, 12);
-                      overlayBadgeView.setOnClickListener(v -> stopNativeRecordingAndFinish());
-
-                      int layoutType = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
-                          ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-                          : WindowManager.LayoutParams.TYPE_PHONE;
-
-                      WindowManager.LayoutParams params = new WindowManager.LayoutParams(
-                          WindowManager.LayoutParams.WRAP_CONTENT,
-                          WindowManager.LayoutParams.WRAP_CONTENT,
-                          layoutType,
-                          WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON,
-                          PixelFormat.TRANSLUCENT
-                      );
-                      params.gravity = Gravity.TOP | Gravity.END;
-                      params.x = 24;
-                      params.y = 120;
-
-                      windowManager.addView(overlayBadgeView, params);
-                  } catch (Exception ignored) {
-                      overlayBadgeView = null;
-                  }
-              }
-
-              private void removeFloatingOverlayBadge() {
-                  if (windowManager != null && overlayBadgeView != null) {
-                      try {
-                          windowManager.removeView(overlayBadgeView);
-                      } catch (Exception ignored) {}
-                      overlayBadgeView = null;
-                  }
               }
 
               private void startNativeAudioRecordLoop() {
@@ -336,7 +287,6 @@ jobs:
 
                       recordingThread = new Thread(() -> {
                           try (FileOutputStream fos = new FileOutputStream(wavFile)) {
-                              // Write 44-byte placeholder header
                               fos.write(new byte[44]);
                               byte[] buffer = new byte[bufferSize];
                               long totalPcmBytes = 0;
@@ -396,7 +346,6 @@ jobs:
 
               public void stopNativeRecordingAndFinish() {
                   if (!isRecording) {
-                      removeFloatingOverlayBadge();
                       stopForeground(true);
                       stopSelf();
                       return;
@@ -418,7 +367,6 @@ jobs:
                       }
                   } catch (Exception ignored) {}
 
-                  removeFloatingOverlayBadge();
                   MainActivity.deliverFinishedNativeRecordingIfPossible(this);
                   stopForeground(true);
                   stopSelf();
@@ -426,8 +374,7 @@ jobs:
 
               @Override
               public void onTaskRemoved(Intent rootIntent) {
-                  // Do NOT stop recording when user clears Likkho from Recent Apps!
-                  // If OEM tries to kill service on swipe, schedule immediate restart continuation
+                  // Keep recording active even when Likkho is swiped away from Recent Apps (Task Manager)
                   if (isRecording) {
                       Intent restartServiceIntent = new Intent(getApplicationContext(), this.getClass());
                       restartServiceIntent.setPackage(getPackageName());
@@ -441,7 +388,7 @@ jobs:
                       if (alarmService != null) {
                           alarmService.set(
                               AlarmManager.ELAPSED_REALTIME,
-                              SystemClock.elapsedRealtime() + 500,
+                              SystemClock.elapsedRealtime() + 400,
                               restartServicePendingIntent
                           );
                       }
@@ -451,7 +398,6 @@ jobs:
 
               @Override
               public void onDestroy() {
-                  removeFloatingOverlayBadge();
                   if (wakeLock != null && wakeLock.isHeld()) {
                       wakeLock.release();
                   }
@@ -462,13 +408,23 @@ jobs:
               public IBinder onBind(Intent intent) {
                   return null;
               }
+
+              /*
+               * PRESERVED FOR FUTURE USE (If Display Over Other Apps / Floating Overlay is ever needed in future):
+               *
+               * private void showFloatingOverlayBadgeFuture() {
+               *     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && Settings.canDrawOverlays(this)) {
+               *         WindowManager wm = (WindowManager) getSystemService(WINDOW_SERVICE);
+               *         // Add TYPE_APPLICATION_OVERLAY view
+               *     }
+               * }
+               */
           }
           EOF
 
-          # 3. Configure MainActivity.java with:
-          #    - Hidden Special Folder (.likkho_private_vault with .nomedia) + All Files Access / Storage fallback so Restore ALWAYS finds the backup after reinstall
-          #    - Biometric / Device Lock (PIN, Pattern, or Fingerprint) Binding for Backup & Restore
-          #    - Display Over Other Apps (SYSTEM_ALERT_WINDOW) permission + Service-hosted AudioRecord Mic Recording
+          # 3. Configure MainActivity.java:
+          #    - Auto-scans and writes AES-256-GCM JSON backup to /storage/emulated/0/.likkho_backups/ with .nomedia file
+          #    - Does NOT force Manage All Files or Display Over Other Apps permissions (preserved in commented block for future use)
           cat << 'EOF' > "$PKG_DIR/MainActivity.java"
           package com.likkho.diary;
 
@@ -491,7 +447,6 @@ jobs:
           import android.os.CancellationSignal;
           import android.os.Environment;
           import android.provider.MediaStore;
-          import android.provider.Settings;
           import android.util.Base64;
           import android.webkit.JavascriptInterface;
           import android.webkit.PermissionRequest;
@@ -519,12 +474,11 @@ jobs:
               private static final int FILE_CHOOSER_RESULT_CODE = 1003;
               private static final int NOTIF_PERMISSION_REQUEST_CODE = 1004;
               private static final int DEVICE_CREDENTIAL_UNLOCK_CODE = 1005;
-              private static final int DEVICE_CREDENTIAL_BACKUP_CODE = 1006;
-              private static final int PICK_VAULT_FILE_CODE = 1007;
 
-              private static final String HIDDEN_VAULT_DIR = ".likkho_private_vault";
-              private static final String LEGACY_VAULT_DIR = "Likkho_Backup";
-              private static final String VAULT_FILENAME = "likkho_encrypted_vault.bak";
+              // Public storage hidden backup folder (/storage/emulated/0/.likkho_backups/) with .nomedia
+              private static final String HIDDEN_ROOT_FOLDER = ".likkho_backups";
+              private static final String VAULT_FILENAME = "likkho_encrypted_vault.json";
+              private static final String LEGACY_VAULT_FILENAME = "likkho_encrypted_vault.bak";
 
               public static MainActivity currentInstance;
 
@@ -537,11 +491,7 @@ jobs:
                   super.onCreate(savedInstanceState);
                   currentInstance = this;
 
-                  if (Build.VERSION.SDK_INT >= 33) {
-                      if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                          ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.POST_NOTIFICATIONS}, NOTIF_PERMISSION_REQUEST_CODE);
-                      }
-                  }
+                  requestStorageAndNotificationPermissionsOnStart();
 
                   if (this.bridge != null && this.bridge.getWebView() != null) {
                       final WebView webView = this.bridge.getWebView();
@@ -617,7 +567,6 @@ jobs:
               public void onResume() {
                   super.onResume();
                   currentInstance = this;
-                  // If a native mic recording finished while app was closed/swiped, deliver it now
                   if (!MicForegroundService.isRecording && MicForegroundService.latestFinishedFilePath != null) {
                       deliverFinishedNativeRecordingIfPossible(this);
                   }
@@ -653,6 +602,24 @@ jobs:
                   } catch (Exception ignored) {}
               }
 
+              private void requestStorageAndNotificationPermissionsOnStart() {
+                  List<String> needed = new ArrayList<>();
+                  if (Build.VERSION.SDK_INT >= 33) {
+                      if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                          needed.add(Manifest.permission.POST_NOTIFICATIONS);
+                      }
+                  }
+                  if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+                      needed.add(Manifest.permission.READ_EXTERNAL_STORAGE);
+                  }
+                  if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+                      needed.add(Manifest.permission.WRITE_EXTERNAL_STORAGE);
+                  }
+                  if (!needed.isEmpty()) {
+                      ActivityCompat.requestPermissions(this, needed.toArray(new String[0]), MEDIA_PERMISSION_REQUEST_CODE);
+                  }
+              }
+
               private boolean requestMediaPermissionsIfNeeded() {
                   List<String> needed = new ArrayList<>();
                   if (Build.VERSION.SDK_INT >= 33) {
@@ -662,36 +629,18 @@ jobs:
                       if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_AUDIO) != PackageManager.PERMISSION_GRANTED) {
                           needed.add(Manifest.permission.READ_MEDIA_AUDIO);
                       }
-                  } else {
-                      if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-                          needed.add(Manifest.permission.READ_EXTERNAL_STORAGE);
-                      }
+                  }
+                  if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+                      needed.add(Manifest.permission.READ_EXTERNAL_STORAGE);
+                  }
+                  if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+                      needed.add(Manifest.permission.WRITE_EXTERNAL_STORAGE);
                   }
                   if (!needed.isEmpty()) {
                       ActivityCompat.requestPermissions(this, needed.toArray(new String[0]), MEDIA_PERMISSION_REQUEST_CODE);
                       return true;
                   }
                   return false;
-              }
-
-              private void ensureStorageAccessForPersistentHiddenVault() {
-                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                      if (!Environment.isExternalStorageManager()) {
-                          try {
-                              Intent intent = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION);
-                              intent.setData(Uri.parse("package:" + getPackageName()));
-                              startActivity(intent);
-                              Toast.makeText(this, "Please allow All Files Access so Likkho can access its hidden .nomedia backup folder across reinstalls.", Toast.LENGTH_LONG).show();
-                          } catch (Exception e) {
-                              try {
-                                  Intent intent = new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION);
-                                  startActivity(intent);
-                              } catch (Exception ignored) {}
-                          }
-                      }
-                  } else {
-                      requestMediaPermissionsIfNeeded();
-                  }
               }
 
               private void notifyBiometricResult(final boolean success, final String msg) {
@@ -706,31 +655,7 @@ jobs:
                   });
               }
 
-              private void notifyDeviceLockBackupResult(final boolean success, final String msg) {
-                  runOnUiThread(() -> {
-                      if (bridge != null && bridge.getWebView() != null) {
-                          String safeMsg = msg != null ? msg.replace("'", "\\'") : "";
-                          bridge.getWebView().evaluateJavascript(
-                              "if(window.__onLikkhoDeviceLockBackupResult) window.__onLikkhoDeviceLockBackupResult(" + success + ", '" + safeMsg + "');",
-                              null
-                          );
-                      }
-                  });
-              }
-
               private void startNativeMicServiceInternal(int sampleRate) {
-                  // Prompt Display Over Other Apps permission once if not granted so user gets floating stop badge and OEM never kills background mic service
-                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
-                      try {
-                          Intent overlayIntent = new Intent(
-                              Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                              Uri.parse("package:" + getPackageName())
-                          );
-                          startActivity(overlayIntent);
-                          Toast.makeText(this, "Allow 'Display over other apps' so recording stays active even when swiped from Recent Apps.", Toast.LENGTH_LONG).show();
-                      } catch (Exception ignored) {}
-                  }
-
                   Intent serviceIntent = new Intent(MainActivity.this, MicForegroundService.class);
                   serviceIntent.setAction(MicForegroundService.ACTION_START);
                   serviceIntent.putExtra("sampleRate", sampleRate);
@@ -740,6 +665,25 @@ jobs:
                       startService(serviceIntent);
                   }
               }
+
+              /*
+               * PRESERVED FOR FUTURE USE (Manage All Files & Display Over Other Apps permission helpers):
+               *
+               * private void requestManageAllFilesFuture() {
+               *     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !Environment.isExternalStorageManager()) {
+               *         Intent intent = new Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION);
+               *         intent.setData(Uri.parse("package:" + getPackageName()));
+               *         startActivity(intent);
+               *     }
+               * }
+               *
+               * private void requestDisplayOverOtherAppsFuture() {
+               *     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !android.provider.Settings.canDrawOverlays(this)) {
+               *         Intent overlayIntent = new Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:" + getPackageName()));
+               *         startActivity(overlayIntent);
+               *     }
+               * }
+               */
 
               public class LikkhoAndroidBridge {
                   @JavascriptInterface
@@ -848,70 +792,6 @@ jobs:
                   }
 
                   @JavascriptInterface
-                  public void authenticateDeviceLockForBackup() {
-                      runOnUiThread(() -> {
-                          ensureStorageAccessForPersistentHiddenVault();
-                          try {
-                              KeyguardManager km = (KeyguardManager) getSystemService(Context.KEYGUARD_SERVICE);
-                              if (km != null && !km.isKeyguardSecure()) {
-                                  // No lock screen set on device
-                                  notifyDeviceLockBackupResult(true, "");
-                                  return;
-                              }
-
-                              if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                                  BiometricPrompt.Builder builder = new BiometricPrompt.Builder(MainActivity.this)
-                                      .setTitle("Verify Device Lock for Likkho Vault")
-                                      .setSubtitle("Use Fingerprint, Face, PIN, or Pattern to unlock backup vault");
-
-                                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                                      builder.setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG | BiometricManager.Authenticators.BIOMETRIC_WEAK | BiometricManager.Authenticators.DEVICE_CREDENTIAL);
-                                  } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                                      builder.setDeviceCredentialAllowed(true);
-                                  } else {
-                                      builder.setNegativeButton("Cancel", getMainExecutor(), (d, w) -> notifyDeviceLockBackupResult(false, "Verification cancelled"));
-                                  }
-
-                                  builder.build().authenticate(
-                                      new CancellationSignal(),
-                                      getMainExecutor(),
-                                      new BiometricPrompt.AuthenticationCallback() {
-                                          @Override
-                                          public void onAuthenticationSucceeded(BiometricPrompt.AuthenticationResult result) {
-                                              notifyDeviceLockBackupResult(true, "");
-                                          }
-
-                                          @Override
-                                          public void onAuthenticationError(int errorCode, CharSequence errString) {
-                                              // Fallback to Keyguard credential screen if biometric prompt errors
-                                              if (km != null && km.isKeyguardSecure()) {
-                                                  Intent authIntent = km.createConfirmDeviceCredentialIntent("Likkho Backup Vault", "Verify PIN, Pattern, or Password");
-                                                  if (authIntent != null) {
-                                                      startActivityForResult(authIntent, DEVICE_CREDENTIAL_BACKUP_CODE);
-                                                      return;
-                                                  }
-                                              }
-                                              notifyDeviceLockBackupResult(false, errString != null ? errString.toString() : "Verification cancelled");
-                                          }
-                                      }
-                                  );
-                              } else if (km != null && km.isKeyguardSecure()) {
-                                  Intent authIntent = km.createConfirmDeviceCredentialIntent("Likkho Backup Vault", "Verify PIN, Pattern, or Password");
-                                  if (authIntent != null) {
-                                      startActivityForResult(authIntent, DEVICE_CREDENTIAL_BACKUP_CODE);
-                                      return;
-                                  }
-                                  notifyDeviceLockBackupResult(true, "");
-                              } else {
-                                  notifyDeviceLockBackupResult(true, "");
-                              }
-                          } catch (Exception e) {
-                              notifyDeviceLockBackupResult(true, "");
-                          }
-                      });
-                  }
-
-                  @JavascriptInterface
                   public void scheduleNativeReminder(String logId, String title, String body, long triggerAtMs) {
                       runOnUiThread(() -> {
                           try {
@@ -968,85 +848,55 @@ jobs:
                       });
                   }
 
+                  /**
+                   * Saves AES-256-GCM JSON payload to /storage/emulated/0/.likkho_backups/ with .nomedia file
+                   */
                   @JavascriptInterface
                   public boolean writePersistentVaultBackup(String envelope) {
                       byte[] bytes = envelope.getBytes(StandardCharsets.UTF_8);
                       boolean wroteAny = false;
 
-                      // 1. Write to Hidden Special Folder in Public Downloads: /storage/emulated/0/Download/.likkho_private_vault/ with .nomedia file!
-                      String[] targetSubDirs = new String[]{HIDDEN_VAULT_DIR, LEGACY_VAULT_DIR};
-                      File[] baseRoots = new File[]{
-                          Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-                          Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS)
+                      File[] candidateDirs = new File[]{
+                          new File(Environment.getExternalStorageDirectory(), HIDDEN_ROOT_FOLDER),
+                          new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), HIDDEN_ROOT_FOLDER),
+                          new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), HIDDEN_ROOT_FOLDER)
                       };
 
-                      for (File root : baseRoots) {
-                          if (root == null) continue;
-                          for (String sub : targetSubDirs) {
-                              try {
-                                  File vaultDir = new File(root, sub);
-                                  if (!vaultDir.exists()) vaultDir.mkdirs();
-                                  File nomedia = new File(vaultDir, ".nomedia");
-                                  if (!nomedia.exists()) nomedia.createNewFile();
-                                  File outFile = new File(vaultDir, VAULT_FILENAME);
-                                  try (FileOutputStream fos = new FileOutputStream(outFile, false)) {
-                                      fos.write(bytes);
-                                      fos.flush();
-                                      wroteAny = true;
-                                  }
-                              } catch (Exception ignored) {}
-                          }
-                      }
-
-                      // 2. Also write via MediaStore into Download/.likkho_private_vault/
-                      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                      for (File dir : candidateDirs) {
                           try {
-                              ContentResolver resolver = getContentResolver();
-                              Uri collection = MediaStore.Downloads.EXTERNAL_CONTENT_URI;
-                              String selection = MediaStore.Downloads.DISPLAY_NAME + " = ?";
-                              String[] selectionArgs = new String[]{VAULT_FILENAME};
-                              try (Cursor cursor = resolver.query(collection, new String[]{MediaStore.Downloads._ID}, selection, selectionArgs, null)) {
-                                  if (cursor != null) {
-                                      while (cursor.moveToNext()) {
-                                          long id = cursor.getLong(0);
-                                          resolver.delete(ContentUris.withAppendedId(collection, id), null, null);
-                                      }
-                                  }
-                              } catch (Exception ignored) {}
-
-                              ContentValues values = new ContentValues();
-                              values.put(MediaStore.Downloads.DISPLAY_NAME, VAULT_FILENAME);
-                              values.put(MediaStore.Downloads.MIME_TYPE, "application/octet-stream");
-                              values.put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/" + HIDDEN_VAULT_DIR);
-                              Uri uri = resolver.insert(collection, values);
-                              if (uri != null) {
-                                  try (OutputStream os = resolver.openOutputStream(uri, "wt")) {
-                                      if (os != null) {
-                                          os.write(bytes);
-                                          os.flush();
-                                          wroteAny = true;
-                                      }
-                                  }
+                              if (!dir.exists()) dir.mkdirs();
+                              File nomedia = new File(dir, ".nomedia");
+                              if (!nomedia.exists()) nomedia.createNewFile();
+                              File outFile = new File(dir, VAULT_FILENAME);
+                              try (FileOutputStream fos = new FileOutputStream(outFile, false)) {
+                                  fos.write(bytes);
+                                  fos.flush();
+                                  wroteAny = true;
                               }
                           } catch (Exception ignored) {}
                       }
                       return wroteAny;
                   }
 
+                  /**
+                   * Auto-scans /storage/emulated/0/.likkho_backups/ (and fallback paths) for the encrypted backup JSON file
+                   */
                   @JavascriptInterface
                   public String readPersistentVaultBackup() {
-                      // 1. Check Hidden Special Folder (.likkho_private_vault) AND Legacy Folder (Likkho_Backup) in Downloads & Documents
-                      File[] baseRoots = new File[]{
-                          Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-                          Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS)
+                      File[] candidateDirs = new File[]{
+                          new File(Environment.getExternalStorageDirectory(), HIDDEN_ROOT_FOLDER),
+                          new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), HIDDEN_ROOT_FOLDER),
+                          new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), HIDDEN_ROOT_FOLDER),
+                          new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), ".likkho_private_vault"),
+                          new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "Likkho_Backup")
                       };
-                      String[] subDirs = new String[]{HIDDEN_VAULT_DIR, LEGACY_VAULT_DIR, "Likkho/" + HIDDEN_VAULT_DIR};
+                      String[] fileNames = new String[]{VAULT_FILENAME, LEGACY_VAULT_FILENAME};
 
-                      for (File root : baseRoots) {
-                          if (root == null) continue;
-                          for (String sub : subDirs) {
+                      for (File dir : candidateDirs) {
+                          if (dir == null) continue;
+                          for (String fname : fileNames) {
                               try {
-                                  File candidate = new File(new File(root, sub), VAULT_FILENAME);
+                                  File candidate = new File(dir, fname);
                                   if (candidate.exists() && candidate.length() > 0) {
                                       try (FileInputStream fis = new FileInputStream(candidate)) {
                                           ByteArrayOutputStream baos = new ByteArrayOutputStream();
@@ -1062,53 +912,7 @@ jobs:
                               } catch (Exception ignored) {}
                           }
                       }
-
-                      // 2. Query MediaStore.Downloads AND MediaStore.Files for likkho_encrypted_vault%
-                      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                          Uri[] collections = new Uri[]{
-                              MediaStore.Downloads.EXTERNAL_CONTENT_URI,
-                              MediaStore.Files.getContentUri("external")
-                          };
-                          ContentResolver resolver = getContentResolver();
-                          for (Uri collection : collections) {
-                              try {
-                                  String selection = MediaStore.MediaColumns.DISPLAY_NAME + " LIKE ?";
-                                  String[] selectionArgs = new String[]{"likkho_encrypted_vault%"};
-                                  String sortOrder = MediaStore.MediaColumns.DATE_MODIFIED + " DESC";
-                                  try (Cursor cursor = resolver.query(collection, new String[]{MediaStore.MediaColumns._ID}, selection, selectionArgs, sortOrder)) {
-                                      if (cursor != null && cursor.moveToFirst()) {
-                                          long id = cursor.getLong(0);
-                                          Uri fileUri = ContentUris.withAppendedId(collection, id);
-                                          try (InputStream is = resolver.openInputStream(fileUri)) {
-                                              if (is != null) {
-                                                  ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                                                  byte[] buf = new byte[8192];
-                                                  int r;
-                                                  while ((r = is.read(buf)) != -1) {
-                                                      baos.write(buf, 0, r);
-                                                  }
-                                                  String content = new String(baos.toByteArray(), StandardCharsets.UTF_8);
-                                                  if (!content.trim().isEmpty()) return content;
-                                              }
-                                          }
-                                      }
-                                  }
-                              } catch (Exception ignored) {}
-                          }
-                      }
                       return "";
-                  }
-
-                  @JavascriptInterface
-                  public void pickVaultBackupFile() {
-                      runOnUiThread(() -> {
-                          try {
-                              Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-                              intent.addCategory(Intent.CATEGORY_OPENABLE);
-                              intent.setType("*/*");
-                              startActivityForResult(intent, PICK_VAULT_FILE_CODE);
-                          } catch (Exception ignored) {}
-                      });
                   }
 
                   @JavascriptInterface
@@ -1156,33 +960,6 @@ jobs:
                       }
                   } else if (requestCode == DEVICE_CREDENTIAL_UNLOCK_CODE) {
                       notifyBiometricResult(resultCode == RESULT_OK, "");
-                  } else if (requestCode == DEVICE_CREDENTIAL_BACKUP_CODE) {
-                      notifyDeviceLockBackupResult(resultCode == RESULT_OK, "");
-                  } else if (requestCode == PICK_VAULT_FILE_CODE) {
-                      String content = "";
-                      if (resultCode == RESULT_OK && data != null && data.getData() != null) {
-                          try (InputStream is = getContentResolver().openInputStream(data.getData())) {
-                              if (is != null) {
-                                  ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                                  byte[] buf = new byte[8192];
-                                  int r;
-                                  while ((r = is.read(buf)) != -1) {
-                                      baos.write(buf, 0, r);
-                                  }
-                                  content = new String(baos.toByteArray(), StandardCharsets.UTF_8);
-                              }
-                          } catch (Exception ignored) {}
-                      }
-                      final String finalContent = content;
-                      runOnUiThread(() -> {
-                          if (bridge != null && bridge.getWebView() != null) {
-                              String escaped = finalContent.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n").replace("\r", "");
-                              bridge.getWebView().evaluateJavascript(
-                                  "if(window.__onLikkhoVaultFilePicked) window.__onLikkhoVaultFilePicked('" + escaped + "');",
-                                  null
-                              );
-                          }
-                      });
                   } else {
                       super.onActivityResult(requestCode, resultCode, data);
                   }
