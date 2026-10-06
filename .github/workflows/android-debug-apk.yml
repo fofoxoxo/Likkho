@@ -55,14 +55,15 @@ jobs:
             sed -i 's/<application/<uses-permission android:name="android.permission.POST_NOTIFICATIONS" \/>\n    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" \/>\n    <uses-permission android:name="android.permission.VIBRATE" \/>\n    <uses-permission android:name="android.permission.RECORD_AUDIO" \/>\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" \/>\n    <application/' "$MANIFEST"
           fi
 
-          # Set Likkho launcher icon (white background with black "Likkho" text)
-          for dir in android/app/src/main/res/mipmap-*; do
-            if [ -d "$dir" ]; then
+          # Set Likkho launcher icon (white background with black "Likkho" text) in density-specific mipmap folders only
+          for dir in android/app/src/main/res/mipmap-*dpi; do
+            if [ -d "$dir" ] && [[ "$dir" != *"anydpi"* ]]; then
               cp public/pwa-512x512.png "$dir/ic_launcher.png" || true
               cp public/pwa-512x512.png "$dir/ic_launcher_round.png" || true
               cp public/pwa-512x512.png "$dir/ic_launcher_foreground.png" || true
             fi
           done
+          rm -f android/app/src/main/res/mipmap-anydpi-v26/*.png || true
 
           # Bridge WebRTC getUserMedia to native Android OS Runtime Microphone Permission popup
           MAIN_ACT=$(find android/app/src/main/java -name "MainActivity.java" | head -n 1)
