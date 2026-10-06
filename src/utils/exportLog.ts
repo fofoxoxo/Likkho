@@ -1,5 +1,16 @@
 import { DiaryLog } from './cryptoVault';
 
+declare global {
+  interface Window {
+    LikkhoNative?: {
+      requestFilesAndMediaPermission?: () => void;
+      requestMicPermission?: () => void;
+      saveExportedFile?: (base64Data: string, filename: string, mimeType: string) => void;
+    };
+    __handleLikkhoAndroidBack?: () => string;
+  }
+}
+
 export type ExportFormat =
   | 'txt'
   | 'md'
@@ -37,7 +48,7 @@ function htmlToPlainText(html: string): string {
 
 function htmlToMarkdown(heading: string, dateStamp: string, timeStamp: string, html: string): string {
   let md = `# ${heading}\n*${dateStamp} · ${timeStamp}*\n\n`;
-  let body = html
+  const body = html
     .replace(/<h1[^>]*>(.*?)<\/h1>/gi, '# $1\n\n')
     .replace(/<h2[^>]*>(.*?)<\/h2>/gi, '## $1\n\n')
     .replace(/<h3[^>]*>(.*?)<\/h3>/gi, '### $1\n\n')
@@ -88,7 +99,6 @@ function escapeRtf(str: string): string {
 }
 
 function buildMinimalPdfBlob(heading: string, dateLine: string, bodyText: string): Blob {
-  // Clean ASCII-safe lines for a valid standalone PDF 1.4 file
   const sanitizePdfText = (s: string) =>
     s
       .replace(/[^\x20-\x7E\n]/g, '')
@@ -146,7 +156,23 @@ function buildMinimalPdfBlob(heading: string, dateLine: string, bodyText: string
   return new Blob([pdf], { type: 'application/pdf' });
 }
 
-export function exportDiaryLog(log: DiaryLog, format: ExportFormat): void {
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      if (typeof reader.result === 'string') {
+        const idx = reader.result.indexOf(',');
+        resolve(idx >= 0 ? reader.result.slice(idx + 1) : reader.result);
+      } else {
+        reject(new Error('Failed to encode blob'));
+      }
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
+export async function exportDiaryLog(log: DiaryLog, format: ExportFormat): Promise<string> {
   const plainText = htmlToPlainText(log.contentHtml);
   const safeBaseName =
     (log.heading || 'diary_entry')
@@ -157,16 +183,19 @@ export function exportDiaryLog(log: DiaryLog, format: ExportFormat): void {
 
   const dateLine = `${log.dateStamp} · ${log.timeStamp}`;
   let blob: Blob;
+  let mimeType = 'text/plain';
   const filename = `${safeBaseName}.${format}`;
 
   switch (format) {
     case 'txt': {
       const content = `${log.heading}\n${dateLine}\n${'='.repeat(40)}\n\n${plainText}\n`;
+      mimeType = 'text/plain';
       blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
       break;
     }
     case 'md': {
       const content = htmlToMarkdown(log.heading, log.dateStamp, log.timeStamp, log.contentHtml);
+      mimeType = 'text/markdown';
       blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
       break;
     }
@@ -190,6 +219,7 @@ export function exportDiaryLog(log: DiaryLog, format: ExportFormat): void {
   <div class="content">${log.contentHtml}</div>
 </body>
 </html>`;
+      mimeType = 'text/html';
       blob = new Blob([content], { type: 'text/html;charset=utf-8' });
       break;
     }
@@ -197,11 +227,11 @@ export function exportDiaryLog(log: DiaryLog, format: ExportFormat): void {
       const rtfContent = `{\\rtf1\\ansi\\deff0{\\fonttbl{\\f0 Times New Roman;}}\\f0\\fs32\\b ${escapeRtf(
         log.heading
       )}\\b0\\par\\fs20 ${escapeRtf(dateLine)}\\par\\par\\fs24 ${escapeRtf(plainText)}\\par}`;
+      mimeType = 'application/rtf';
       blob = new Blob([rtfContent], { type: 'application/rtf' });
       break;
     }
     case 'docx': {
-      // Word-compatible HTML/MHTML document package
       const wordDoc = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
 <head><meta charset='utf-8'><title>${escapeXml(log.heading)}</title></head>
 <body style="font-family: 'Times New Roman', Georgia, serif; font-size: 12pt;">
@@ -211,9 +241,8 @@ export function exportDiaryLog(log: DiaryLog, format: ExportFormat): void {
   ${log.contentHtml}
 </body>
 </html>`;
-      blob = new Blob(['\ufeff', wordDoc], {
-        type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      });
+      mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+      blob = new Blob(['\ufeff', wordDoc], { type: mimeType });
       break;
     }
     case 'json': {
@@ -232,6 +261,7 @@ export function exportDiaryLog(log: DiaryLog, format: ExportFormat): void {
         null,
         2
       );
+      mimeType = 'application/json';
       blob = new Blob([content], { type: 'application/json;charset=utf-8' });
       break;
     }
@@ -244,6 +274,7 @@ export function exportDiaryLog(log: DiaryLog, format: ExportFormat): void {
         escCsv(log.timeStamp),
         escCsv(plainText),
       ].join(',')}\n`;
+      mimeType = 'text/csv';
       blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
       break;
     }
@@ -256,6 +287,7 @@ export function exportDiaryLog(log: DiaryLog, format: ExportFormat): void {
         cleanTab(log.timeStamp),
         cleanTab(plainText),
       ].join('\t')}\n`;
+      mimeType = 'text/tab-separated-values';
       blob = new Blob([tsv], { type: 'text/tab-separated-values;charset=utf-8' });
       break;
     }
@@ -269,15 +301,25 @@ export function exportDiaryLog(log: DiaryLog, format: ExportFormat): void {
   <plainText>${escapeXml(plainText)}</plainText>
   <contentHtml><![CDATA[${log.contentHtml}]]></contentHtml>
 </likkhoEntry>`;
+      mimeType = 'application/xml';
       blob = new Blob([xml], { type: 'application/xml;charset=utf-8' });
       break;
     }
     case 'pdf': {
+      mimeType = 'application/pdf';
       blob = buildMinimalPdfBlob(log.heading, dateLine, plainText);
       break;
     }
   }
 
+  // 1. If running inside Android APK WebView with LikkhoNative bridge, save directly to Downloads/Likkho/
+  if (window.LikkhoNative && typeof window.LikkhoNative.saveExportedFile === 'function') {
+    const base64Data = await blobToBase64(blob);
+    window.LikkhoNative.saveExportedFile(base64Data, filename, mimeType);
+    return `Saved to Downloads/Likkho/${filename}`;
+  }
+
+  // 2. Otherwise trigger browser download
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -285,5 +327,6 @@ export function exportDiaryLog(log: DiaryLog, format: ExportFormat): void {
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 2000);
+  setTimeout(() => URL.revokeObjectURL(url), 2500);
+  return `Exported ${filename}`;
 }

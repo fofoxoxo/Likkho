@@ -31,6 +31,7 @@ interface WritingWorkspaceProps {
   customFonts: CustomFontItem[];
   onAddCustomFont: (font: CustomFontItem) => void;
   micSettings: MicRecordingSettings;
+  registerBackHandler?: (fn: () => void) => void;
 }
 
 function stripHtmlToSingleLine(html: string): string {
@@ -48,6 +49,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
   customFonts,
   onAddCustomFont,
   micSettings,
+  registerBackHandler,
 }) => {
   const [heading, setHeading] = useState<string>(initialLog?.heading || '');
   const [pfpDataUrl, setPfpDataUrl] = useState<string | null>(
@@ -165,6 +167,12 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     }
   };
 
+  useEffect(() => {
+    if (registerBackHandler) {
+      registerBackHandler(handleExitWorkspace);
+    }
+  });
+
   // Handle explicit Save button tap
   const handleExplicitSave = () => {
     const { log, hasAnyEntry } = buildCurrentLogObject();
@@ -267,7 +275,12 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
         <div className="flex flex-1 items-center gap-2.5 min-w-0">
           <button
             type="button"
-            onClick={() => fileInputRef.current?.click()}
+            onClick={() => {
+              if (window.LikkhoNative?.requestFilesAndMediaPermission) {
+                window.LikkhoNative.requestFilesAndMediaPermission();
+              }
+              fileInputRef.current?.click();
+            }}
             className="group relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden border border-[var(--wiki-border)] bg-[var(--wiki-bg)] hover:border-[#3366cc]"
             title="Select & crop 1:1 image from storage"
           >

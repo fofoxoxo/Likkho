@@ -160,8 +160,9 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
   // Active Custom Font Family state (null = Default Font active)
   const [activeFontFamily, setActiveFontFamily] = useState<string | null>(null);
 
-  // Text Size px slider state (10px to 48px)
+  // Text Size px slider state (10px to 48px) and explicit enable/disable state
   const [textPxSize, setTextPxSize] = useState<number>(16);
+  const [isTextPxEnabled, setIsTextPxEnabled] = useState<boolean>(false);
 
   // Voice recording state
   const [isRecording, setIsRecording] = useState<boolean>(false);
@@ -171,6 +172,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
   const recordTimerRef = useRef<number | null>(null);
   const recordStreamRef = useRef<MediaStream | null>(null);
 
+  // Track exact selection range inside editor so cursor NEVER jumps to top
   const savedRangeRef = useRef<Range | null>(null);
   const bgFileInputRef = useRef<HTMLInputElement | null>(null);
   const mediaImageInputRef = useRef<HTMLInputElement | null>(null);
@@ -215,7 +217,6 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     setShowMediaPickerMenu(false);
   };
 
-  // Find closest ancestor element matching any of the given tag names or data attribute inside editor
   const findAncestorTag = (node: Node | null, tags: string[]): HTMLElement | null => {
     if (!editorRef.current) return null;
     let cur: Node | null = node;
@@ -246,12 +247,25 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     return null;
   };
 
-  // Query active formatting state from the current selection in the editor
+  // Query active formatting state and continuously save exact cursor/selection range
   const checkActiveFormats = () => {
     try {
       const sel = window.getSelection();
-      const anchor = sel && sel.rangeCount > 0 ? sel.anchorNode : null;
+      if (!sel || sel.rangeCount === 0 || !editorRef.current) return;
 
+      const currentRange = sel.getRangeAt(0);
+      if (
+        editorRef.current === currentRange.commonAncestorContainer ||
+        editorRef.current.contains(currentRange.commonAncestorContainer)
+      ) {
+        savedRangeRef.current = currentRange.cloneRange();
+        const selStr = sel.toString().trim();
+        if (selStr.length > 0) {
+          setSelectedTextPreview(selStr);
+        }
+      }
+
+      const anchor = sel.anchorNode;
       const isQuote = !!findAncestorTag(anchor, ['Q', 'BLOCKQUOTE']);
       const isCode = !!findAncestorTag(anchor, ['CODE', 'PRE']);
       const isHighlight = !!findAncestorTag(anchor, ['MARK']);
@@ -267,7 +281,12 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
 
       if (pxSpan) {
         const parsedPx = parseInt(pxSpan.getAttribute('data-wiki-px') || '16', 10);
-        if (!isNaN(parsedPx)) setTextPxSize(parsedPx);
+        if (!isNaN(parsedPx)) {
+          setTextPxSize(parsedPx);
+          setIsTextPxEnabled(true);
+        }
+      } else {
+        setIsTextPxEnabled(false);
       }
 
       const isH1 = !!findAncestorTag(anchor, ['H1']);
@@ -332,9 +351,9 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     e.preventDefault();
   };
 
-  const focusEditor = () => {
+  const focusEditorWithoutJump = () => {
     if (editorRef.current && document.activeElement !== editorRef.current) {
-      editorRef.current.focus();
+      editorRef.current.focus({ preventScroll: true });
     }
   };
 
@@ -342,20 +361,69 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     const sel = window.getSelection();
     if (sel && sel.rangeCount > 0 && editorRef.current) {
       const range = sel.getRangeAt(0);
-      if (editorRef.current.contains(range.commonAncestorContainer)) {
+      if (
+        editorRef.current === range.commonAncestorContainer ||
+        editorRef.current.contains(range.commonAncestorContainer)
+      ) {
         savedRangeRef.current = range.cloneRange();
         setSelectedTextPreview(sel.toString().trim());
       }
     }
   };
 
-  const restoreSavedSelection = () => {
-    focusEditor();
+  /**
+   * Restores the exact cursor / selection range in the editor without jumping to the top.
+   * If no saved range exists yet, places the cursor at the END of the editor content.
+   */
+  const restoreSavedSelection = (): Range | null => {
+    if (!editorRef.current) return null;
     const sel = window.getSelection();
-    if (sel && savedRangeRef.current) {
+    if (!sel) return null;
+
+    // First check if current live selection is already inside editor
+    if (sel.rangeCount > 0) {
+      const liveRange = sel.getRangeAt(0);
+      if (
+        editorRef.current === liveRange.commonAncestorContainer ||
+        editorRef.current.contains(liveRange.commonAncestorContainer)
+      ) {
+        // If we had a non-collapsed savedRange and liveRange got collapsed by a popover click, prefer savedRange
+        if (
+          savedRangeRef.current &&
+          !savedRangeRef.current.collapsed &&
+          liveRange.collapsed &&
+          editorRef.current.contains(savedRangeRef.current.commonAncestorContainer)
+        ) {
+          focusEditorWithoutJump();
+          sel.removeAllRanges();
+          sel.addRange(savedRangeRef.current);
+          return savedRangeRef.current;
+        }
+        savedRangeRef.current = liveRange.cloneRange();
+        return liveRange;
+      }
+    }
+
+    focusEditorWithoutJump();
+
+    if (
+      savedRangeRef.current &&
+      (editorRef.current === savedRangeRef.current.commonAncestorContainer ||
+        editorRef.current.contains(savedRangeRef.current.commonAncestorContainer))
+    ) {
       sel.removeAllRanges();
       sel.addRange(savedRangeRef.current);
+      return savedRangeRef.current;
     }
+
+    // Fallback: place cursor at the very END of the editor (never at the top!)
+    const endRange = document.createRange();
+    endRange.selectNodeContents(editorRef.current);
+    endRange.collapse(false);
+    sel.removeAllRanges();
+    sel.addRange(endRange);
+    savedRangeRef.current = endRange.cloneRange();
+    return endRange;
   };
 
   // Unwrap a specific HTML element in-place while keeping its inner contents selected
@@ -378,6 +446,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
         range.setEndAfter(lastChild);
         sel.removeAllRanges();
         sel.addRange(range);
+        savedRangeRef.current = range.cloneRange();
       }
     }
   };
@@ -396,6 +465,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
       newRange.collapse(true);
       sel.removeAllRanges();
       sel.addRange(newRange);
+      savedRangeRef.current = newRange.cloneRange();
       return;
     }
 
@@ -429,6 +499,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
       newRange.collapse(true);
       sel.removeAllRanges();
       sel.addRange(newRange);
+      savedRangeRef.current = newRange.cloneRange();
     }
   };
 
@@ -436,11 +507,10 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
    * Selection-Scoped Toggle for Quotation ('Q') and Code Snippet ('CODE')
    */
   const handleToggleSelectionWrapper = (mode: 'quote' | 'code') => {
-    focusEditor();
+    const range = restoreSavedSelection();
     const sel = window.getSelection();
-    if (!sel || sel.rangeCount === 0 || !editorRef.current) return;
+    if (!sel || !range || !editorRef.current) return;
 
-    const range = sel.getRangeAt(0);
     const targetTags = mode === 'quote' ? ['Q', 'BLOCKQUOTE'] : ['CODE', 'PRE'];
 
     const existingAncestor =
@@ -482,22 +552,20 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     newRange.selectNodeContents(wrapper);
     sel.removeAllRanges();
     sel.addRange(newRange);
+    savedRangeRef.current = newRange.cloneRange();
 
     checkActiveFormats();
     onContentChange();
   };
 
   /**
-   * Selection-Scoped Text Color:
-   * Strictly applies color to selected text (<span data-wiki-color="...">).
-   * If 'default' is clicked or color is toggled off, unwraps or breaks out cleanly.
+   * Selection-Scoped Text Color
    */
   const applySelectionTextColor = (color: string) => {
-    restoreSavedSelection();
+    const range = restoreSavedSelection();
     const sel = window.getSelection();
-    if (!sel || sel.rangeCount === 0 || !editorRef.current) return;
+    if (!sel || !range || !editorRef.current) return;
 
-    const range = sel.getRangeAt(0);
     const existingColorSpan =
       findAncestorByAttr(range.commonAncestorContainer, 'data-wiki-color') ||
       findAncestorByAttr(range.startContainer, 'data-wiki-color') ||
@@ -531,7 +599,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
       return;
     }
 
-    if (existingColorSpan) {
+    if (existingColorSpan && existingColorSpan.textContent === sel.toString()) {
       existingColorSpan.style.color = color;
       existingColorSpan.setAttribute('data-wiki-color', color);
     } else {
@@ -547,7 +615,9 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
       sel.addRange(newRange);
     }
 
-    savedRangeRef.current = sel.getRangeAt(0).cloneRange();
+    if (sel.rangeCount > 0) {
+      savedRangeRef.current = sel.getRangeAt(0).cloneRange();
+    }
     setShowColorPicker(null);
     checkActiveFormats();
     onContentChange();
@@ -557,11 +627,10 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
    * Selection-Scoped Highlight (<mark>)
    */
   const applySelectionHighlight = (color: string) => {
-    restoreSavedSelection();
+    const range = restoreSavedSelection();
     const sel = window.getSelection();
-    if (!sel || sel.rangeCount === 0 || !editorRef.current) return;
+    if (!sel || !range || !editorRef.current) return;
 
-    const range = sel.getRangeAt(0);
     const existingMark =
       findAncestorTag(range.commonAncestorContainer, ['MARK']) ||
       findAncestorTag(range.startContainer, ['MARK']) ||
@@ -595,7 +664,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
       return;
     }
 
-    if (existingMark) {
+    if (existingMark && existingMark.textContent === sel.toString()) {
       existingMark.style.backgroundColor = color;
     } else {
       const mark = document.createElement('mark');
@@ -613,51 +682,50 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
       sel.addRange(newRange);
     }
 
-    savedRangeRef.current = sel.getRangeAt(0).cloneRange();
+    if (sel.rangeCount > 0) {
+      savedRangeRef.current = sel.getRangeAt(0).cloneRange();
+    }
     setShowColorPicker(null);
     checkActiveFormats();
     onContentChange();
   };
 
   /**
-   * Enable / Disable Font Family without altering previously typed text:
-   * - Clicking an inactive font enables it: if text is selected, wraps selection in <span data-wiki-font="...">.
-   *   If cursor is collapsed, inserts a new <span data-wiki-font="..."> at the cursor so everything typed next uses this font.
-   * - Clicking the currently active font (or "Default Font") disables it: moves the cursor outside the font span
-   *   so all previously written text stays in the font it was written in, and newly typed text uses the default font!
+   * Enable / Disable Font Family AND Apply to Selected Text while keeping cursor in place:
+   * - Keeps the cursor at its exact position (never jumps to top).
+   * - If text is selected: applies the chosen font to the selected text (making it stylish) and keeps selection intact so user can preview different fonts or continue typing.
+   * - If cursor is collapsed: starts a font span right at the current cursor position; tapping the active font again (or Default Font) disables it by moving the cursor outside the span while keeping previously written text in its font.
    */
   const handleToggleFontFamily = (fontFamily: string | null) => {
-    restoreSavedSelection();
+    const range = restoreSavedSelection();
     const sel = window.getSelection();
-    if (!sel || !editorRef.current) return;
+    if (!sel || !range || !editorRef.current) return;
 
-    if (sel.rangeCount === 0) {
-      const r = document.createRange();
-      r.selectNodeContents(editorRef.current);
-      r.collapse(false);
-      sel.addRange(r);
-    }
-
-    const range = sel.getRangeAt(0);
     const existingFontSpan =
       findAncestorByAttr(range.commonAncestorContainer, 'data-wiki-font') ||
       findAncestorByAttr(range.startContainer, 'data-wiki-font') ||
       findAncestorByAttr(range.endContainer, 'data-wiki-font');
 
-    // If user clicked the SAME active font again, or clicked Default Font (null) -> DISABLE active font
+    const hasSelection = !range.collapsed && sel.toString().length > 0;
+
+    // Check if user is toggling OFF the currently active font (or clicked Default Font)
+    const isSameFontOnSelection =
+      existingFontSpan &&
+      existingFontSpan.getAttribute('data-wiki-font') === fontFamily;
+
     const isTogglingOff =
       fontFamily === null ||
-      (existingFontSpan &&
-        existingFontSpan.getAttribute('data-wiki-font') === fontFamily) ||
-      activeFontFamily === fontFamily;
+      (hasSelection && isSameFontOnSelection) ||
+      (!hasSelection &&
+        (isSameFontOnSelection || activeFontFamily === fontFamily));
 
     if (isTogglingOff) {
       if (existingFontSpan) {
-        if (range.collapsed) {
-          // Break cursor out after the font span so previously typed text stays in that custom font!
+        if (!hasSelection) {
+          // Break cursor out right after the font span so previously typed text stays in its custom font
           breakCursorOutAfterElement(existingFontSpan);
         } else {
-          // If user explicitly highlighted a segment and toggled off, unwrap that segment back to default
+          // Unwrap the selected font span back to default font
           unwrapElement(existingFontSpan);
         }
       }
@@ -669,24 +737,48 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
       return;
     }
 
-    // Enabling a specific fontFamily:
-    if (!range.collapsed && sel.toString().trim().length > 0) {
-      // Apply to selected text
-      const span = document.createElement('span');
-      span.style.fontFamily = fontFamily;
-      span.setAttribute('data-wiki-font', fontFamily);
-      span.appendChild(range.extractContents());
-      range.insertNode(span);
+    // Enabling or switching to a specific fontFamily:
+    if (hasSelection) {
+      // Apply directly to the selected text!
+      if (
+        existingFontSpan &&
+        existingFontSpan.textContent?.replace(/\u200B/g, '') ===
+          sel.toString().replace(/\u200B/g, '')
+      ) {
+        existingFontSpan.style.fontFamily = fontFamily;
+        existingFontSpan.setAttribute('data-wiki-font', fontFamily);
+        const newRange = document.createRange();
+        newRange.selectNodeContents(existingFontSpan);
+        sel.removeAllRanges();
+        sel.addRange(newRange);
+        savedRangeRef.current = newRange.cloneRange();
+      } else {
+        const span = document.createElement('span');
+        span.style.fontFamily = fontFamily;
+        span.setAttribute('data-wiki-font', fontFamily);
+        const extracted = range.extractContents();
+        span.appendChild(extracted);
+        range.insertNode(span);
 
-      const newRange = document.createRange();
-      newRange.selectNodeContents(span);
-      sel.removeAllRanges();
-      sel.addRange(newRange);
+        const newRange = document.createRange();
+        newRange.selectNodeContents(span);
+        sel.removeAllRanges();
+        sel.addRange(newRange);
+        savedRangeRef.current = newRange.cloneRange();
+      }
     } else {
-      // Cursor is collapsed: if already inside another font span, break out first, then start a new inline font span
+      // Cursor is collapsed at a specific position: keep cursor right here and start/update inline font span
       if (existingFontSpan) {
+        const clean = (existingFontSpan.textContent || '').replace(/\u200B/g, '');
+        if (clean.length === 0) {
+          existingFontSpan.style.fontFamily = fontFamily;
+          existingFontSpan.setAttribute('data-wiki-font', fontFamily);
+          setActiveFontFamily(fontFamily);
+          return;
+        }
         breakCursorOutAfterElement(existingFontSpan);
       }
+
       const activeRange = sel.getRangeAt(0);
       const span = document.createElement('span');
       span.style.fontFamily = fontFamily;
@@ -700,34 +792,47 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
       newRange.collapse(true);
       sel.removeAllRanges();
       sel.addRange(newRange);
+      savedRangeRef.current = newRange.cloneRange();
     }
 
     setActiveFontFamily(fontFamily);
-    if (sel.rangeCount > 0) {
-      savedRangeRef.current = sel.getRangeAt(0).cloneRange();
-    }
     onContentChange();
   };
 
   /**
-   * Apply Text Size in px via Slider (10px to 48px)
+   * Apply Text Size in px via Slider (10px to 48px):
+   * - Applies to selected text if text is selected.
+   * - Applies to newly typed text at cursor position if no text is selected.
+   * - Remains active until explicitly disabled via the "Disable" button!
    */
   const handleApplyTextPxSlider = (px: number) => {
     setTextPxSize(px);
-    restoreSavedSelection();
-    const sel = window.getSelection();
-    if (!sel || sel.rangeCount === 0 || !editorRef.current) return;
+    setIsTextPxEnabled(true);
 
-    const range = sel.getRangeAt(0);
+    const range = restoreSavedSelection();
+    const sel = window.getSelection();
+    if (!sel || !range || !editorRef.current) return;
+
     const existingPxSpan =
       findAncestorByAttr(range.commonAncestorContainer, 'data-wiki-px') ||
       findAncestorByAttr(range.startContainer, 'data-wiki-px') ||
       findAncestorByAttr(range.endContainer, 'data-wiki-px');
 
-    if (!range.collapsed && sel.toString().trim().length > 0) {
-      if (existingPxSpan && existingPxSpan.textContent === sel.toString()) {
+    const hasSelection = !range.collapsed && sel.toString().length > 0;
+
+    if (hasSelection) {
+      if (
+        existingPxSpan &&
+        existingPxSpan.textContent?.replace(/\u200B/g, '') ===
+          sel.toString().replace(/\u200B/g, '')
+      ) {
         existingPxSpan.style.fontSize = `${px}px`;
         existingPxSpan.setAttribute('data-wiki-px', String(px));
+        const newRange = document.createRange();
+        newRange.selectNodeContents(existingPxSpan);
+        sel.removeAllRanges();
+        sel.addRange(newRange);
+        savedRangeRef.current = newRange.cloneRange();
       } else {
         const span = document.createElement('span');
         span.style.fontSize = `${px}px`;
@@ -739,6 +844,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
         newRange.selectNodeContents(span);
         sel.removeAllRanges();
         sel.addRange(newRange);
+        savedRangeRef.current = newRange.cloneRange();
       }
     } else {
       if (existingPxSpan) {
@@ -763,11 +869,37 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
       newRange.collapse(true);
       sel.removeAllRanges();
       sel.addRange(newRange);
+      savedRangeRef.current = newRange.cloneRange();
     }
 
-    if (sel.rangeCount > 0) {
-      savedRangeRef.current = sel.getRangeAt(0).cloneRange();
+    onContentChange();
+  };
+
+  /**
+   * Explicitly Disable Custom Text px Size:
+   * - If cursor is collapsed inside a px span, breaks cursor out after the span so earlier text keeps its px size and subsequent typing reverts to default size.
+   * - If text is selected inside a px span, unwraps the px span on the selected text.
+   */
+  const handleDisableTextPx = () => {
+    const range = restoreSavedSelection();
+    const sel = window.getSelection();
+    if (sel && range && editorRef.current) {
+      const existingPxSpan =
+        findAncestorByAttr(range.commonAncestorContainer, 'data-wiki-px') ||
+        findAncestorByAttr(range.startContainer, 'data-wiki-px') ||
+        findAncestorByAttr(range.endContainer, 'data-wiki-px');
+
+      if (existingPxSpan) {
+        if (range.collapsed) {
+          breakCursorOutAfterElement(existingPxSpan);
+        } else {
+          unwrapElement(existingPxSpan);
+        }
+      }
     }
+    setIsTextPxEnabled(false);
+    setTextPxSize(16);
+    setShowSizePanel(false);
     onContentChange();
   };
 
@@ -814,7 +946,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
   };
 
   const execToggleInline = (command: string) => {
-    focusEditor();
+    restoreSavedSelection();
 
     const tagMap: Record<string, string[]> = {
       bold: ['B', 'STRONG'],
@@ -838,7 +970,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
   };
 
   const execToggleHeading = (tag: 'H1' | 'H2' | 'H3') => {
-    focusEditor();
+    restoreSavedSelection();
     const sel = window.getSelection();
     const anchor = sel && sel.rangeCount > 0 ? sel.anchorNode : null;
     const existingHeading = findAncestorTag(anchor, [tag]);
@@ -858,6 +990,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
         range.collapse(false);
         sel.removeAllRanges();
         sel.addRange(range);
+        savedRangeRef.current = range.cloneRange();
       }
     } else {
       document.execCommand('formatBlock', false, tag);
@@ -868,16 +1001,47 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
   };
 
   const insertHtmlAtCursor = (html: string) => {
-    focusEditor();
+    restoreSavedSelection();
     document.execCommand('insertHTML', false, html);
     checkActiveFormats();
     onContentChange();
   };
 
+  /**
+   * Insert To-Do Checkbox ONLY (no "Task item" placeholder text)
+   * Places the cursor right beside the checkbox so the user can type immediately.
+   */
   const insertChecklist = () => {
-    insertHtmlAtCursor(
-      `<div style="display:flex;align-items:center;gap:8px;margin:4px 0;"><input type="checkbox" style="width:16px;height:16px;accent-color:#3366cc;" /><span>Task item</span></div>`
-    );
+    const range = restoreSavedSelection();
+    const sel = window.getSelection();
+    if (!sel || !range || !editorRef.current) return;
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.style.width = '16px';
+    checkbox.style.height = '16px';
+    checkbox.style.accentColor = '#3366cc';
+    checkbox.style.verticalAlign = 'middle';
+    checkbox.style.marginRight = '6px';
+    checkbox.style.cursor = 'pointer';
+
+    const spaceNode = document.createTextNode('\u00A0');
+    const frag = document.createDocumentFragment();
+    frag.appendChild(checkbox);
+    frag.appendChild(spaceNode);
+
+    range.deleteContents();
+    range.insertNode(frag);
+
+    const nextRange = document.createRange();
+    nextRange.setStartAfter(spaceNode);
+    nextRange.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(nextRange);
+    savedRangeRef.current = nextRange.cloneRange();
+
+    checkActiveFormats();
+    onContentChange();
   };
 
   const insertCurrentTimestamp = () => {
@@ -910,12 +1074,15 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     }
 
     try {
+      if (window.LikkhoNative?.requestMicPermission) {
+        window.LikkhoNative.requestMicPermission();
+      }
+
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         showBriefHint('Microphone recording is not supported in this browser.');
         return;
       }
 
-      // Immediately invoke getUserMedia on user tap so Android OS / Browser displays the native Microphone permission pop-up
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           sampleRate: micSettings.sampleRate,
@@ -982,6 +1149,17 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
       }, 1000);
     } catch {
       showBriefHint('Please allow Microphone permission in Android OS to record audio.');
+    }
+  };
+
+  // Request Android OS Files & Media permission when opening Media Picker or selecting media
+  const triggerAndroidMediaPermission = () => {
+    try {
+      if (window.LikkhoNative?.requestFilesAndMediaPermission) {
+        window.LikkhoNative.requestFilesAndMediaPermission();
+      }
+    } catch {
+      // ignore
     }
   };
 
@@ -1067,7 +1245,6 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     }
 
     setShowLinkInput(false);
-    savedRangeRef.current = null;
     checkActiveFormats();
     onContentChange();
   };
@@ -1208,10 +1385,11 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
         >
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold text-[var(--wiki-text)]">
-              Fonts (Tap to Enable · Tap Again to Disable)
+              Fonts (Applies to Selected Text or Active Cursor · Tap Again to Disable)
             </span>
             <button
               type="button"
+              onMouseDown={preventFocusLoss}
               onClick={() => setShowFontPanel(false)}
               className="text-xs text-[var(--wiki-muted)] underline"
             >
@@ -1223,7 +1401,10 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
           <div className="flex flex-wrap items-center gap-1.5">
             <button
               type="button"
+              onMouseDown={preventFocusLoss}
               onClick={() => {
+                saveCurrentSelection();
+                triggerAndroidMediaPermission();
                 setFontLangType('en');
                 ttfFontInputRef.current?.click();
               }}
@@ -1234,7 +1415,10 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
             </button>
             <button
               type="button"
+              onMouseDown={preventFocusLoss}
               onClick={() => {
+                saveCurrentSelection();
+                triggerAndroidMediaPermission();
                 setFontLangType('hi');
                 ttfFontInputRef.current?.click();
               }}
@@ -1292,11 +1476,11 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
         </div>
       )}
 
-      {/* Popover Row: Text Size in px Slider (Constrained within screen width) */}
+      {/* Popover Row: Text Size in px Slider (Applies to Selected Text & stays active until Disable is clicked) */}
       {showSizePanel && (
         <div
           onMouseDown={preventFocusLoss}
-          className="flex w-full max-w-full items-center gap-2.5 border-b border-[var(--wiki-hairline)] bg-[var(--wiki-bg)] px-3 py-2.5 box-border"
+          className="flex w-full max-w-full items-center gap-2 border-b border-[var(--wiki-hairline)] bg-[var(--wiki-bg)] px-3 py-2.5 box-border"
         >
           <span className="shrink-0 font-wiki-mono text-xs font-semibold text-[var(--wiki-text)]">
             {textPxSize}px
@@ -1307,23 +1491,30 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
             max={48}
             step={1}
             value={textPxSize}
+            onPointerDown={saveCurrentSelection}
             onChange={(e) => handleApplyTextPxSlider(parseInt(e.target.value, 10))}
             className="h-1.5 min-w-0 flex-1 cursor-pointer accent-[#3366cc]"
           />
           <button
             type="button"
             onMouseDown={preventFocusLoss}
-            onClick={() => handleApplyTextPxSlider(16)}
-            className="shrink-0 border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-2 py-1 text-[11px] font-medium"
+            onClick={handleDisableTextPx}
+            className={`shrink-0 border px-2 py-1 text-[11px] font-semibold transition-colors ${
+              isTextPxEnabled
+                ? 'border-[#b32424] bg-[#b32424] text-white'
+                : 'border-[var(--wiki-border)] bg-[var(--wiki-surface)] text-[var(--wiki-muted)]'
+            }`}
+            title="Disable custom px size and return to default text size"
           >
-            16px
+            Disable
           </button>
           <button
             type="button"
+            onMouseDown={preventFocusLoss}
             onClick={() => setShowSizePanel(false)}
             className="shrink-0 text-xs text-[var(--wiki-muted)] px-1"
           >
-            Done
+            Close
           </button>
         </div>
       )}
@@ -1337,7 +1528,11 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => mediaImageInputRef.current?.click()}
+              onMouseDown={preventFocusLoss}
+              onClick={() => {
+                triggerAndroidMediaPermission();
+                mediaImageInputRef.current?.click();
+              }}
               className="flex h-8 items-center gap-1.5 bg-[#3366cc] px-3 text-xs font-semibold text-white"
             >
               <ImageIcon className="h-3.5 w-3.5" />
@@ -1345,7 +1540,11 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
             </button>
             <button
               type="button"
-              onClick={() => mediaAudioInputRef.current?.click()}
+              onMouseDown={preventFocusLoss}
+              onClick={() => {
+                triggerAndroidMediaPermission();
+                mediaAudioInputRef.current?.click();
+              }}
               className="flex h-8 items-center gap-1.5 border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3 text-xs font-semibold text-[var(--wiki-text)] hover:border-[#3366cc]"
             >
               <FolderPlus className="h-3.5 w-3.5 text-[#3366cc]" />
@@ -1354,6 +1553,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
           </div>
           <button
             type="button"
+            onMouseDown={preventFocusLoss}
             onClick={() => setShowMediaPickerMenu(false)}
             className="text-xs text-[var(--wiki-muted)] underline"
           >
@@ -1407,7 +1607,11 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
             <div className="flex items-center gap-1.5 min-w-0">
               <button
                 type="button"
-                onClick={() => bgFileInputRef.current?.click()}
+                onMouseDown={preventFocusLoss}
+                onClick={() => {
+                  triggerAndroidMediaPermission();
+                  bgFileInputRef.current?.click();
+                }}
                 className="flex h-8 shrink-0 items-center gap-1.5 border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-2.5 text-xs font-semibold text-[var(--wiki-text)] hover:border-[#3366cc]"
               >
                 <ImageIcon className="h-3.5 w-3.5 text-[#3366cc]" />
@@ -1417,6 +1621,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
               {canvasBgDataUrl && (
                 <button
                   type="button"
+                  onMouseDown={preventFocusLoss}
                   onClick={() => onChangeCanvasBg(null, canvasBgOpacity)}
                   className="flex h-8 shrink-0 items-center gap-1 border border-[#b32424]/40 px-2 text-xs font-medium text-[#b32424]"
                 >
@@ -1428,6 +1633,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
 
             <button
               type="button"
+              onMouseDown={preventFocusLoss}
               onClick={() => setShowBgControl(false)}
               className="shrink-0 text-xs text-[var(--wiki-muted)] px-1"
             >
@@ -1501,6 +1707,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
           onMouseDown={preventFocusLoss}
           onClick={() => {
             saveCurrentSelection();
+            triggerAndroidMediaPermission();
             const next = !showMediaPickerMenu;
             closeAllPopovers();
             setShowMediaPickerMenu(next);
@@ -1538,7 +1745,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
             closeAllPopovers();
             setShowSizePanel(next);
           }}
-          className={getBtnClass(showSizePanel)}
+          className={getBtnClass(showSizePanel || isTextPxEnabled)}
           title="Text Size (px Slider)"
         >
           <ALargeSmall className="h-4 w-4" />
@@ -1641,7 +1848,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
           onMouseDown={preventFocusLoss}
           onClick={insertChecklist}
           className={getBtnClass(false)}
-          title="Checklist Item"
+          title="To-Do Checkbox"
         >
           <CheckSquare className="h-4 w-4" />
         </button>
@@ -1747,6 +1954,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
           type="button"
           onMouseDown={preventFocusLoss}
           onClick={() => {
+            triggerAndroidMediaPermission();
             const next = !showBgControl;
             closeAllPopovers();
             setShowBgControl(next);

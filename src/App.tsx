@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Lock,
   Menu,
@@ -13,6 +13,7 @@ import {
   Download,
   FileDown,
   Search,
+  CheckCircle2,
 } from 'lucide-react';
 import {
   CustomFontItem,
@@ -142,9 +143,18 @@ export default function App() {
     }
   });
 
-  const [isLocked, setIsLocked] = useState<boolean>(false);
+  // App starts LOCKED automatically whenever a Passcode is set (when app is closed & reopened)
+  const [isLocked, setIsLocked] = useState<boolean>(() => {
+    try {
+      return Boolean(localStorage.getItem(STORAGE_PIN_KEY));
+    } catch {
+      return false;
+    }
+  });
+
   const [route, setRoute] = useState<PageRoute>('home');
   const [editingLog, setEditingLog] = useState<DiaryLog | null>(null);
+  const workspaceBackHandlerRef = useRef<(() => void) | null>(null);
 
   // Search bar state in Homepage Header
   const [isSearchOpen, setIsSearchOpen] = useState<boolean>(false);
@@ -153,6 +163,7 @@ export default function App() {
   // 3-dots menu & Export modal states
   const [openMenuLogId, setOpenMenuLogId] = useState<string | null>(null);
   const [exportingLog, setExportingLog] = useState<DiaryLog | null>(null);
+  const [exportStatusBanner, setExportStatusBanner] = useState<string | null>(null);
 
   // Active ringing Android notification alert banner
   const [ringingAlert, setRingingAlert] = useState<{
@@ -160,6 +171,28 @@ export default function App() {
     heading: string;
     preview: string;
   } | null>(null);
+
+  // Automatically lock the app whenever it is closed, backgrounded, or hidden (if passcode is set)
+  useEffect(() => {
+    if (!savedPasscode) return;
+
+    const handleAppClosedOrBackgrounded = () => {
+      if (document.visibilityState === 'hidden') {
+        setIsLocked(true);
+      }
+    };
+
+    const handlePageHide = () => {
+      setIsLocked(true);
+    };
+
+    document.addEventListener('visibilitychange', handleAppClosedOrBackgrounded);
+    window.addEventListener('pagehide', handlePageHide);
+    return () => {
+      document.removeEventListener('visibilitychange', handleAppClosedOrBackgrounded);
+      window.removeEventListener('pagehide', handlePageHide);
+    };
+  }, [savedPasscode]);
 
   // Load rich media logs & custom .ttf fonts from IndexedDB on initial mount
   useEffect(() => {
@@ -236,15 +269,44 @@ export default function App() {
   }, [micSettings]);
 
   // Sync browser/Android Hardware Back Button:
-  // "User app ke kisi bhi page par ho, back karne par pahle homepage par aayega"
+  // "User agar App me homepage ke alawa kisi aur page par ho to back karne par pahle homepage par aayega fir back hoga"
   useEffect(() => {
-    window.history.replaceState({ page: 'home' }, '');
-
-    const handlePopState = () => {
+    // Register native Android hardware back handler called from MainActivity.java OnBackPressedCallback
+    window.__handleLikkhoAndroidBack = () => {
+      if (exportingLog) {
+        setExportingLog(null);
+        return 'HANDLED';
+      }
+      if (route === 'workspace' && workspaceBackHandlerRef.current) {
+        workspaceBackHandlerRef.current();
+        return 'HANDLED';
+      }
       if (route !== 'home') {
         setRoute('home');
         setEditingLog(null);
-        window.history.pushState({ page: 'home' }, '');
+        return 'HANDLED';
+      }
+      if (isSearchOpen) {
+        setIsSearchOpen(false);
+        setSearchQuery('');
+        return 'HANDLED';
+      }
+      return 'EXIT';
+    };
+
+    const handlePopState = () => {
+      if (exportingLog) {
+        setExportingLog(null);
+        window.history.pushState({ page: route }, '');
+        return;
+      }
+      if (route === 'workspace' && workspaceBackHandlerRef.current) {
+        workspaceBackHandlerRef.current();
+        return;
+      }
+      if (route !== 'home') {
+        setRoute('home');
+        setEditingLog(null);
       } else if (isSearchOpen) {
         setIsSearchOpen(false);
         setSearchQuery('');
@@ -252,16 +314,24 @@ export default function App() {
     };
 
     window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
-  }, [route, isSearchOpen]);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, [route, isSearchOpen, exportingLog]);
 
   const navigateTo = (target: PageRoute, logToEdit: DiaryLog | null = null) => {
     setOpenMenuLogId(null);
     if (target === 'home') {
       setRoute('home');
       setEditingLog(null);
+      window.history.replaceState({ page: 'home' }, '');
     } else {
-      window.history.pushState({ page: target }, '');
+      // Push or replace state so that pressing Back from ANY non-home page (even backup -> home) goes directly to home first
+      if (route === 'home') {
+        window.history.pushState({ page: target }, '');
+      } else {
+        window.history.replaceState({ page: target }, '');
+      }
       setEditingLog(logToEdit);
       setRoute(target);
     }
@@ -341,10 +411,20 @@ export default function App() {
     setOpenMenuLogId(null);
   };
 
-  const handleSelectExportFormat = (format: ExportFormat) => {
+  const handleSelectExportFormat = async (format: ExportFormat) => {
     if (!exportingLog) return;
-    exportDiaryLog(exportingLog, format);
+    const targetLog = exportingLog;
     setExportingLog(null);
+    try {
+      const msg = await exportDiaryLog(targetLog, format);
+      setExportStatusBanner(msg);
+      window.setTimeout(() => {
+        setExportStatusBanner((prev) => (prev === msg ? null : prev));
+      }, 3200);
+    } catch {
+      setExportStatusBanner('Export failed. Please check storage permissions.');
+      window.setTimeout(() => setExportStatusBanner(null), 3000);
+    }
   };
 
   // Filter logs by searched word across heading, full diary body text, preview, and date
@@ -376,6 +456,14 @@ export default function App() {
         if (openMenuLogId) setOpenMenuLogId(null);
       }}
     >
+      {/* Export Confirmation Banner */}
+      {exportStatusBanner && (
+        <div className="fixed bottom-20 left-4 right-4 z-50 mx-auto flex max-w-sm items-center gap-2 border border-[#14866d] bg-[var(--wiki-bg)] px-3.5 py-2.5 text-xs font-semibold text-[#14866d] shadow-xl">
+          <CheckCircle2 className="h-4 w-4 shrink-0" />
+          <span className="truncate">{exportStatusBanner}</span>
+        </div>
+      )}
+
       {/* Android Heads-Up Ringing Notification Banner */}
       {ringingAlert && (
         <div className="fixed left-3 right-3 top-3 z-50 mx-auto max-w-md border-2 border-[#3366cc] bg-[var(--wiki-bg)] p-3.5 shadow-2xl">
@@ -408,7 +496,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Instant Lock Overlay */}
+      {/* Instant Lock & Launch Lock Overlay */}
       {isLocked && savedPasscode ? (
         <PasscodeScreen
           savedPasscode={savedPasscode}
@@ -423,6 +511,9 @@ export default function App() {
           customFonts={customFonts}
           onAddCustomFont={(font) => setCustomFonts((prev) => [...prev, font])}
           micSettings={micSettings}
+          registerBackHandler={(fn) => {
+            workspaceBackHandlerRef.current = fn;
+          }}
         />
       ) : route === 'settings' ? (
         <SettingsPage
@@ -435,6 +526,7 @@ export default function App() {
               localStorage.setItem(STORAGE_PIN_KEY, pin);
             } else {
               localStorage.removeItem(STORAGE_PIN_KEY);
+              setIsLocked(false);
             }
           }}
           onOpenBackupRestore={() => navigateTo('backup')}
@@ -713,7 +805,7 @@ export default function App() {
 
             <div className="p-4">
               <p className="mb-3 text-xs text-[var(--wiki-muted)]">
-                Choose a file format to download this log:
+                Choose a file format to save to <strong>Downloads/Likkho</strong>:
               </p>
               <div className="grid grid-cols-2 gap-2">
                 {EXPORT_FORMATS.map((item) => (
