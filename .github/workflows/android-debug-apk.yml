@@ -20,7 +20,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
 
       - name: Set up JDK 21
         uses: actions/setup-java@v4
@@ -47,48 +46,134 @@ jobs:
           fi
           npx cap sync android
 
-      - name: Configure Edge-to-Edge Status & Navigation Bar Sync + Permissions
+      - name: Configure Edge-to-Edge Status/Nav Bar & Native Android OS Microphone Runtime Permission Prompt
         run: |
           MANIFEST="android/app/src/main/AndroidManifest.xml"
           if ! grep -q "POST_NOTIFICATIONS" "$MANIFEST"; then
-            sed -i 's/<application/<uses-permission android:name="android.permission.POST_NOTIFICATIONS" \/>\n    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" \/>\n    <uses-permission android:name="android.permission.VIBRATE" \/>\n    <application/' "$MANIFEST"
+            sed -i 's/<application/<uses-permission android:name="android.permission.POST_NOTIFICATIONS" \/>\n    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" \/>\n    <uses-permission android:name="android.permission.VIBRATE" \/>\n    <uses-permission android:name="android.permission.RECORD_AUDIO" \/>\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" \/>\n    <application/' "$MANIFEST"
           fi
 
-      - name: Generate Android Keystore & Build Signed APK + Debug APK
+          # Copy Likkho white-bg black-text icon into Android mipmap launcher folders
+          for dir in android/app/src/main/res/mipmap-*; do
+            if [ -d "$dir" ]; then
+              cp public/pwa-512x512.png "$dir/ic_launcher.png" || true
+              cp public/pwa-512x512.png "$dir/ic_launcher_round.png" || true
+              cp public/pwa-512x512.png "$dir/ic_launcher_foreground.png" || true
+            fi
+          done
+
+          # Ensure Android WebView bridges WebRTC getUserMedia to native Android OS Runtime Permission dialog
+          MAIN_ACT=$(find android/app/src/main/java -name "MainActivity.java" | head -n 1)
+          if [ -n "$MAIN_ACT" ]; then
+            cat << 'EOF' > "$MAIN_ACT"
+          package com.likkho.diary;
+
+          import android.Manifest;
+          import android.content.pm.PackageManager;
+          import android.os.Bundle;
+          import android.webkit.PermissionRequest;
+          import android.webkit.WebChromeClient;
+          import androidx.core.app.ActivityCompat;
+          import androidx.core.content.ContextCompat;
+          import com.getcapacitor.BridgeActivity;
+
+          public class MainActivity extends BridgeActivity {
+              private static final int MIC_PERMISSION_REQUEST_CODE = 1001;
+              private PermissionRequest pendingWebPermissionRequest;
+
+              @Override
+              public void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  if (this.bridge != null && this.bridge.getWebView() != null) {
+                      final WebChromeClient existingClient = this.bridge.getWebView().getWebChromeClient();
+                      this.bridge.getWebView().setWebChromeClient(new WebChromeClient() {
+                          @Override
+                          public void onPermissionRequest(final PermissionRequest request) {
+                              for (String res : request.getResources()) {
+                                  if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(res)) {
+                                      if (ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                                          pendingWebPermissionRequest = request;
+                                          ActivityCompat.requestPermissions(MainActivity.this, new String[]{Manifest.permission.RECORD_AUDIO}, MIC_PERMISSION_REQUEST_CODE);
+                                          return;
+                                      }
+                                  }
+                              }
+                              request.grant(request.getResources());
+                          }
+                      });
+                  }
+              }
+
+              @Override
+              public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+                  super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+                  if (requestCode == MIC_PERMISSION_REQUEST_CODE && pendingWebPermissionRequest != null) {
+                      if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                          pendingWebPermissionRequest.grant(pendingWebPermissionRequest.getResources());
+                      } else {
+                          pendingWebPermissionRequest.deny();
+                      }
+                      pendingWebPermissionRequest = null;
+                  }
+              }
+          }
+          EOF
+          fi
+
+      - name: Assemble & Sign APK using GitHub Secrets
         working-directory: ./android
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           chmod +x gradlew
           ./gradlew assembleDebug
           ./gradlew assembleRelease
 
-          # Generate a personal release keystore so the APK is signed and ready to install on any Android phone
-          keytool -genkey -v -keystore likkho-release-key.keystore \
-            -alias likkho-key -keyalg RSA -keysize 2048 -validity 10000 \
-            -storepass likkho123456 -keypass likkho123456 \
-            -dname "CN=Likkho, OU=Diary, O=Likkho, L=India, S=IN, C=IN"
+          cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/Likkho-debug.apk
+
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "Using KEYSTORE_BASE64 from GitHub Secrets..."
+            echo "$KEYSTORE_BASE64" | tr -d '\r\n ' | base64 --decode > release-keystore.jks
+            KS_PASS="${KEYSTORE_PASSWORD}"
+            ALIAS_NAME="${KEY_ALIAS}"
+            K_PASS="${KEY_PASSWORD}"
+          else
+            echo "No KEYSTORE_BASE64 secret found; generating fallback keystore..."
+            keytool -genkey -v -keystore release-keystore.jks \
+              -alias likkho-key -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass likkho123456 -keypass likkho123456 \
+              -dname "CN=Likkho, OU=Diary, O=Likkho, L=NewDelhi, S=Delhi, C=IN"
+            KS_PASS="likkho123456"
+            ALIAS_NAME="likkho-key"
+            K_PASS="likkho123456"
+          fi
 
           BUILD_TOOLS_DIR=$(ls -d $ANDROID_HOME/build-tools/* | tail -n 1)
+
           $BUILD_TOOLS_DIR/zipalign -v -p 4 \
             app/build/outputs/apk/release/app-release-unsigned.apk \
             app/build/outputs/apk/release/Likkho-signed-release.apk
 
           $BUILD_TOOLS_DIR/apksigner sign \
-            --ks likkho-release-key.keystore \
-            --ks-key-alias likkho-key \
-            --ks-pass pass:likkho123456 \
-            --key-pass pass:likkho123456 \
+            --ks release-keystore.jks \
+            --ks-key-alias "$ALIAS_NAME" \
+            --ks-pass "pass:$KS_PASS" \
+            --key-pass "pass:$K_PASS" \
             app/build/outputs/apk/release/Likkho-signed-release.apk
 
-          cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/Likkho-debug.apk
+          $BUILD_TOOLS_DIR/apksigner verify --verbose app/build/outputs/apk/release/Likkho-signed-release.apk
 
-      - name: Upload Signed Release APK Artifact
+      - name: Upload Signed Release APK
         uses: actions/upload-artifact@v4
         with:
           name: Likkho-Signed-APK
           path: android/app/build/outputs/apk/release/Likkho-signed-release.apk
           retention-days: 30
 
-      - name: Upload Debug APK Artifact
+      - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
           name: Likkho-Debug-APK

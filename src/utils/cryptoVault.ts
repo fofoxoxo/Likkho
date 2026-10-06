@@ -1,14 +1,45 @@
 /**
  * AES-256-GCM Encryption & App-Private Special Folder (.wikilog_private_vault)
  *
- * Uses Web Crypto API (PBKDF2 with 100,000 iterations + AES-256-GCM) to encrypt
- * and decrypt diary logs. Stores encrypted backup snapshots inside an isolated,
- * non-user-browsable Origin Private File System (OPFS) special directory:
- *   `opfs://.wikilog_private_vault/backup_vault.wkl`
- * With automatic fallback to an isolated IndexedDB vault store if OPFS is restricted,
- * and Capacitor Android `Directory.Data` (app-private internal folder `/data/user/0/com.wikilog.diary/files/.wikilog_private_vault/`)
- * so that external file managers or users cannot directly access or read the raw folder.
+ * Encrypts and backs up all Diary Logs INCLUDING all attached Media (Free-Draggable
+ * Canvas Images, Audio Attachments, Voice Recordings, Custom .ttf Fonts, and Settings)
+ * into the app-private hidden vault folder.
  */
+
+export interface CanvasDraggableImage {
+  id: string;
+  dataUrl: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  opacity: number;
+}
+
+export interface CanvasAudioAttachment {
+  id: string;
+  name: string;
+  format: string;
+  dataUrl: string;
+  durationSec?: number;
+  createdAt: number;
+}
+
+export interface CustomFontItem {
+  id: string;
+  name: string;
+  lang: 'en' | 'hi' | 'custom';
+  fontFamily: string;
+  dataUrl: string;
+}
+
+export type AudioFormatOption = 'wav' | 'flac' | 'm4a' | 'aac' | 'mp3' | 'ogg' | 'webm';
+
+export interface MicRecordingSettings {
+  format: AudioFormatOption;
+  sampleRate: 8000 | 16000 | 22050 | 44100 | 48000;
+  bitRate: 64000 | 128000 | 192000 | 256000 | 320000;
+}
 
 export interface DiaryLog {
   id: string;
@@ -25,6 +56,8 @@ export interface DiaryLog {
   pinned?: boolean;
   canvasBgDataUrl?: string | null;
   canvasBgOpacity?: number;
+  canvasImages?: CanvasDraggableImage[];
+  audioAttachments?: CanvasAudioAttachment[];
 }
 
 export interface EncryptedVaultMetadata {
@@ -36,17 +69,28 @@ export interface EncryptedVaultMetadata {
   keyHintHash: string | null;
 }
 
+export interface VaultBackupBundle {
+  logs: DiaryLog[];
+  customFonts?: CustomFontItem[];
+  micSettings?: MicRecordingSettings;
+}
+
 const VAULT_FOLDER_NAME = '.wikilog_private_vault';
 const VAULT_FILE_NAME = 'wikilog_encrypted_snapshot.vault';
 const IDB_NAME = 'WikiLogPrivateSystemVaultDB';
 const IDB_STORE = 'special_hidden_folder';
+const APP_STATE_STORE = 'in_app_active_storage';
 
 // Convert ArrayBuffer to Base64
 function bufferToBase64(buf: ArrayBuffer | Uint8Array): string {
   const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
   let binary = '';
-  for (let i = 0; i < bytes.byteLength; i++) {
-    binary += String.fromCharCode(bytes[i]);
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode.apply(
+      null,
+      Array.from(bytes.subarray(i, i + chunkSize))
+    );
   }
   return btoa(binary);
 }
@@ -86,15 +130,17 @@ async function deriveAesKey(passphrase: string, salt: Uint8Array): Promise<Crypt
   );
 }
 
-// Compute SHA-256 hash of encryption key (for verification without storing plaintext key)
 export async function hashPassphrase(passphrase: string): Promise<string> {
   const enc = new TextEncoder();
   const digest = await crypto.subtle.digest('SHA-256', enc.encode('WIKILOG_SALT_' + passphrase));
   return bufferToBase64(digest);
 }
 
-// Encrypt logs array into an opaque AES-256-GCM payload string
-export async function encryptLogsPayload(logs: DiaryLog[], encryptionKey: string): Promise<string> {
+// Encrypt full bundle (logs + media + custom fonts + mic settings) into AES-256-GCM payload
+export async function encryptVaultBundle(
+  bundle: VaultBackupBundle,
+  encryptionKey: string
+): Promise<string> {
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const aesKey = await deriveAesKey(encryptionKey, salt);
@@ -102,7 +148,9 @@ export async function encryptLogsPayload(logs: DiaryLog[], encryptionKey: string
   const plaintext = JSON.stringify({
     magic: 'WIKILOG_VAULT_V1',
     exportedAt: Date.now(),
-    logs,
+    logs: bundle.logs,
+    customFonts: bundle.customFonts || [],
+    micSettings: bundle.micSettings,
   });
 
   const enc = new TextEncoder();
@@ -119,14 +167,17 @@ export async function encryptLogsPayload(logs: DiaryLog[], encryptionKey: string
     iv: bufferToBase64(iv),
     ct: bufferToBase64(ciphertext),
     createdAt: Date.now(),
-    count: logs.length,
+    count: bundle.logs.length,
   };
 
   return JSON.stringify(envelope);
 }
 
-// Decrypt AES-256-GCM payload string back into DiaryLog[]
-export async function decryptLogsPayload(rawEnvelope: string, encryptionKey: string): Promise<DiaryLog[]> {
+// Decrypt AES-256-GCM payload back into VaultBackupBundle
+export async function decryptVaultBundle(
+  rawEnvelope: string,
+  encryptionKey: string
+): Promise<VaultBackupBundle> {
   let envelope: {
     v: number;
     salt: string;
@@ -137,11 +188,11 @@ export async function decryptLogsPayload(rawEnvelope: string, encryptionKey: str
   try {
     envelope = JSON.parse(rawEnvelope);
   } catch {
-    throw new Error('Corrupted vault file format.');
+    throw new Error('Corrupted backup format.');
   }
 
   if (!envelope.salt || !envelope.iv || !envelope.ct) {
-    throw new Error('Invalid encrypted vault structure.');
+    throw new Error('Invalid backup structure.');
   }
 
   const salt = base64ToBytes(envelope.salt);
@@ -161,20 +212,36 @@ export async function decryptLogsPayload(rawEnvelope: string, encryptionKey: str
     if (parsed.magic !== 'WIKILOG_VAULT_V1' || !Array.isArray(parsed.logs)) {
       throw new Error('Invalid vault signature.');
     }
-    return parsed.logs as DiaryLog[];
+    return {
+      logs: parsed.logs as DiaryLog[],
+      customFonts: Array.isArray(parsed.customFonts) ? parsed.customFonts : [],
+      micSettings: parsed.micSettings,
+    };
   } catch {
     throw new Error('Incorrect encryption key! Decryption failed.');
   }
 }
 
-// IndexedDB helper for private sandboxed folder fallback
+// Legacy wrappers for compatibility
+export async function encryptLogsPayload(logs: DiaryLog[], encryptionKey: string): Promise<string> {
+  return encryptVaultBundle({ logs }, encryptionKey);
+}
+
+export async function decryptLogsPayload(rawEnvelope: string, encryptionKey: string): Promise<DiaryLog[]> {
+  const res = await decryptVaultBundle(rawEnvelope, encryptionKey);
+  return res.logs;
+}
+
 function openPrivateVaultDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(IDB_NAME, 1);
+    const req = indexedDB.open(IDB_NAME, 2);
     req.onupgradeneeded = () => {
       const db = req.result;
       if (!db.objectStoreNames.contains(IDB_STORE)) {
         db.createObjectStore(IDB_STORE);
+      }
+      if (!db.objectStoreNames.contains(APP_STATE_STORE)) {
+        db.createObjectStore(APP_STATE_STORE);
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -182,7 +249,41 @@ function openPrivateVaultDB(): Promise<IDBDatabase> {
   });
 }
 
-// Write to App-Private Special Folder (OPFS + IndexedDB mirror for persistence across reinstalls/sessions)
+// Save large active logs/media/fonts in IndexedDB so audio/images/TTF never hit 5MB localStorage limits
+export async function saveActiveAppStateToIDB(
+  key: string,
+  value: unknown
+): Promise<void> {
+  try {
+    const db = await openPrivateVaultDB();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(APP_STATE_STORE, 'readwrite');
+      const store = tx.objectStore(APP_STATE_STORE);
+      store.put(value, key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch {
+    // ignore
+  }
+}
+
+export async function loadActiveAppStateFromIDB<T>(key: string): Promise<T | null> {
+  try {
+    const db = await openPrivateVaultDB();
+    return await new Promise<T | null>((resolve, reject) => {
+      const tx = db.transaction(APP_STATE_STORE, 'readonly');
+      const store = tx.objectStore(APP_STATE_STORE);
+      const req = store.get(key);
+      req.onsuccess = () => resolve((req.result as T) ?? null);
+      req.onerror = () => reject(req.error);
+    });
+  } catch {
+    return null;
+  }
+}
+
+// Write to App-Private Special Folder (OPFS + IndexedDB mirror)
 export async function writeToPrivateSpecialFolder(
   encryptedEnvelope: string,
   entryCount: number,
@@ -190,9 +291,8 @@ export async function writeToPrivateSpecialFolder(
 ): Promise<EncryptedVaultMetadata> {
   const now = Date.now();
   const sizeBytes = new Blob([encryptedEnvelope]).size;
-  const vaultPath = `/data/user/0/com.wikilog.diary/files/${VAULT_FOLDER_NAME}/${VAULT_FILE_NAME}`;
+  const vaultPath = `/data/user/0/com.likkho.diary/files/${VAULT_FOLDER_NAME}/${VAULT_FILE_NAME}`;
 
-  // 1. Write to Origin Private File System (OPFS) hidden directory if supported
   try {
     if (navigator.storage && typeof navigator.storage.getDirectory === 'function') {
       const rootDir = await navigator.storage.getDirectory();
@@ -207,10 +307,9 @@ export async function writeToPrivateSpecialFolder(
       }
     }
   } catch {
-    // Fallback to IndexedDB private store if OPFS writable is blocked in iframe
+    // Fallback to IndexedDB private store if OPFS writable is restricted
   }
 
-  // 2. Also store in Isolated IndexedDB Special Folder Store
   const db = await openPrivateVaultDB();
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(IDB_STORE, 'readwrite');
@@ -240,12 +339,11 @@ export async function writeToPrivateSpecialFolder(
   };
 }
 
-// Read metadata and raw payload from App-Private Special Folder
 export async function readFromPrivateSpecialFolder(): Promise<{
   metadata: EncryptedVaultMetadata;
   encryptedEnvelope: string | null;
 }> {
-  const defaultPath = `/data/user/0/com.wikilog.diary/files/${VAULT_FOLDER_NAME}/${VAULT_FILE_NAME}`;
+  const defaultPath = `/data/user/0/com.likkho.diary/files/${VAULT_FOLDER_NAME}/${VAULT_FILE_NAME}`;
 
   try {
     const db = await openPrivateVaultDB();
@@ -281,7 +379,6 @@ export async function readFromPrivateSpecialFolder(): Promise<{
     // Continue to OPFS check
   }
 
-  // Check OPFS directly if IDB was cleared
   try {
     if (navigator.storage && typeof navigator.storage.getDirectory === 'function') {
       const rootDir = await navigator.storage.getDirectory();

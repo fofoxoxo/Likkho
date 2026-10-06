@@ -8,7 +8,12 @@ import {
   ChevronRight,
   Check,
   Trash2,
+  Mic,
 } from 'lucide-react';
+import {
+  AudioFormatOption,
+  MicRecordingSettings,
+} from '../utils/cryptoVault';
 
 interface SettingsPageProps {
   darkMode: boolean;
@@ -17,7 +22,35 @@ interface SettingsPageProps {
   onUpdatePasscode: (newPasscode: string | null) => void;
   onOpenBackupRestore: () => void;
   onBackToHome: () => void;
+  micSettings: MicRecordingSettings;
+  onUpdateMicSettings: (next: MicRecordingSettings) => void;
 }
+
+const AUDIO_FORMATS: { id: AudioFormatOption; label: string }[] = [
+  { id: 'wav', label: '.wav' },
+  { id: 'flac', label: '.flac' },
+  { id: 'm4a', label: '.m4a' },
+  { id: 'aac', label: '.aac' },
+  { id: 'mp3', label: '.mp3' },
+  { id: 'ogg', label: '.ogg' },
+  { id: 'webm', label: '.webm' },
+];
+
+const SAMPLE_RATES: { value: MicRecordingSettings['sampleRate']; label: string }[] = [
+  { value: 8000, label: '8,000 Hz' },
+  { value: 16000, label: '16,000 Hz' },
+  { value: 22050, label: '22,050 Hz' },
+  { value: 44100, label: '44,100 Hz' },
+  { value: 48000, label: '48,000 Hz' },
+];
+
+const BIT_RATES: { value: MicRecordingSettings['bitRate']; label: string }[] = [
+  { value: 64000, label: '64 kbps' },
+  { value: 128000, label: '128 kbps' },
+  { value: 192000, label: '192 kbps' },
+  { value: 256000, label: '256 kbps' },
+  { value: 320000, label: '320 kbps' },
+];
 
 export const SettingsPage: React.FC<SettingsPageProps> = ({
   darkMode,
@@ -26,6 +59,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   onUpdatePasscode,
   onOpenBackupRestore,
   onBackToHome,
+  micSettings,
+  onUpdateMicSettings,
 }) => {
   const [showPasscodeModal, setShowPasscodeModal] = useState<boolean>(false);
   const [pinInput, setPinInput] = useState<string>(savedPasscode || '');
@@ -65,7 +100,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
       </header>
 
       {/* Main Settings List */}
-      <div className="flex-1 overflow-y-auto px-4 py-5 space-y-4">
+      <div className="flex-1 overflow-y-auto px-4 py-5 space-y-5">
         {pinSavedToast && (
           <div className="flex items-center gap-2 border border-[#14866d] bg-[#14866d]/10 px-3 py-2.5 text-xs font-medium text-[var(--wiki-text)]">
             <Check className="h-4 w-4 text-[#14866d]" />
@@ -150,12 +185,105 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                   Backup &amp; Restore
                 </div>
                 <div className="text-xs text-[var(--wiki-muted)]">
-                  Manage encrypted diary backup and restoration
+                  Backup and restore diary text &amp; media
                 </div>
               </div>
             </div>
             <ChevronRight className="h-5 w-5 text-[var(--wiki-muted)]" />
           </button>
+        </section>
+
+        {/* 4. Microphone Recording Settings (Format, Sample Rate, Bitrate) */}
+        <section className="border border-[var(--wiki-border)] bg-[var(--wiki-bg)] p-4 space-y-4">
+          <div className="flex items-center gap-2.5 border-b border-[var(--wiki-hairline)] pb-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center border border-[var(--wiki-border)] bg-[var(--wiki-surface)]">
+              <Mic className="h-4 w-4 text-[#3366cc]" />
+            </div>
+            <div>
+              <h2 className="font-wiki-serif text-base font-bold">
+                Microphone Recording
+              </h2>
+              <p className="text-xs text-[var(--wiki-muted)]">
+                Audio format, sample rate, and bitrate
+              </p>
+            </div>
+          </div>
+
+          {/* Audio Format Selection */}
+          <div>
+            <label className="mb-1.5 block text-xs font-semibold text-[var(--wiki-text)]">
+              Recording Format
+            </label>
+            <div className="grid grid-cols-4 gap-1.5">
+              {AUDIO_FORMATS.map((fmt) => (
+                <button
+                  key={fmt.id}
+                  type="button"
+                  onClick={() =>
+                    onUpdateMicSettings({ ...micSettings, format: fmt.id })
+                  }
+                  className={`py-2 border font-wiki-mono text-xs font-semibold transition-colors ${
+                    micSettings.format === fmt.id
+                      ? 'border-[#3366cc] bg-[#3366cc] text-white'
+                      : 'border-[var(--wiki-border)] bg-[var(--wiki-surface)] text-[var(--wiki-text)] hover:border-[#3366cc]'
+                  }`}
+                >
+                  {fmt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Sample Rate & Bitrate */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="mb-1 block text-xs font-semibold text-[var(--wiki-text)]">
+                Sample Rate
+              </label>
+              <select
+                value={micSettings.sampleRate}
+                onChange={(e) =>
+                  onUpdateMicSettings({
+                    ...micSettings,
+                    sampleRate: Number(
+                      e.target.value
+                    ) as MicRecordingSettings['sampleRate'],
+                  })
+                }
+                className="h-10 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-2.5 font-wiki-mono text-xs text-[var(--wiki-text)] outline-none focus:border-[#3366cc]"
+              >
+                {SAMPLE_RATES.map((sr) => (
+                  <option key={sr.value} value={sr.value}>
+                    {sr.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs font-semibold text-[var(--wiki-text)]">
+                Bitrate
+              </label>
+              <select
+                value={micSettings.bitRate}
+                onChange={(e) =>
+                  onUpdateMicSettings({
+                    ...micSettings,
+                    bitRate: Number(
+                      e.target.value
+                    ) as MicRecordingSettings['bitRate'],
+                  })
+                }
+                className="h-10 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-2.5 font-wiki-mono text-xs text-[var(--wiki-text)] outline-none focus:border-[#3366cc]"
+              >
+                {BIT_RATES.map((br) => (
+                  <option key={br.value} value={br.value}>
+                    {br.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
         </section>
       </div>
 

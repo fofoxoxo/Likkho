@@ -12,8 +12,15 @@ import {
   Trash2,
   Download,
   FileDown,
+  Search,
 } from 'lucide-react';
-import { DiaryLog } from './utils/cryptoVault';
+import {
+  CustomFontItem,
+  DiaryLog,
+  MicRecordingSettings,
+  loadActiveAppStateFromIDB,
+  saveActiveAppStateToIDB,
+} from './utils/cryptoVault';
 import {
   soundManager,
   triggerSystemNotification,
@@ -34,6 +41,15 @@ const STORAGE_LOGS_KEY = 'wikilog_in_app_logs_v1';
 const STORAGE_DARK_KEY = 'wikilog_dark_theme_v1';
 const STORAGE_PIN_KEY = 'wikilog_passcode_v1';
 const STORAGE_ENC_HASH_KEY = 'wikilog_encryption_key_hash_v1';
+const STORAGE_MIC_SETTINGS_KEY = 'wikilog_mic_settings_v1';
+const IDB_LOGS_KEY = 'active_diary_logs_with_media';
+const IDB_FONTS_KEY = 'active_custom_ttf_fonts';
+
+const DEFAULT_MIC_SETTINGS: MicRecordingSettings = {
+  format: 'wav',
+  sampleRate: 44100,
+  bitRate: 128000,
+};
 
 const INITIAL_STARTER_LOGS: DiaryLog[] = [
   {
@@ -61,16 +77,18 @@ const INITIAL_STARTER_LOGS: DiaryLog[] = [
   },
 ];
 
-function getFallbackMonographPfp(heading: string, darkMode: boolean): string {
-  const letter = (heading.trim()[0] || 'L').toUpperCase();
-  const bg = darkMode ? '#1a1f24' : '#f8f9fa';
-  const fg = darkMode ? '#eaecf0' : '#202122';
-  const border = darkMode ? '#3a4047' : '#a2a9b1';
+function getFallbackMonographPfp(): string {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
-    <rect width="120" height="120" fill="${bg}" stroke="${border}" stroke-width="2"/>
-    <text x="60" y="78" font-family="Georgia, serif" font-size="60" font-weight="bold" fill="${fg}" text-anchor="middle">${letter}</text>
+    <rect width="120" height="120" fill="#FFFFFF" stroke="#a2a9b1" stroke-width="2"/>
+    <text x="60" y="68" font-family="Georgia, 'Times New Roman', serif" font-size="28" font-weight="bold" fill="#000000" text-anchor="middle">Likkho</text>
   </svg>`;
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}
+
+function extractFullPlainText(html: string): string {
+  const temp = document.createElement('div');
+  temp.innerHTML = html;
+  return (temp.textContent || temp.innerText || '').toLowerCase();
 }
 
 export default function App() {
@@ -84,6 +102,20 @@ export default function App() {
       // ignore
     }
     return INITIAL_STARTER_LOGS;
+  });
+
+  const [customFonts, setCustomFonts] = useState<CustomFontItem[]>([]);
+
+  const [micSettings, setMicSettings] = useState<MicRecordingSettings>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_MIC_SETTINGS_KEY);
+      if (saved) {
+        return JSON.parse(saved);
+      }
+    } catch {
+      // ignore
+    }
+    return DEFAULT_MIC_SETTINGS;
   });
 
   const [darkMode, setDarkMode] = useState<boolean>(() => {
@@ -102,6 +134,10 @@ export default function App() {
   const [route, setRoute] = useState<PageRoute>('home');
   const [editingLog, setEditingLog] = useState<DiaryLog | null>(null);
 
+  // Search bar state in Homepage Header
+  const [isSearchOpen, setIsSearchOpen] = useState<boolean>(false);
+  const [searchQuery, setSearchQuery] = useState<string>('');
+
   // 3-dots menu & Export modal states
   const [openMenuLogId, setOpenMenuLogId] = useState<string | null>(null);
   const [exportingLog, setExportingLog] = useState<DiaryLog | null>(null);
@@ -112,6 +148,32 @@ export default function App() {
     heading: string;
     preview: string;
   } | null>(null);
+
+  // Load rich media logs & custom .ttf fonts from IndexedDB on initial mount
+  useEffect(() => {
+    loadActiveAppStateFromIDB<DiaryLog[]>(IDB_LOGS_KEY).then((idbLogs) => {
+      if (idbLogs && Array.isArray(idbLogs) && idbLogs.length > 0) {
+        setLogs(idbLogs);
+      }
+    });
+
+    loadActiveAppStateFromIDB<CustomFontItem[]>(IDB_FONTS_KEY).then(
+      async (idbFonts) => {
+        if (idbFonts && Array.isArray(idbFonts) && idbFonts.length > 0) {
+          setCustomFonts(idbFonts);
+          for (const f of idbFonts) {
+            try {
+              const face = new FontFace(f.fontFamily, `url(${f.dataUrl})`);
+              const loaded = await face.load();
+              document.fonts.add(loaded);
+            } catch {
+              // ignore font reload error
+            }
+          }
+        }
+      }
+    );
+  }, []);
 
   // Sync Dark Theme with DOM & Android Status Bar / Navigation Bar theme-color
   useEffect(() => {
@@ -131,14 +193,31 @@ export default function App() {
     }
   }, [darkMode]);
 
-  // Save in-app logs automatically
+  // Save in-app logs + media to IndexedDB and localStorage
   useEffect(() => {
+    saveActiveAppStateToIDB(IDB_LOGS_KEY, logs);
     try {
       localStorage.setItem(STORAGE_LOGS_KEY, JSON.stringify(logs));
     } catch {
-      // ignore quota error
+      // Large media gracefully stored in IDB_LOGS_KEY above
     }
   }, [logs]);
+
+  // Save custom .ttf fonts to IndexedDB
+  useEffect(() => {
+    if (customFonts.length > 0) {
+      saveActiveAppStateToIDB(IDB_FONTS_KEY, customFonts);
+    }
+  }, [customFonts]);
+
+  // Save mic recording settings
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_MIC_SETTINGS_KEY, JSON.stringify(micSettings));
+    } catch {
+      // ignore
+    }
+  }, [micSettings]);
 
   // Sync browser/Android Hardware Back Button:
   // "User app ke kisi bhi page par ho, back karne par pahle homepage par aayega"
@@ -150,12 +229,15 @@ export default function App() {
         setRoute('home');
         setEditingLog(null);
         window.history.pushState({ page: 'home' }, '');
+      } else if (isSearchOpen) {
+        setIsSearchOpen(false);
+        setSearchQuery('');
       }
     };
 
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
-  }, [route]);
+  }, [route, isSearchOpen]);
 
   const navigateTo = (target: PageRoute, logToEdit: DiaryLog | null = null) => {
     setOpenMenuLogId(null);
@@ -249,8 +331,19 @@ export default function App() {
     setExportingLog(null);
   };
 
+  // Filter logs by searched word across heading, full diary body text, preview, and date
+  const trimmedQuery = searchQuery.trim().toLowerCase();
+  const matchingLogs = logs.filter((log) => {
+    if (!trimmedQuery) return true;
+    const inHeading = log.heading.toLowerCase().includes(trimmedQuery);
+    const inPreview = log.plainPreview.toLowerCase().includes(trimmedQuery);
+    const inFullContent = extractFullPlainText(log.contentHtml).includes(trimmedQuery);
+    const inDate = log.dateStamp.toLowerCase().includes(trimmedQuery);
+    return inHeading || inPreview || inFullContent || inDate;
+  });
+
   // Sort pinned logs to top, then by createdAt descending
-  const sortedLogs = [...logs].sort((a, b) => {
+  const sortedLogs = [...matchingLogs].sort((a, b) => {
     if (a.pinned && !b.pinned) return -1;
     if (!a.pinned && b.pinned) return 1;
     return b.createdAt - a.createdAt;
@@ -311,6 +404,9 @@ export default function App() {
           onSaveLog={handleUpsertLog}
           onDeleteLog={handleDeleteLog}
           onExitWithoutSave={() => navigateTo('home')}
+          customFonts={customFonts}
+          onAddCustomFont={(font) => setCustomFonts((prev) => [...prev, font])}
+          micSettings={micSettings}
         />
       ) : route === 'settings' ? (
         <SettingsPage
@@ -327,30 +423,87 @@ export default function App() {
           }}
           onOpenBackupRestore={() => navigateTo('backup')}
           onBackToHome={() => navigateTo('home')}
+          micSettings={micSettings}
+          onUpdateMicSettings={(next) => setMicSettings(next)}
         />
       ) : route === 'backup' ? (
         <BackupRestorePage
           logs={logs}
+          customFonts={customFonts}
+          micSettings={micSettings}
           savedKeyHash={savedKeyHash}
           onSaveKeyHash={(hash) => {
             setSavedKeyHash(hash);
             localStorage.setItem(STORAGE_ENC_HASH_KEY, hash);
           }}
-          onRestoreLogs={(restored) => {
-            setLogs(restored);
+          onRestoreBundle={async (bundle) => {
+            setLogs(bundle.logs);
+            if (bundle.customFonts && bundle.customFonts.length > 0) {
+              setCustomFonts(bundle.customFonts);
+              for (const f of bundle.customFonts) {
+                try {
+                  const face = new FontFace(f.fontFamily, `url(${f.dataUrl})`);
+                  const loaded = await face.load();
+                  document.fonts.add(loaded);
+                } catch {
+                  // ignore
+                }
+              }
+            }
+            if (bundle.micSettings) {
+              setMicSettings(bundle.micSettings);
+            }
           }}
           onBackToHome={() => navigateTo('home')}
         />
       ) : (
         /* HOMEPAGE VIEW — No bar or buttons between Header and Logs */
         <div className="relative flex h-full w-full flex-col bg-[var(--wiki-bg)]">
-          {/* Header: Left App Name ("Likkho") | Right Instant Lock + Hamburger Menu */}
-          <header className="flex h-14 shrink-0 items-center justify-between border-b border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-4">
-            <span className="font-wiki-serif text-2xl font-bold tracking-tight text-[var(--wiki-text)]">
-              Likkho
-            </span>
+          {/* Header: Left App Name ("Likkho") | Right Search Button + Instant Lock + Hamburger Menu */}
+          <header className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-4">
+            {isSearchOpen ? (
+              <div className="flex flex-1 items-center gap-2 min-w-0">
+                <Search className="h-4 w-4 shrink-0 text-[#3366cc]" />
+                <input
+                  type="search"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search diaries..."
+                  className="h-9 min-w-0 flex-1 border border-[var(--wiki-border)] bg-[var(--wiki-bg)] px-2.5 text-xs text-[var(--wiki-text)] outline-none focus:border-[#3366cc]"
+                  autoFocus
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsSearchOpen(false);
+                    setSearchQuery('');
+                  }}
+                  className="flex h-9 w-9 shrink-0 items-center justify-center border border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-muted)] hover:text-[var(--wiki-text)]"
+                  title="Close search"
+                  aria-label="Close search"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            ) : (
+              <span className="font-wiki-serif text-2xl font-bold tracking-tight text-[var(--wiki-text)]">
+                Likkho
+              </span>
+            )}
 
-            <div className="flex items-center gap-2">
+            <div className="flex shrink-0 items-center gap-1.5">
+              {!isSearchOpen && (
+                <button
+                  type="button"
+                  onClick={() => setIsSearchOpen(true)}
+                  className="flex h-10 w-10 items-center justify-center border border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-text)] hover:border-[#3366cc] active:scale-[0.98] transition-all"
+                  title="Search diaries"
+                  aria-label="Search diaries"
+                >
+                  <Search className="h-4 w-4" />
+                </button>
+              )}
+
               <button
                 type="button"
                 onClick={handleInstantLock}
@@ -374,7 +527,7 @@ export default function App() {
             </div>
           </header>
 
-          {/* Directly Logs List below Header — Zero intermediate text or buttons */}
+          {/* Directly Logs List below Header */}
           <main className="flex-1 overflow-y-auto divide-y divide-[var(--wiki-hairline)] pb-24">
             {sortedLogs.length === 0 ? (
               <div className="flex flex-col items-center justify-center px-6 py-20 text-center">
@@ -382,16 +535,17 @@ export default function App() {
                   <BookOpen className="h-6 w-6 text-[var(--wiki-muted)]" />
                 </div>
                 <h2 className="mt-4 font-wiki-serif text-xl font-bold">
-                  No Logs Yet
+                  {trimmedQuery ? 'No Matching Diaries Found' : 'No Logs Yet'}
                 </h2>
                 <p className="mt-1 max-w-xs text-xs leading-relaxed text-[var(--wiki-muted)]">
-                  Tap the create button below to start writing.
+                  {trimmedQuery
+                    ? `No diary entry contains "${searchQuery}".`
+                    : 'Tap the create button below to start writing.'}
                 </p>
               </div>
             ) : (
               sortedLogs.map((log) => {
-                const avatarSrc =
-                  log.pfpDataUrl || getFallbackMonographPfp(log.heading, darkMode);
+                const avatarSrc = log.pfpDataUrl || getFallbackMonographPfp();
                 const isMenuOpen = openMenuLogId === log.id;
 
                 return (
@@ -401,7 +555,7 @@ export default function App() {
                     className="group relative flex cursor-pointer items-center gap-3.5 px-4 py-3.5 hover:bg-[var(--wiki-surface)] active:bg-[var(--wiki-hairline)] transition-colors"
                   >
                     {/* 1:1 Square PFP */}
-                    <div className="h-13 w-13 shrink-0 overflow-hidden border border-[var(--wiki-border)] bg-[var(--wiki-surface)]">
+                    <div className="h-13 w-13 shrink-0 overflow-hidden border border-[var(--wiki-border)] bg-white">
                       <img
                         src={avatarSrc}
                         alt={log.heading}
@@ -515,7 +669,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Multi-Format Export Modal (.txt, .md, .pdf, .rtf, .html, .json, .csv, .docx, .xml, .tsv) */}
+      {/* Multi-Format Export Modal */}
       {exportingLog && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs"

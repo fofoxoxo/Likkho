@@ -12,10 +12,13 @@ import {
   Lock,
 } from 'lucide-react';
 import {
+  CustomFontItem,
   DiaryLog,
   EncryptedVaultMetadata,
-  encryptLogsPayload,
-  decryptLogsPayload,
+  MicRecordingSettings,
+  VaultBackupBundle,
+  encryptVaultBundle,
+  decryptVaultBundle,
   hashPassphrase,
   writeToPrivateSpecialFolder,
   readFromPrivateSpecialFolder,
@@ -23,17 +26,21 @@ import {
 
 interface BackupRestorePageProps {
   logs: DiaryLog[];
+  customFonts: CustomFontItem[];
+  micSettings: MicRecordingSettings;
   savedKeyHash: string | null;
   onSaveKeyHash: (hash: string) => void;
-  onRestoreLogs: (restoredLogs: DiaryLog[]) => void;
+  onRestoreBundle: (bundle: VaultBackupBundle) => void;
   onBackToHome: () => void;
 }
 
 export const BackupRestorePage: React.FC<BackupRestorePageProps> = ({
   logs,
+  customFonts,
+  micSettings,
   savedKeyHash,
   onSaveKeyHash,
-  onRestoreLogs,
+  onRestoreBundle,
   onBackToHome,
 }) => {
   const [vaultMeta, setVaultMeta] = useState<EncryptedVaultMetadata>({
@@ -87,7 +94,7 @@ export const BackupRestorePage: React.FC<BackupRestorePageProps> = ({
     setConfirmKey('');
     setStatusBanner({
       type: 'success',
-      text: 'Encryption Key saved. You can now back up your data.',
+      text: 'Encryption Key saved. You can now back up your diary text and media.',
     });
   };
 
@@ -121,7 +128,14 @@ export const BackupRestorePage: React.FC<BackupRestorePageProps> = ({
         return;
       }
 
-      const encryptedEnvelope = await encryptLogsPayload(logs, backupPassphrase.trim());
+      const encryptedEnvelope = await encryptVaultBundle(
+        {
+          logs,
+          customFonts,
+          micSettings,
+        },
+        backupPassphrase.trim()
+      );
       const meta = await writeToPrivateSpecialFolder(
         encryptedEnvelope,
         logs.length,
@@ -130,7 +144,7 @@ export const BackupRestorePage: React.FC<BackupRestorePageProps> = ({
       setVaultMeta(meta);
       setStatusBanner({
         type: 'success',
-        text: 'Backup completed.',
+        text: 'Diary text and media backed up.',
       });
     } catch (err) {
       setStatusBanner({
@@ -164,17 +178,17 @@ export const BackupRestorePage: React.FC<BackupRestorePageProps> = ({
         return;
       }
 
-      const decryptedLogs = await decryptLogsPayload(
+      const bundle = await decryptVaultBundle(
         encryptedEnvelope,
         restorePassphrase.trim()
       );
       const keyHash = await hashPassphrase(restorePassphrase.trim());
       onSaveKeyHash(keyHash);
-      onRestoreLogs(decryptedLogs);
+      onRestoreBundle(bundle);
       setRestorePassphrase('');
       setStatusBanner({
         type: 'success',
-        text: 'Data restored.',
+        text: 'Diary text and media restored.',
       });
     } catch (err) {
       setStatusBanner({
@@ -291,7 +305,7 @@ export const BackupRestorePage: React.FC<BackupRestorePageProps> = ({
             <div className="flex items-center gap-2">
               <HardDriveDownload className="h-4 w-4 text-[#3366cc]" />
               <h2 className="font-wiki-serif text-base font-bold">
-                Backup Data
+                Backup Diary &amp; Media
               </h2>
             </div>
             {vaultMeta.lastBackupAt && (
@@ -332,7 +346,7 @@ export const BackupRestorePage: React.FC<BackupRestorePageProps> = ({
           <div className="flex items-center gap-2 border-b border-[var(--wiki-hairline)] pb-2.5">
             <RotateCcw className="h-4 w-4 text-[#3366cc]" />
             <h2 className="font-wiki-serif text-base font-bold">
-              Restore Data
+              Restore Diary &amp; Media
             </h2>
           </div>
 
