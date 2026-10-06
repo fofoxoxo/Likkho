@@ -119,15 +119,27 @@ export default function App() {
   });
 
   const [darkMode, setDarkMode] = useState<boolean>(() => {
-    return localStorage.getItem(STORAGE_DARK_KEY) === 'true';
+    try {
+      return localStorage.getItem(STORAGE_DARK_KEY) === 'true';
+    } catch {
+      return false;
+    }
   });
 
   const [savedPasscode, setSavedPasscode] = useState<string | null>(() => {
-    return localStorage.getItem(STORAGE_PIN_KEY) || null;
+    try {
+      return localStorage.getItem(STORAGE_PIN_KEY) || null;
+    } catch {
+      return null;
+    }
   });
 
   const [savedKeyHash, setSavedKeyHash] = useState<string | null>(() => {
-    return localStorage.getItem(STORAGE_ENC_HASH_KEY) || null;
+    try {
+      return localStorage.getItem(STORAGE_ENC_HASH_KEY) || null;
+    } catch {
+      return null;
+    }
   });
 
   const [isLocked, setIsLocked] = useState<boolean>(false);
@@ -186,7 +198,11 @@ export default function App() {
     } else {
       rootEl.classList.remove('dark');
     }
-    localStorage.setItem(STORAGE_DARK_KEY, String(darkMode));
+    try {
+      localStorage.setItem(STORAGE_DARK_KEY, String(darkMode));
+    } catch {
+      // ignore
+    }
 
     if (metaTheme) {
       metaTheme.setAttribute('content', surfaceColor);

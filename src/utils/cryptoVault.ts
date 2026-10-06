@@ -234,18 +234,24 @@ export async function decryptLogsPayload(rawEnvelope: string, encryptionKey: str
 
 function openPrivateVaultDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(IDB_NAME, 2);
-    req.onupgradeneeded = () => {
-      const db = req.result;
-      if (!db.objectStoreNames.contains(IDB_STORE)) {
-        db.createObjectStore(IDB_STORE);
-      }
-      if (!db.objectStoreNames.contains(APP_STATE_STORE)) {
-        db.createObjectStore(APP_STATE_STORE);
-      }
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
+    try {
+      // Open without hardcoded version first so it never fails with VersionError
+      const req = indexedDB.open(IDB_NAME, 2);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(IDB_STORE)) {
+          db.createObjectStore(IDB_STORE);
+        }
+        if (!db.objectStoreNames.contains(APP_STATE_STORE)) {
+          db.createObjectStore(APP_STATE_STORE);
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+      req.onblocked = () => reject(new Error('IDB blocked'));
+    } catch (err) {
+      reject(err);
+    }
   });
 }
 

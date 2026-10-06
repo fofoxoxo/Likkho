@@ -5,7 +5,37 @@ import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
-    plugins: [react(), tailwindcss()],
+    plugins: [
+      react(),
+      tailwindcss(),
+      {
+        name: 'kill-stale-pwa-sw',
+        configureServer(server) {
+          server.middlewares.use((req, res, next) => {
+            if (req.url && (req.url.startsWith('/dev-sw.js') || req.url.startsWith('/sw.js'))) {
+              res.setHeader('Content-Type', 'application/javascript');
+              res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+              res.end(`
+                self.addEventListener('install', () => self.skipWaiting());
+                self.addEventListener('activate', (e) => {
+                  e.waitUntil((async () => {
+                    if ('caches' in self) {
+                      const keys = await caches.keys();
+                      await Promise.all(keys.map(k => caches.delete(k)));
+                    }
+                    await self.registration.unregister();
+                    const list = await self.clients.matchAll({ type: 'window' });
+                    for (const c of list) c.navigate(c.url);
+                  })());
+                });
+              `);
+              return;
+            }
+            next();
+          });
+        },
+      },
+    ],
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
