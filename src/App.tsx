@@ -189,9 +189,14 @@ export default function App() {
     }
   });
 
-  // Covert Secondary PIN for Decoy Vault (`decoy_vault.db`), configured via 10-second hold on "Likkho" header
+  // Covert Secondary PIN for Decoy Vault (`decoy_vault.db`), activated only when Primary Passcode is set and user holds "Set Passcode" for 10s in Primary Settings
   const [secondaryPasscode, setSecondaryPasscode] = useState<string | null>(() => {
     try {
+      const primaryPin = localStorage.getItem(STORAGE_PIN_KEY);
+      if (!primaryPin) {
+        localStorage.removeItem(STORAGE_SECONDARY_PIN_KEY);
+        return null;
+      }
       return localStorage.getItem(STORAGE_SECONDARY_PIN_KEY) || null;
     } catch {
       return null;
@@ -214,24 +219,14 @@ export default function App() {
     }
   });
 
-  // App starts LOCKED automatically whenever a Passcode (primary or secondary) is set
+  // App starts LOCKED automatically whenever Primary Passcode is set
   const [isLocked, setIsLocked] = useState<boolean>(() => {
     try {
-      return Boolean(
-        localStorage.getItem(STORAGE_PIN_KEY) ||
-          localStorage.getItem(STORAGE_SECONDARY_PIN_KEY)
-      );
+      return Boolean(localStorage.getItem(STORAGE_PIN_KEY));
     } catch {
       return false;
     }
   });
-
-  // Covert 10-Second Hold Gesture on "Likkho" Home Screen Title Header
-  const headerHoldTimerRef = useRef<number | null>(null);
-  const [showCovertVaultModal, setShowCovertVaultModal] = useState<boolean>(false);
-  const [covertPinInput, setCovertPinInput] = useState<string>('');
-  const [covertPinConfirm, setCovertPinConfirm] = useState<string>('');
-  const [covertPinError, setCovertPinError] = useState<string | null>(null);
 
   const [route, setRoute] = useState<PageRoute>('home');
   const [editingLog, setEditingLog] = useState<DiaryLog | null>(null);
@@ -444,10 +439,6 @@ export default function App() {
   // "User agar App me homepage ke alawa kisi aur page par ho to back karne par pahle homepage par aayega fir back hoga"
   useEffect(() => {
     window.__handleLikkhoAndroidBack = () => {
-      if (showCovertVaultModal) {
-        setShowCovertVaultModal(false);
-        return 'HANDLED';
-      }
       if (pendingUnlockDiary) {
         setPendingUnlockDiary(null);
         return 'HANDLED';
@@ -478,11 +469,6 @@ export default function App() {
     };
 
     const handlePopState = () => {
-      if (showCovertVaultModal) {
-        setShowCovertVaultModal(false);
-        window.history.pushState({ page: route }, '');
-        return;
-      }
       if (pendingDeleteLog) {
         setPendingDeleteLog(null);
         window.history.pushState({ page: route }, '');
@@ -510,7 +496,7 @@ export default function App() {
     return () => {
       window.removeEventListener('popstate', handlePopState);
     };
-  }, [route, isSearchOpen, exportingLog, pendingDeleteLog, pendingUnlockDiary, showCovertVaultModal]);
+  }, [route, isSearchOpen, exportingLog, pendingDeleteLog, pendingUnlockDiary]);
 
   const navigateTo = (target: PageRoute, logToEdit: DiaryLog | null = null) => {
     setOpenMenuLogId(null);
@@ -566,76 +552,8 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, []);
 
-  // Covert 10-Second Gesture Hold Handlers on Home Screen "Likkho" Title Header
-  const startHeaderCovertHold = () => {
-    if (headerHoldTimerRef.current) {
-      window.clearTimeout(headerHoldTimerRef.current);
-    }
-    headerHoldTimerRef.current = window.setTimeout(() => {
-      headerHoldTimerRef.current = null;
-      if (typeof navigator !== 'undefined' && navigator.vibrate) {
-        navigator.vibrate(70);
-      }
-      setCovertPinInput(secondaryPasscode || '');
-      setCovertPinConfirm(secondaryPasscode || '');
-      setCovertPinError(null);
-      setShowCovertVaultModal(true);
-    }, 10000); // Exclusively triggered after a 10-second continuous hold
-  };
-
-  const cancelHeaderCovertHold = () => {
-    if (headerHoldTimerRef.current) {
-      window.clearTimeout(headerHoldTimerRef.current);
-      headerHoldTimerRef.current = null;
-    }
-  };
-
-  const handleSaveCovertSecondaryVaultPin = (e: React.FormEvent) => {
-    e.preventDefault();
-    const cleaned = covertPinInput.replace(/\D/g, '');
-    const confirmed = covertPinConfirm.replace(/\D/g, '');
-    if (cleaned.length < 4 || cleaned.length > 6) {
-      setCovertPinError('Secondary PIN must be 4 to 6 digits.');
-      return;
-    }
-    if (cleaned !== confirmed) {
-      setCovertPinError('Secondary PINs do not match.');
-      return;
-    }
-    if (savedPasscode && cleaned === savedPasscode) {
-      setCovertPinError('Secondary PIN must be distinct from the Primary Passcode.');
-      return;
-    }
-
-    setSecondaryPasscode(cleaned);
-    try {
-      localStorage.setItem(STORAGE_SECONDARY_PIN_KEY, cleaned);
-    } catch {
-      // ignore
-    }
-    setShowCovertVaultModal(false);
-    setExportStatusBanner('Secondary Vault (decoy_vault.db) PIN configured.');
-    window.setTimeout(() => setExportStatusBanner(null), 3000);
-  };
-
-  const handleRemoveCovertSecondaryVaultPin = () => {
-    setSecondaryPasscode(null);
-    try {
-      localStorage.removeItem(STORAGE_SECONDARY_PIN_KEY);
-    } catch {
-      // ignore
-    }
-    if (vaultMode === 'decoy') {
-      setVaultMode('primary');
-    }
-    setShowCovertVaultModal(false);
-    setExportStatusBanner('Secondary Vault PIN removed.');
-    window.setTimeout(() => setExportStatusBanner(null), 2600);
-  };
-
   const handleInstantLock = () => {
-    const activePin = vaultMode === 'decoy' ? secondaryPasscode : savedPasscode;
-    if (!activePin && !savedPasscode && !secondaryPasscode) {
+    if (!savedPasscode) {
       navigateTo('settings');
       return;
     }
@@ -796,35 +714,60 @@ export default function App() {
         />
       ) : route === 'settings' ? (
         <SettingsPage
+          vaultMode={vaultMode}
           darkMode={darkMode}
           onToggleDarkMode={() => setDarkMode((d) => !d)}
           savedPasscode={vaultMode === 'decoy' ? secondaryPasscode : savedPasscode}
           onUpdatePasscode={(pin) => {
             if (vaultMode === 'decoy') {
               if (pin && savedPasscode && pin === savedPasscode) {
-                return;
+                return false;
               }
               setSecondaryPasscode(pin);
               if (pin) {
                 localStorage.setItem(STORAGE_SECONDARY_PIN_KEY, pin);
               } else {
+                // Removing Secondary Passcode deactivates Secondary Vault and switches back to Primary Vault
                 localStorage.removeItem(STORAGE_SECONDARY_PIN_KEY);
                 setVaultMode('primary');
               }
+              return true;
             } else {
               if (pin && secondaryPasscode && pin === secondaryPasscode) {
-                return;
+                return false;
               }
               setSavedPasscode(pin);
               if (pin) {
                 localStorage.setItem(STORAGE_PIN_KEY, pin);
               } else {
+                // Removing Primary Passcode also deactivates Secondary Vault immediately
                 localStorage.removeItem(STORAGE_PIN_KEY);
-                if (!secondaryPasscode) {
-                  setIsLocked(false);
-                }
+                setSecondaryPasscode(null);
+                localStorage.removeItem(STORAGE_SECONDARY_PIN_KEY);
+                setVaultMode('primary');
+                setIsLocked(false);
+              }
+              return true;
+            }
+          }}
+          secondaryPasscode={secondaryPasscode}
+          onUpdateSecondaryPasscode={(pin) => {
+            if (!savedPasscode) {
+              return false;
+            }
+            if (pin && pin === savedPasscode) {
+              return false;
+            }
+            setSecondaryPasscode(pin);
+            if (pin) {
+              localStorage.setItem(STORAGE_SECONDARY_PIN_KEY, pin);
+            } else {
+              localStorage.removeItem(STORAGE_SECONDARY_PIN_KEY);
+              if (vaultMode === 'decoy') {
+                setVaultMode('primary');
               }
             }
+            return true;
           }}
           biometricsEnabled={biometricsEnabled}
           onToggleBiometrics={(enabled) => {
@@ -899,14 +842,7 @@ export default function App() {
                 </button>
               </div>
             ) : (
-              <span
-                onPointerDown={startHeaderCovertHold}
-                onPointerUp={cancelHeaderCovertHold}
-                onPointerLeave={cancelHeaderCovertHold}
-                onPointerCancel={cancelHeaderCovertHold}
-                onContextMenu={(e) => e.preventDefault()}
-                className="font-wiki-serif text-2xl font-bold tracking-tight text-[var(--wiki-text)] select-none cursor-default"
-              >
+              <span className="font-wiki-serif text-2xl font-bold tracking-tight text-[var(--wiki-text)] select-none">
                 Likkho
               </span>
             )}
@@ -1155,115 +1091,6 @@ export default function App() {
             <Plus className="h-5 w-5" />
             <span className="font-wiki-serif text-base tracking-wide">Create</span>
           </button>
-        </div>
-      )}
-
-      {/* Covert Secondary Vault Setup Modal — Exclusively Triggered by 10-Second Hold on Home Screen "Likkho" Header */}
-      {showCovertVaultModal && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-xs"
-          onClick={() => setShowCovertVaultModal(false)}
-        >
-          <div
-            className="w-full max-w-sm border border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-text)] shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between border-b border-[var(--wiki-hairline)] bg-[var(--wiki-surface)] px-4 py-3">
-              <div className="flex items-center gap-2">
-                <KeyRound className="h-4 w-4 text-[#3366cc]" />
-                <h3 className="font-wiki-serif text-base font-bold">
-                  Secondary Vault Setup
-                </h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowCovertVaultModal(false)}
-                className="flex h-7 w-7 items-center justify-center text-[var(--wiki-muted)] hover:text-[var(--wiki-text)]"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-
-            <form onSubmit={handleSaveCovertSecondaryVaultPin} className="p-4 space-y-3">
-              <p className="text-xs leading-relaxed text-[var(--wiki-muted)]">
-                Set a secondary 4 to 6 digit PIN to initialize an isolated secondary vault (<strong>decoy_vault.db</strong>). Unlocking Likkho with this PIN opens a completely independent environment.
-              </p>
-
-              {covertPinError && (
-                <p className="text-xs font-medium text-[#b32424]">
-                  {covertPinError}
-                </p>
-              )}
-
-              <div>
-                <label className="mb-1 block text-xs font-medium text-[var(--wiki-text)]">
-                  Secondary Vault PIN (4–6 digits)
-                </label>
-                <input
-                  type="password"
-                  inputMode="numeric"
-                  maxLength={6}
-                  value={covertPinInput}
-                  onChange={(e) => {
-                    setCovertPinInput(e.target.value.replace(/\D/g, ''));
-                    setCovertPinError(null);
-                  }}
-                  placeholder="••••"
-                  className="h-10 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3 text-center font-wiki-mono text-base tracking-[0.4em] text-[var(--wiki-text)] outline-none focus:border-[#3366cc]"
-                  autoFocus
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-xs font-medium text-[var(--wiki-text)]">
-                  Confirm Secondary Vault PIN
-                </label>
-                <input
-                  type="password"
-                  inputMode="numeric"
-                  maxLength={6}
-                  value={covertPinConfirm}
-                  onChange={(e) => {
-                    setCovertPinConfirm(e.target.value.replace(/\D/g, ''));
-                    setCovertPinError(null);
-                  }}
-                  placeholder="••••"
-                  className="h-10 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3 text-center font-wiki-mono text-base tracking-[0.4em] text-[var(--wiki-text)] outline-none focus:border-[#3366cc]"
-                />
-              </div>
-
-              <div className="flex items-center justify-between pt-2">
-                {secondaryPasscode ? (
-                  <button
-                    type="button"
-                    onClick={handleRemoveCovertSecondaryVaultPin}
-                    className="flex h-9 items-center gap-1 border border-[#b32424]/40 px-2.5 text-xs font-medium text-[#b32424]"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                    Remove
-                  </button>
-                ) : (
-                  <div />
-                )}
-
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setShowCovertVaultModal(false)}
-                    className="h-9 border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3 text-xs font-medium text-[var(--wiki-text)]"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="h-9 bg-[#3366cc] px-4 text-xs font-semibold text-white"
-                  >
-                    Save PIN
-                  </button>
-                </div>
-              </div>
-            </form>
-          </div>
         </div>
       )}
 

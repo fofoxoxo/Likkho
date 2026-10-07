@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   ArrowLeft,
   Moon,
@@ -14,13 +14,17 @@ import {
 import {
   AudioFormatOption,
   MicRecordingSettings,
+  VaultMode,
 } from '../utils/cryptoVault';
 
 interface SettingsPageProps {
+  vaultMode: VaultMode;
   darkMode: boolean;
   onToggleDarkMode: () => void;
   savedPasscode: string | null;
-  onUpdatePasscode: (newPasscode: string | null) => void;
+  onUpdatePasscode: (newPasscode: string | null) => boolean;
+  secondaryPasscode: string | null;
+  onUpdateSecondaryPasscode: (newPasscode: string | null) => boolean;
   biometricsEnabled: boolean;
   onToggleBiometrics: (enabled: boolean) => void;
   onOpenBackupRestore: () => void;
@@ -56,10 +60,13 @@ const BIT_RATES: { value: MicRecordingSettings['bitRate']; label: string }[] = [
 ];
 
 export const SettingsPage: React.FC<SettingsPageProps> = ({
+  vaultMode,
   darkMode,
   onToggleDarkMode,
   savedPasscode,
   onUpdatePasscode,
+  secondaryPasscode,
+  onUpdateSecondaryPasscode,
   biometricsEnabled,
   onToggleBiometrics,
   onOpenBackupRestore,
@@ -68,15 +75,65 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   onUpdateMicSettings,
 }) => {
   const [showPasscodeModal, setShowPasscodeModal] = useState<boolean>(false);
+  // Whether the currently open Set Passcode modal is configuring the covert Secondary Vault (via 10s hold in Primary)
+  const [isConfiguringSecondaryViaHold, setIsConfiguringSecondaryViaHold] =
+    useState<boolean>(false);
   const [pinInput, setPinInput] = useState<string>(savedPasscode || '');
   const [pinError, setPinError] = useState<string>('');
   const [toastMsg, setToastMsg] = useState<string | null>(null);
+
+  // 10-second long press on "Set Passcode" button (only in Primary Vault when Primary Passcode is already active)
+  const holdTimerRef = useRef<number | null>(null);
+  const holdTriggeredRef = useRef<boolean>(false);
 
   const showToast = (msg: string) => {
     setToastMsg(msg);
     setTimeout(() => {
       setToastMsg((prev) => (prev === msg ? null : prev));
     }, 2600);
+  };
+
+  const startSetPasscodeHold = () => {
+    holdTriggeredRef.current = false;
+    if (holdTimerRef.current) {
+      window.clearTimeout(holdTimerRef.current);
+      holdTimerRef.current = null;
+    }
+
+    // Secondary vault can only be activated from Primary Vault when Primary Passcode is already set
+    if (vaultMode !== 'primary' || !savedPasscode) {
+      return;
+    }
+
+    holdTimerRef.current = window.setTimeout(() => {
+      holdTimerRef.current = null;
+      holdTriggeredRef.current = true;
+      if (typeof navigator !== 'undefined' && navigator.vibrate) {
+        navigator.vibrate(70);
+      }
+      setIsConfiguringSecondaryViaHold(true);
+      setPinInput(secondaryPasscode || '');
+      setPinError('');
+      setShowPasscodeModal(true);
+    }, 10000); // 10 seconds continuous long press
+  };
+
+  const cancelSetPasscodeHold = () => {
+    if (holdTimerRef.current) {
+      window.clearTimeout(holdTimerRef.current);
+      holdTimerRef.current = null;
+    }
+  };
+
+  const handleSetPasscodeClick = () => {
+    if (holdTriggeredRef.current) {
+      holdTriggeredRef.current = false;
+      return;
+    }
+    setIsConfiguringSecondaryViaHold(false);
+    setPinInput(savedPasscode || '');
+    setPinError('');
+    setShowPasscodeModal(true);
   };
 
   const handleSavePin = (e: React.FormEvent) => {
@@ -86,13 +143,48 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
       setPinError('Passcode must be 4 to 6 digits.');
       return;
     }
-    onUpdatePasscode(cleaned);
+
+    if (isConfiguringSecondaryViaHold) {
+      const ok = onUpdateSecondaryPasscode(cleaned);
+      if (!ok) {
+        setPinError('Passcode must be different from existing passcode.');
+        return;
+      }
+      setShowPasscodeModal(false);
+      setIsConfiguringSecondaryViaHold(false);
+      showToast('Passcode saved.');
+      return;
+    }
+
+    const ok = onUpdatePasscode(cleaned);
+    if (!ok) {
+      setPinError('Passcode must be different from existing passcode.');
+      return;
+    }
     setShowPasscodeModal(false);
     showToast('Passcode saved.');
   };
 
+  const handleRemovePin = () => {
+    if (isConfiguringSecondaryViaHold) {
+      onUpdateSecondaryPasscode(null);
+      setShowPasscodeModal(false);
+      setIsConfiguringSecondaryViaHold(false);
+      showToast('Passcode removed.');
+      return;
+    }
+
+    onUpdatePasscode(null);
+    if (vaultMode === 'primary') {
+      onToggleBiometrics(false);
+    }
+    setShowPasscodeModal(false);
+    showToast('Passcode removed.');
+  };
+
   const handleBiometricToggleClick = () => {
     if (!savedPasscode) {
+      setIsConfiguringSecondaryViaHold(false);
       setPinInput('');
       setPinError('Please set a Passcode first to enable Biometric unlock.');
       setShowPasscodeModal(true);
@@ -102,7 +194,10 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     const nextState = !biometricsEnabled;
     if (nextState) {
       // Request Android biometric permission / verification when enabling
-      if (window.LikkhoNative && typeof window.LikkhoNative.authenticateBiometric === 'function') {
+      if (
+        window.LikkhoNative &&
+        typeof window.LikkhoNative.authenticateBiometric === 'function'
+      ) {
         window.__onLikkhoBiometricResult = (success: boolean) => {
           if (success) {
             onToggleBiometrics(true);
@@ -122,6 +217,10 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
       showToast('Biometric unlock disabled.');
     }
   };
+
+  const currentModalHasExistingPasscode = isConfiguringSecondaryViaHold
+    ? Boolean(secondaryPasscode)
+    : Boolean(savedPasscode);
 
   return (
     <div className="flex h-full w-full flex-col bg-[var(--wiki-bg)] text-[var(--wiki-text)]">
@@ -187,15 +286,16 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             </div>
           </button>
 
-          {/* 2. Set Passcode */}
+          {/* 2. Set Passcode (10-second long press in Primary when Primary Passcode is set opens identical Set Passcode popup for Secondary Vault) */}
           <button
             type="button"
-            onClick={() => {
-              setPinInput(savedPasscode || '');
-              setPinError('');
-              setShowPasscodeModal(true);
-            }}
-            className="flex w-full items-center justify-between px-4 py-4 text-left hover:bg-[var(--wiki-surface)] transition-colors"
+            onPointerDown={startSetPasscodeHold}
+            onPointerUp={cancelSetPasscodeHold}
+            onPointerLeave={cancelSetPasscodeHold}
+            onPointerCancel={cancelSetPasscodeHold}
+            onContextMenu={(e) => e.preventDefault()}
+            onClick={handleSetPasscodeClick}
+            className="flex w-full items-center justify-between px-4 py-4 text-left hover:bg-[var(--wiki-surface)] transition-colors select-none"
           >
             <div className="flex items-center gap-3.5">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center border border-[var(--wiki-border)] bg-[var(--wiki-surface)]">
@@ -213,38 +313,40 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             <ChevronRight className="h-5 w-5 text-[var(--wiki-muted)]" />
           </button>
 
-          {/* 3. Toggle Biometric Unlock */}
-          <button
-            type="button"
-            onClick={handleBiometricToggleClick}
-            className="flex w-full items-center justify-between px-4 py-4 text-left hover:bg-[var(--wiki-surface)] transition-colors"
-          >
-            <div className="flex items-center gap-3.5">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center border border-[var(--wiki-border)] bg-[var(--wiki-surface)]">
-                <Fingerprint className="h-5 w-5 text-[#3366cc]" />
-              </div>
-              <div>
-                <div className="font-wiki-serif text-base font-bold">
-                  Biometric Unlock
-                </div>
-                <div className="text-xs text-[var(--wiki-muted)]">
-                  {biometricsEnabled
-                    ? 'Fingerprint / Face unlock enabled'
-                    : 'Use device biometrics with passcode'}
-                </div>
-              </div>
-            </div>
-
-            <div
-              className={`flex h-6 w-11 shrink-0 items-center rounded-full border p-0.5 transition-colors ${
-                biometricsEnabled
-                  ? 'border-[#3366cc] bg-[#3366cc] justify-end'
-                  : 'border-[var(--wiki-border)] bg-[var(--wiki-surface)] justify-start'
-              }`}
+          {/* 3. Toggle Biometric Unlock (Hidden in Secondary Vault) */}
+          {vaultMode === 'primary' && (
+            <button
+              type="button"
+              onClick={handleBiometricToggleClick}
+              className="flex w-full items-center justify-between px-4 py-4 text-left hover:bg-[var(--wiki-surface)] transition-colors"
             >
-              <span className="h-4 w-4 rounded-full bg-white shadow-2xs" />
-            </div>
-          </button>
+              <div className="flex items-center gap-3.5">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center border border-[var(--wiki-border)] bg-[var(--wiki-surface)]">
+                  <Fingerprint className="h-5 w-5 text-[#3366cc]" />
+                </div>
+                <div>
+                  <div className="font-wiki-serif text-base font-bold">
+                    Biometric Unlock
+                  </div>
+                  <div className="text-xs text-[var(--wiki-muted)]">
+                    {biometricsEnabled
+                      ? 'Fingerprint / Face unlock enabled'
+                      : 'Use device biometrics with passcode'}
+                  </div>
+                </div>
+              </div>
+
+              <div
+                className={`flex h-6 w-11 shrink-0 items-center rounded-full border p-0.5 transition-colors ${
+                  biometricsEnabled
+                    ? 'border-[#3366cc] bg-[#3366cc] justify-end'
+                    : 'border-[var(--wiki-border)] bg-[var(--wiki-surface)] justify-start'
+                }`}
+              >
+                <span className="h-4 w-4 rounded-full bg-white shadow-2xs" />
+              </div>
+            </button>
+          )}
 
           {/* 4. Backup & Restore */}
           <button
@@ -363,7 +465,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
         </section>
       </div>
 
-      {/* Set Passcode Modal */}
+      {/* Set Passcode Modal (Identical UI for Primary Passcode and Secondary Passcode via 10s hold) */}
       {showPasscodeModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs">
           <div className="w-full max-w-sm border border-[var(--wiki-border)] bg-[var(--wiki-bg)] p-4 text-[var(--wiki-text)] shadow-xl">
@@ -394,14 +496,10 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               )}
 
               <div className="flex items-center justify-between pt-2">
-                {savedPasscode ? (
+                {currentModalHasExistingPasscode ? (
                   <button
                     type="button"
-                    onClick={() => {
-                      onUpdatePasscode(null);
-                      onToggleBiometrics(false);
-                      setShowPasscodeModal(false);
-                    }}
+                    onClick={handleRemovePin}
                     className="flex h-10 items-center gap-1 border border-[#b32424]/40 px-3 text-xs font-medium text-[#b32424]"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
@@ -414,7 +512,10 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
-                    onClick={() => setShowPasscodeModal(false)}
+                    onClick={() => {
+                      setShowPasscodeModal(false);
+                      setIsConfiguringSecondaryViaHold(false);
+                    }}
                     className="h-10 border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-4 text-xs font-medium"
                   >
                     Cancel
