@@ -478,9 +478,13 @@ jobs:
 
               private static final String PREFS_NAME = "likkho_saf_prefs";
               private static final String KEY_SAF_TREE_URI = "saf_base_tree_uri";
+              private static final String KEY_SAF_DECOY_TREE_URI = "saf_decoy_base_tree_uri";
               private static final String KEY_PASSCODE_PROTECTED = "app_passcode_protection_enabled";
-              private static final String HIDDEN_SUBFOLDER_NAME = ".likkho_backups";
-              private static final String VAULT_FILENAME = "likkho_encrypted_vault.json";
+              private static final String PRIMARY_SUBFOLDER_NAME = ".likkho_backups";
+              private static final String DECOY_SUBFOLDER_NAME = ".likkho_decoy_backups";
+              private static final String PRIMARY_VAULT_FILENAME = "real_vault.db";
+              private static final String DECOY_VAULT_FILENAME = "decoy_vault.db";
+              private static final String LEGACY_JSON_FILENAME = "likkho_encrypted_vault.json";
               private static final String LEGACY_VAULT_FILENAME = "likkho_encrypted_vault.bak";
 
               private static final int SAF_OP_NONE = 0;
@@ -497,6 +501,7 @@ jobs:
 
               private int pendingSafOperation = SAF_OP_NONE;
               private String pendingBackupEnvelope = null;
+              private String pendingVaultMode = "primary";
               private boolean isAppPasscodeProtected = false;
               private android.view.View recentsPrivacyOverlayView = null;
 
@@ -742,9 +747,25 @@ jobs:
 
               // ==================== SAF (Storage Access Framework) Helpers ====================
 
-              private Uri getPersistedSafTreeUri() {
+              private String getSafPrefKeyForMode(String vaultMode) {
+                  return "decoy".equalsIgnoreCase(vaultMode) ? KEY_SAF_DECOY_TREE_URI : KEY_SAF_TREE_URI;
+              }
+
+              private String getSubfolderForMode(String vaultMode) {
+                  return "decoy".equalsIgnoreCase(vaultMode) ? DECOY_SUBFOLDER_NAME : PRIMARY_SUBFOLDER_NAME;
+              }
+
+              private String getVaultFilenameForMode(String vaultMode) {
+                  return "decoy".equalsIgnoreCase(vaultMode) ? DECOY_VAULT_FILENAME : PRIMARY_VAULT_FILENAME;
+              }
+
+              private Uri getPersistedSafTreeUri(String vaultMode) {
                   SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
-                  String uriStr = prefs.getString(KEY_SAF_TREE_URI, null);
+                  String prefKey = getSafPrefKeyForMode(vaultMode);
+                  String uriStr = prefs.getString(prefKey, null);
+                  if ((uriStr == null || uriStr.isEmpty()) && !"decoy".equalsIgnoreCase(vaultMode)) {
+                      uriStr = prefs.getString(KEY_SAF_TREE_URI, null);
+                  }
                   if (uriStr == null || uriStr.isEmpty()) return null;
                   try {
                       Uri uri = Uri.parse(uriStr);
@@ -854,15 +875,17 @@ jobs:
                   } catch (Exception ignored) {}
               }
 
-              private void performSafBackupWrite(Uri treeUri, String envelope) {
+              private void performSafBackupWrite(Uri treeUri, String envelope, String vaultMode) {
+                  final String targetSubfolder = getSubfolderForMode(vaultMode);
+                  final String targetFilename = getVaultFilenameForMode(vaultMode);
                   new Thread(() -> {
                       try {
                           ContentResolver resolver = getContentResolver();
                           String rootDocId = DocumentsContract.getTreeDocumentId(treeUri);
-                          String backupDirDocId = getOrCreateChildDirectory(treeUri, rootDocId, HIDDEN_SUBFOLDER_NAME);
+                          String backupDirDocId = getOrCreateChildDirectory(treeUri, rootDocId, targetSubfolder);
                           ensureNomediaInSafFolder(treeUri, backupDirDocId);
 
-                          String existingFileDocId = findChildDocumentId(treeUri, backupDirDocId, VAULT_FILENAME);
+                          String existingFileDocId = findChildDocumentId(treeUri, backupDirDocId, targetFilename);
                           Uri targetFileUri;
                           if (existingFileDocId != null) {
                               targetFileUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, existingFileDocId);
@@ -871,8 +894,8 @@ jobs:
                               targetFileUri = DocumentsContract.createDocument(
                                   resolver,
                                   backupDirUri,
-                                  "application/json",
-                                  VAULT_FILENAME
+                                  "application/octet-stream",
+                                  targetFilename
                               );
                           }
 
@@ -891,25 +914,27 @@ jobs:
                               os.flush();
                           }
 
-                          notifySafBackupResult(true, "Backup saved in " + extractSafFolderDisplayName(treeUri) + "/" + HIDDEN_SUBFOLDER_NAME);
+                          notifySafBackupResult(true, "Backup saved in " + extractSafFolderDisplayName(treeUri) + "/" + targetSubfolder + "/" + targetFilename);
                       } catch (Exception e) {
                           notifySafBackupResult(false, e.getMessage());
                       }
                   }).start();
               }
 
-              private void performSafRestoreRead(Uri treeUri) {
+              private void performSafRestoreRead(Uri treeUri, String vaultMode) {
+                  final String targetSubfolder = getSubfolderForMode(vaultMode);
+                  final String[] candidateFileNames = "decoy".equalsIgnoreCase(vaultMode)
+                      ? new String[]{DECOY_VAULT_FILENAME}
+                      : new String[]{PRIMARY_VAULT_FILENAME, LEGACY_JSON_FILENAME, LEGACY_VAULT_FILENAME};
                   new Thread(() -> {
                       try {
                           ContentResolver resolver = getContentResolver();
                           String rootDocId = DocumentsContract.getTreeDocumentId(treeUri);
 
-                          // Check inside <SelectedFolder>/.likkho_backups/ first, or directly inside <SelectedFolder> if user picked .likkho_backups
-                          String backupDirDocId = findChildDocumentId(treeUri, rootDocId, HIDDEN_SUBFOLDER_NAME);
+                          String backupDirDocId = findChildDocumentId(treeUri, rootDocId, targetSubfolder);
                           String[] searchDirs = backupDirDocId != null
                               ? new String[]{backupDirDocId, rootDocId}
                               : new String[]{rootDocId};
-                          String[] candidateFileNames = new String[]{VAULT_FILENAME, LEGACY_VAULT_FILENAME};
 
                           for (String dirDocId : searchDirs) {
                               for (String fname : candidateFileNames) {
@@ -1234,7 +1259,7 @@ jobs:
                    */
                   @JavascriptInterface
                   public String getSafBaseFolderName() {
-                      Uri treeUri = getPersistedSafTreeUri();
+                      Uri treeUri = getPersistedSafTreeUri(pendingVaultMode);
                       return treeUri != null ? extractSafFolderDisplayName(treeUri) : "";
                   }
 
@@ -1244,21 +1269,23 @@ jobs:
                   }
 
                   @JavascriptInterface
-                  public void saveBackupViaSaf(String envelope) {
+                  public void saveBackupViaSaf(String envelope, String vaultMode) {
                       pendingBackupEnvelope = envelope;
-                      Uri treeUri = getPersistedSafTreeUri();
+                      pendingVaultMode = (vaultMode != null && !vaultMode.isEmpty()) ? vaultMode : "primary";
+                      Uri treeUri = getPersistedSafTreeUri(pendingVaultMode);
                       if (treeUri != null) {
-                          performSafBackupWrite(treeUri, envelope);
+                          performSafBackupWrite(treeUri, envelope, pendingVaultMode);
                       } else {
                           launchSafDirectoryPicker(SAF_OP_BACKUP);
                       }
                   }
 
                   @JavascriptInterface
-                  public void restoreBackupViaSaf() {
-                      Uri treeUri = getPersistedSafTreeUri();
+                  public void restoreBackupViaSaf(String vaultMode) {
+                      pendingVaultMode = (vaultMode != null && !vaultMode.isEmpty()) ? vaultMode : "primary";
+                      Uri treeUri = getPersistedSafTreeUri(pendingVaultMode);
                       if (treeUri != null) {
-                          performSafRestoreRead(treeUri);
+                          performSafRestoreRead(treeUri, pendingVaultMode);
                       } else {
                           launchSafDirectoryPicker(SAF_OP_RESTORE);
                       }
@@ -1319,7 +1346,7 @@ jobs:
                               getContentResolver().takePersistableUriPermission(treeUri, takeFlags);
                               getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
                                   .edit()
-                                  .putString(KEY_SAF_TREE_URI, treeUri.toString())
+                                  .putString(getSafPrefKeyForMode(pendingVaultMode), treeUri.toString())
                                   .apply();
                           } catch (Exception ignored) {}
 
@@ -1329,9 +1356,9 @@ jobs:
                           if (op == SAF_OP_BACKUP && pendingBackupEnvelope != null) {
                               String env = pendingBackupEnvelope;
                               pendingBackupEnvelope = null;
-                              performSafBackupWrite(treeUri, env);
+                              performSafBackupWrite(treeUri, env, pendingVaultMode);
                           } else if (op == SAF_OP_RESTORE) {
-                              performSafRestoreRead(treeUri);
+                              performSafRestoreRead(treeUri, pendingVaultMode);
                           }
                       } else {
                           if (op == SAF_OP_BACKUP) {

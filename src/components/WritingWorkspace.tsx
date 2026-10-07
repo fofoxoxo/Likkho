@@ -31,6 +31,9 @@ import {
   CustomFontItem,
   DiaryLog,
   MicRecordingSettings,
+  getRemainingPasscodeCooldownSeconds,
+  recordPasscodeFailure,
+  resetPasscodeFailures,
 } from '../utils/cryptoVault';
 import { scheduleAndroidNativeReminder } from '../utils/notificationSound';
 import { ImageCropperModal } from './ImageCropperModal';
@@ -217,6 +220,17 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
   const [activeSpoilerSpan, setActiveSpoilerSpan] = useState<HTMLElement | null>(null);
   const [spoilerUnlockInput, setSpoilerUnlockInput] = useState<string>('');
   const [spoilerUnlockError, setSpoilerUnlockError] = useState<string | null>(null);
+  const [spoilerCooldownSec, setSpoilerCooldownSec] = useState<number>(() =>
+    getRemainingPasscodeCooldownSeconds()
+  );
+
+  useEffect(() => {
+    if (!activeSpoilerSpan) return;
+    const sync = () => setSpoilerCooldownSec(getRemainingPasscodeCooldownSeconds());
+    sync();
+    const timer = window.setInterval(sync, 500);
+    return () => window.clearInterval(timer);
+  }, [activeSpoilerSpan]);
 
   const [showReminderModal, setShowReminderModal] = useState<boolean>(false);
   const [savedIndicator, setSavedIndicator] = useState<boolean>(false);
@@ -889,6 +903,12 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
 
   const verifySpoilerPasscode = (): boolean => {
     if (!activeSpoilerSpan) return false;
+    const rem = getRemainingPasscodeCooldownSeconds();
+    if (rem > 0) {
+      setSpoilerCooldownSec(rem);
+      setSpoilerUnlockError(`Too many wrong attempts. Wait ${rem}s.`);
+      return false;
+    }
     const encodedPin = activeSpoilerSpan.getAttribute('data-spoiler-pin') || '';
     let expectedPin = '';
     try {
@@ -897,9 +917,17 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
       expectedPin = '';
     }
     if (spoilerUnlockInput.trim() === expectedPin) {
+      resetPasscodeFailures();
+      setSpoilerCooldownSec(0);
       return true;
     }
-    setSpoilerUnlockError('Incorrect spoiler passcode.');
+    const fail = recordPasscodeFailure();
+    if (fail.cooldownSeconds > 0) {
+      setSpoilerCooldownSec(fail.cooldownSeconds);
+      setSpoilerUnlockError(`Incorrect passcode. Locked for ${fail.cooldownSeconds}s.`);
+    } else {
+      setSpoilerUnlockError('Incorrect spoiler passcode.');
+    }
     return false;
   };
 
@@ -1891,10 +1919,16 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
             </div>
 
             <form onSubmit={handleVerifySpoilerView} className="p-4 space-y-3">
-              {spoilerUnlockError && (
-                <p className="text-xs font-medium text-[#b32424]">
-                  {spoilerUnlockError}
+              {spoilerCooldownSec > 0 ? (
+                <p className="text-xs font-semibold text-[#b32424]">
+                  Locked for {spoilerCooldownSec}s due to continuous wrong attempts.
                 </p>
+              ) : (
+                spoilerUnlockError && (
+                  <p className="text-xs font-medium text-[#b32424]">
+                    {spoilerUnlockError}
+                  </p>
+                )
               )}
               <div>
                 <label className="mb-1 block text-xs font-medium text-[var(--wiki-text)]">
@@ -1903,12 +1937,13 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
                 <input
                   type="password"
                   value={spoilerUnlockInput}
+                  disabled={spoilerCooldownSec > 0}
                   onChange={(e) => {
                     setSpoilerUnlockInput(e.target.value);
                     setSpoilerUnlockError(null);
                   }}
                   placeholder="Passcode..."
-                  className="h-9 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3 text-xs text-[var(--wiki-text)] outline-none focus:border-[#3366cc]"
+                  className="h-9 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3 text-xs text-[var(--wiki-text)] outline-none focus:border-[#3366cc] disabled:opacity-50"
                   autoFocus
                 />
               </div>
@@ -1923,8 +1958,9 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
                 {!isReadingMode && (
                   <button
                     type="button"
+                    disabled={spoilerCooldownSec > 0}
                     onClick={handleDisableSpoilerForEditing}
-                    className="flex h-9 items-center gap-1 border border-[#b32424] bg-[#b32424] px-2.5 text-xs font-semibold text-white"
+                    className="flex h-9 items-center gap-1 border border-[#b32424] bg-[#b32424] px-2.5 text-xs font-semibold text-white disabled:opacity-50"
                     title="Disable spoiler passcode to edit or delete this word"
                   >
                     <Unlock className="h-3.5 w-3.5" />
@@ -1933,9 +1969,10 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
                 )}
                 <button
                   type="submit"
-                  className="h-9 bg-[#3366cc] px-3 text-xs font-semibold text-white"
+                  disabled={spoilerCooldownSec > 0}
+                  className="h-9 bg-[#3366cc] px-3 text-xs font-semibold text-white disabled:opacity-50"
                 >
-                  View Text
+                  {spoilerCooldownSec > 0 ? `Wait ${spoilerCooldownSec}s` : 'View Text'}
                 </button>
               </div>
             </form>

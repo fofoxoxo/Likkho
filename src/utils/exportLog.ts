@@ -8,8 +8,8 @@ declare global {
       saveExportedFile?: (base64Data: string, filename: string, mimeType: string) => void;
       writePersistentVaultBackup?: (envelope: string) => boolean;
       readPersistentVaultBackup?: () => string;
-      saveBackupViaSaf?: (envelope: string) => void;
-      restoreBackupViaSaf?: () => void;
+      saveBackupViaSaf?: (envelope: string, vaultMode?: string) => void;
+      restoreBackupViaSaf?: (vaultMode?: string) => void;
       chooseSafBaseFolder?: () => void;
       getSafBaseFolderName?: () => string;
       pickVaultBackupFile?: () => void;

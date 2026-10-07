@@ -2109,15 +2109,27 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
               </button>
 
               {canvasBgDataUrl && (
-                <button
-                  type="button"
-                  onMouseDown={preventFocusLoss}
-                  onClick={() => onChangeCanvasBg(null, canvasBgOpacity)}
-                  className="flex h-8 shrink-0 items-center gap-1 border border-[#b32424]/40 px-2 text-xs font-medium text-[#b32424]"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                  <span>Remove</span>
-                </button>
+                <>
+                  {onOpenBgImageStudio && (
+                    <button
+                      type="button"
+                      onMouseDown={preventFocusLoss}
+                      onClick={() => onOpenBgImageStudio(canvasBgDataUrl)}
+                      className="flex h-8 shrink-0 items-center gap-1 border border-[#3366cc]/50 bg-[#3366cc]/10 px-2 text-xs font-semibold text-[#3366cc]"
+                    >
+                      <span>Compress / Edit</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onMouseDown={preventFocusLoss}
+                    onClick={() => onChangeCanvasBg(null, canvasBgOpacity)}
+                    className="flex h-8 shrink-0 items-center gap-1 border border-[#b32424]/40 px-2 text-xs font-medium text-[#b32424]"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    <span>Remove</span>
+                  </button>
+                </>
               )}
             </div>
 

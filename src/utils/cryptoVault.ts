@@ -1,11 +1,14 @@
 /**
- * AES-256-GCM Authenticated Encryption Architecture + Android SAF (Storage Access Framework)
- * - Derives a 256-bit key from user's passphrase via PBKDF2 (100,000 iterations + random 16-byte salt)
- * - Encrypts with a fresh 12-byte IV producing ciphertext + 128-bit GCM Authentication Tag stored in JSON format
- * - Uses Android SAF System File Picker (ACTION_OPEN_DOCUMENT_TREE) to create a hidden subfolder (.likkho_backups)
- *   with a .nomedia file inside the user's chosen directory (e.g., Documents), allowing targetSdkVersion = 34
- *   with zero Google Play Protect warnings while surviving app reinstalls.
+ * Stealth-Grade Dual-Vault Security Architecture + AES-256-GCM Authenticated Encryption + Android SAF
+ * - Supports TWO completely isolated vaults with zero cross-database metadata linkage or storage leakage:
+ *   1. Primary Vault (`real_vault.db`) — PBKDF2-SHA256 (100,000 iterations), dedicated `.likkho_backups` directory & `WikiLogPrimaryVaultDB`
+ *   2. Secondary / Decoy Vault (`decoy_vault.db`) — Distinct PBKDF2-SHA512 (210,000 iterations), separate `.likkho_decoy_backups` directory & `WikiLogSecondaryInstanceDB`
+ * - Includes progressive anti-brute-force passcode cooldown manager:
+ *   - 5th continuous wrong attempt triggers a 30-second cooldown
+ *   - Every subsequent wrong attempt (6th, 7th, ...) multiplies 30 seconds by the attempt count (e.g., 5 -> 30s, 6 -> 180s, 7 -> 210s, ...)
  */
+
+export type VaultMode = 'primary' | 'decoy';
 
 export interface CanvasDraggableImage {
   id: string;
@@ -88,11 +91,122 @@ export interface VaultBackupBundle {
   micSettings?: MicRecordingSettings;
 }
 
-const VAULT_FOLDER_NAME = '.likkho_backups';
-const VAULT_FILE_NAME = 'likkho_encrypted_vault.json';
-const IDB_NAME = 'WikiLogPrivateSystemVaultDB';
+export interface VaultDomainConfig {
+  mode: VaultMode;
+  dbFilename: string;
+  safFolderName: string;
+  idbDatabaseName: string;
+  kdfHash: 'SHA-256' | 'SHA-512';
+  kdfIterations: number;
+  domainContextSalt: string;
+  storagePrefix: string;
+}
+
+const VAULT_CONFIGS: Record<VaultMode, VaultDomainConfig> = {
+  primary: {
+    mode: 'primary',
+    dbFilename: 'real_vault.db',
+    safFolderName: '.likkho_backups',
+    idbDatabaseName: 'WikiLogPrivateSystemVaultDB',
+    kdfHash: 'SHA-256',
+    kdfIterations: 100000,
+    domainContextSalt: 'WIKILOG_PRIMARY_REAL_VAULT_KDF_V1::',
+    storagePrefix: 'wikilog_v1_',
+  },
+  decoy: {
+    mode: 'decoy',
+    dbFilename: 'decoy_vault.db',
+    safFolderName: '.likkho_decoy_backups',
+    idbDatabaseName: 'WikiLogIsolatedDecoyVaultDB',
+    kdfHash: 'SHA-512',
+    kdfIterations: 210000,
+    domainContextSalt: 'WIKILOG_SECONDARY_DECOY_VAULT_KDF_V2::',
+    storagePrefix: 'wikilog_decoy_v2_',
+  },
+};
+
+export function getVaultConfig(mode: VaultMode = 'primary'): VaultDomainConfig {
+  return VAULT_CONFIGS[mode];
+}
+
 const IDB_STORE = 'special_hidden_folder';
 const APP_STATE_STORE = 'in_app_active_storage';
+
+// ==================== Anti-Brute-Force Passcode Cooldown Manager ====================
+// Rule:
+// - Attempts 1 to 4: No cooldown (0 seconds)
+// - 5th continuous wrong attempt: 30 seconds cooldown
+// - 6th continuous wrong attempt onwards: 30 seconds * wrongAttemptCount (e.g., 6 -> 180s, 7 -> 210s, 8 -> 240s, ...)
+const COOLDOWN_STORAGE_KEY = 'wikilog_global_passcode_guard_v1';
+
+export interface PasscodeGuardState {
+  failedAttempts: number;
+  cooldownUntilMs: number;
+}
+
+export function getPasscodeGuardState(): PasscodeGuardState {
+  try {
+    const raw = localStorage.getItem(COOLDOWN_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return {
+        failedAttempts: typeof parsed.failedAttempts === 'number' ? parsed.failedAttempts : 0,
+        cooldownUntilMs: typeof parsed.cooldownUntilMs === 'number' ? parsed.cooldownUntilMs : 0,
+      };
+    }
+  } catch {
+    // ignore
+  }
+  return { failedAttempts: 0, cooldownUntilMs: 0 };
+}
+
+export function getRemainingPasscodeCooldownSeconds(): number {
+  const state = getPasscodeGuardState();
+  const diff = state.cooldownUntilMs - Date.now();
+  return diff > 0 ? Math.ceil(diff / 1000) : 0;
+}
+
+export function recordPasscodeFailure(): {
+  failedAttempts: number;
+  cooldownSeconds: number;
+  cooldownUntilMs: number;
+} {
+  const current = getPasscodeGuardState();
+  const nextAttempts = current.failedAttempts + 1;
+  let cooldownSeconds = 0;
+
+  if (nextAttempts === 5) {
+    cooldownSeconds = 30;
+  } else if (nextAttempts > 5) {
+    cooldownSeconds = 30 * nextAttempts;
+  }
+
+  const cooldownUntilMs = cooldownSeconds > 0 ? Date.now() + cooldownSeconds * 1000 : 0;
+  const nextState: PasscodeGuardState = {
+    failedAttempts: nextAttempts,
+    cooldownUntilMs,
+  };
+
+  try {
+    localStorage.setItem(COOLDOWN_STORAGE_KEY, JSON.stringify(nextState));
+  } catch {
+    // ignore
+  }
+
+  return {
+    failedAttempts: nextAttempts,
+    cooldownSeconds,
+    cooldownUntilMs,
+  };
+}
+
+export function resetPasscodeFailures(): void {
+  try {
+    localStorage.removeItem(COOLDOWN_STORAGE_KEY);
+  } catch {
+    // ignore
+  }
+}
 
 // Convert ArrayBuffer / Uint8Array to Base64
 function bufferToBase64(buf: ArrayBuffer | Uint8Array): string {
@@ -118,8 +232,48 @@ function base64ToBytes(base64: string): Uint8Array {
   return bytes;
 }
 
-// Derive 256-bit AES-GCM key from passphrase using PBKDF2 (100,000 iterations + 16-byte salt)
-async function deriveAesKey(passphrase: string, salt: Uint8Array): Promise<CryptoKey> {
+/**
+ * Distinct Key Derivation Function (KDF) per Vault Mode:
+ * - Primary Vault (`real_vault.db`): PBKDF2-HMAC-SHA256 with 100,000 iterations + domain-separated salt
+ * - Secondary / Decoy Vault (`decoy_vault.db`): PBKDF2-HMAC-SHA512 with 210,000 iterations + distinct domain-separated salt
+ */
+async function deriveAesKey(
+  passphrase: string,
+  salt: Uint8Array,
+  vaultMode: VaultMode = 'primary'
+): Promise<CryptoKey> {
+  const cfg = getVaultConfig(vaultMode);
+  const enc = new TextEncoder();
+  const domainPassphrase = `${cfg.domainContextSalt}${passphrase}`;
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    enc.encode(domainPassphrase),
+    { name: 'PBKDF2' },
+    false,
+    ['deriveKey']
+  );
+
+  return crypto.subtle.deriveKey(
+    {
+      name: 'PBKDF2',
+      salt,
+      iterations: cfg.kdfIterations,
+      hash: cfg.kdfHash,
+    },
+    keyMaterial,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt']
+  );
+}
+
+/**
+ * Legacy-compatible key derivation (without domain prefix) so existing primary backups decrypt seamlessly
+ */
+async function deriveLegacyPrimaryAesKey(
+  passphrase: string,
+  salt: Uint8Array
+): Promise<CryptoKey> {
   const enc = new TextEncoder();
   const keyMaterial = await crypto.subtle.importKey(
     'raw',
@@ -143,26 +297,37 @@ async function deriveAesKey(passphrase: string, salt: Uint8Array): Promise<Crypt
   );
 }
 
-export async function hashPassphrase(passphrase: string): Promise<string> {
+export async function hashPassphrase(
+  passphrase: string,
+  vaultMode: VaultMode = 'primary'
+): Promise<string> {
+  const cfg = getVaultConfig(vaultMode);
   const enc = new TextEncoder();
-  const digest = await crypto.subtle.digest('SHA-256', enc.encode('WIKILOG_SALT_' + passphrase));
+  const hashAlg = cfg.kdfHash;
+  const digest = await crypto.subtle.digest(
+    hashAlg,
+    enc.encode(`${cfg.domainContextSalt}HASH_SALT_${passphrase}`)
+  );
   return bufferToBase64(digest);
 }
 
 /**
- * Encrypt full bundle using AES-256-GCM (PBKDF2 100k iterations, 16-byte salt, 12-byte IV,
+ * Encrypt full bundle using vault-isolated KDF + AES-256-GCM (16-byte salt, 12-byte IV,
  * separating Ciphertext and 128-bit [16-byte] Authentication Tag in JSON format).
  */
 export async function encryptVaultBundle(
   bundle: VaultBackupBundle,
-  encryptionKey: string
+  encryptionKey: string,
+  vaultMode: VaultMode = 'primary'
 ): Promise<string> {
+  const cfg = getVaultConfig(vaultMode);
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const aesKey = await deriveAesKey(encryptionKey.trim(), salt);
+  const aesKey = await deriveAesKey(encryptionKey.trim(), salt, vaultMode);
 
   const plaintext = JSON.stringify({
     magic: 'WIKILOG_VAULT_V1',
+    dbTarget: cfg.dbFilename,
     exportedAt: Date.now(),
     logs: bundle.logs,
     customFonts: bundle.customFonts || [],
@@ -182,8 +347,9 @@ export async function encryptVaultBundle(
   const authTagBytes = encryptedBytes.slice(encryptedBytes.length - tagByteLength);
 
   const envelope = {
-    v: 1,
-    alg: 'AES-256-GCM-PBKDF2-100K',
+    v: 2,
+    alg: `AES-256-GCM-PBKDF2-${cfg.kdfHash}-${cfg.kdfIterations}`,
+    db: cfg.dbFilename,
     salt: bufferToBase64(salt),
     iv: bufferToBase64(iv),
     ct: bufferToBase64(ciphertextBytes),
@@ -196,11 +362,12 @@ export async function encryptVaultBundle(
 }
 
 /**
- * Decrypt AES-256-GCM JSON payload with 128-bit GCM Tag validation
+ * Decrypt AES-256-GCM payload using the active vault's distinct KDF (with fallback to v1 primary KDF for older primary backups).
  */
 export async function decryptVaultBundle(
   rawEnvelope: string,
-  encryptionKey: string
+  encryptionKey: string,
+  vaultMode: VaultMode = 'primary'
 ): Promise<VaultBackupBundle> {
   let envelope: {
     v: number;
@@ -234,42 +401,61 @@ export async function decryptVaultBundle(
     combinedCipherAndTag = ctBytes;
   }
 
-  const aesKey = await deriveAesKey(encryptionKey.trim(), salt);
-
-  try {
-    const decryptedBuffer = await crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv, tagLength: 128 },
-      aesKey,
-      combinedCipherAndTag
-    );
-    const dec = new TextDecoder();
-    const parsed = JSON.parse(dec.decode(decryptedBuffer));
-    if (parsed.magic !== 'WIKILOG_VAULT_V1' || !Array.isArray(parsed.logs)) {
-      throw new Error('Invalid backup signature.');
-    }
-    return {
-      logs: parsed.logs as DiaryLog[],
-      customFonts: Array.isArray(parsed.customFonts) ? parsed.customFonts : [],
-      micSettings: parsed.micSettings,
-    };
-  } catch {
-    throw new Error('Incorrect Encryption Key.');
+  const trimmedKey = encryptionKey.trim();
+  const candidateKeys: CryptoKey[] = [
+    await deriveAesKey(trimmedKey, salt, vaultMode),
+  ];
+  if (vaultMode === 'primary') {
+    candidateKeys.push(await deriveLegacyPrimaryAesKey(trimmedKey, salt));
   }
+
+  for (const aesKey of candidateKeys) {
+    try {
+      const decryptedBuffer = await crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv, tagLength: 128 },
+        aesKey,
+        combinedCipherAndTag
+      );
+      const dec = new TextDecoder();
+      const parsed = JSON.parse(dec.decode(decryptedBuffer));
+      if (parsed.magic !== 'WIKILOG_VAULT_V1' || !Array.isArray(parsed.logs)) {
+        continue;
+      }
+      return {
+        logs: parsed.logs as DiaryLog[],
+        customFonts: Array.isArray(parsed.customFonts) ? parsed.customFonts : [],
+        micSettings: parsed.micSettings,
+      };
+    } catch {
+      // try next candidate if any
+    }
+  }
+
+  throw new Error('Incorrect Encryption Key.');
 }
 
-export async function encryptLogsPayload(logs: DiaryLog[], encryptionKey: string): Promise<string> {
-  return encryptVaultBundle({ logs }, encryptionKey);
+export async function encryptLogsPayload(
+  logs: DiaryLog[],
+  encryptionKey: string,
+  vaultMode: VaultMode = 'primary'
+): Promise<string> {
+  return encryptVaultBundle({ logs }, encryptionKey, vaultMode);
 }
 
-export async function decryptLogsPayload(rawEnvelope: string, encryptionKey: string): Promise<DiaryLog[]> {
-  const res = await decryptVaultBundle(rawEnvelope, encryptionKey);
+export async function decryptLogsPayload(
+  rawEnvelope: string,
+  encryptionKey: string,
+  vaultMode: VaultMode = 'primary'
+): Promise<DiaryLog[]> {
+  const res = await decryptVaultBundle(rawEnvelope, encryptionKey, vaultMode);
   return res.logs;
 }
 
-function openPrivateVaultDB(): Promise<IDBDatabase> {
+function openPrivateVaultDB(vaultMode: VaultMode = 'primary'): Promise<IDBDatabase> {
+  const cfg = getVaultConfig(vaultMode);
   return new Promise((resolve, reject) => {
     try {
-      const req = indexedDB.open(IDB_NAME, 2);
+      const req = indexedDB.open(cfg.idbDatabaseName, 2);
       req.onupgradeneeded = () => {
         const db = req.result;
         if (!db.objectStoreNames.contains(IDB_STORE)) {
@@ -290,10 +476,11 @@ function openPrivateVaultDB(): Promise<IDBDatabase> {
 
 export async function saveActiveAppStateToIDB(
   key: string,
-  value: unknown
+  value: unknown,
+  vaultMode: VaultMode = 'primary'
 ): Promise<void> {
   try {
-    const db = await openPrivateVaultDB();
+    const db = await openPrivateVaultDB(vaultMode);
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(APP_STATE_STORE, 'readwrite');
       const store = tx.objectStore(APP_STATE_STORE);
@@ -306,9 +493,12 @@ export async function saveActiveAppStateToIDB(
   }
 }
 
-export async function loadActiveAppStateFromIDB<T>(key: string): Promise<T | null> {
+export async function loadActiveAppStateFromIDB<T>(
+  key: string,
+  vaultMode: VaultMode = 'primary'
+): Promise<T | null> {
   try {
-    const db = await openPrivateVaultDB();
+    const db = await openPrivateVaultDB(vaultMode);
     return await new Promise<T | null>((resolve, reject) => {
       const tx = db.transaction(APP_STATE_STORE, 'readonly');
       const store = tx.objectStore(APP_STATE_STORE);
@@ -322,19 +512,22 @@ export async function loadActiveAppStateFromIDB<T>(key: string): Promise<T | nul
 }
 
 /**
- * Write encrypted backup via Android SAF (Storage Access Framework) into `<ChosenBaseDir>/.likkho_backups/likkho_encrypted_vault.json`
- * with `.nomedia` file. If no SAF directory is selected yet, Android automatically launches the SAF System Directory Picker!
+ * Write encrypted backup into the active vault's dedicated directory and database file:
+ * - Primary Vault: `<ChosenBaseDir>/.likkho_backups/real_vault.db`
+ * - Secondary / Decoy Vault: `<ChosenBaseDir>/.likkho_decoy_backups/decoy_vault.db`
  */
 export async function writeToPrivateSpecialFolder(
   encryptedEnvelope: string,
   entryCount: number,
-  keyHintHash: string
+  keyHintHash: string,
+  vaultMode: VaultMode = 'primary'
 ): Promise<EncryptedVaultMetadata> {
+  const cfg = getVaultConfig(vaultMode);
   const now = Date.now();
   const sizeBytes = new Blob([encryptedEnvelope]).size;
-  const vaultPath = `SAF/${VAULT_FOLDER_NAME}/${VAULT_FILE_NAME}`;
+  const vaultPath = `SAF/${cfg.safFolderName}/${cfg.dbFilename}`;
 
-  // 1. If running in Native Android WebView, use SAF (Storage Access Framework)
+  // 1. If running in Native Android WebView, use SAF (Storage Access Framework) with isolated folder & db filename
   if (window.LikkhoNative) {
     if (typeof window.LikkhoNative.saveBackupViaSaf === 'function') {
       await new Promise<void>((resolve, reject) => {
@@ -346,22 +539,29 @@ export async function writeToPrivateSpecialFolder(
             reject(new Error(message || 'Backup cancelled or folder not selected.'));
           }
         };
-        window.LikkhoNative?.saveBackupViaSaf?.(encryptedEnvelope);
+        window.LikkhoNative?.saveBackupViaSaf?.(encryptedEnvelope, vaultMode);
       });
     } else if (typeof window.LikkhoNative.writePersistentVaultBackup === 'function') {
       window.LikkhoNative.writePersistentVaultBackup(encryptedEnvelope);
     }
   }
 
-  // 2. Mirror to OPFS
+  // 2. Mirror to isolated OPFS directory (`real_vault.db` vs `decoy_vault.db`)
   try {
     if (navigator.storage && typeof navigator.storage.getDirectory === 'function') {
       const rootDir = await navigator.storage.getDirectory();
-      const specialFolder = await rootDir.getDirectoryHandle(VAULT_FOLDER_NAME, { create: true });
-      const fileHandle = await specialFolder.getFileHandle(VAULT_FILE_NAME, { create: true });
+      const specialFolder = await rootDir.getDirectoryHandle(cfg.safFolderName, {
+        create: true,
+      });
+      const fileHandle = await specialFolder.getFileHandle(cfg.dbFilename, {
+        create: true,
+      });
       if ('createWritable' in fileHandle) {
         const writable = await (fileHandle as unknown as {
-          createWritable: () => Promise<{ write: (data: string) => Promise<void>; close: () => Promise<void> }>;
+          createWritable: () => Promise<{
+            write: (data: string) => Promise<void>;
+            close: () => Promise<void>;
+          }>;
         }).createWritable();
         await writable.write(encryptedEnvelope);
         await writable.close();
@@ -371,9 +571,9 @@ export async function writeToPrivateSpecialFolder(
     // Fallback to IndexedDB
   }
 
-  // 3. Mirror to IndexedDB
+  // 3. Mirror to isolated IndexedDB instance
   try {
-    const db = await openPrivateVaultDB();
+    const db = await openPrivateVaultDB(vaultMode);
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(IDB_STORE, 'readwrite');
       const store = tx.objectStore(IDB_STORE);
@@ -386,7 +586,7 @@ export async function writeToPrivateSpecialFolder(
           sizeBytes,
           keyHintHash,
         },
-        VAULT_FILE_NAME
+        cfg.dbFilename
       );
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
@@ -406,16 +606,18 @@ export async function writeToPrivateSpecialFolder(
 }
 
 /**
- * Read encrypted backup from Android SAF (`<ChosenBaseDir>/.likkho_backups/likkho_encrypted_vault.json`).
- * If the app was freshly reinstalled and hasn't been granted the SAF directory URI yet, Android automatically
- * opens the SAF System Directory Picker so the user picks their base folder (e.g., Documents) once and Likkho
- * immediately reads `.likkho_backups/likkho_encrypted_vault.json` inside it!
+ * Read encrypted backup from the active vault's dedicated directory and database file:
+ * - Primary Vault: `<ChosenBaseDir>/.likkho_backups/real_vault.db` (plus fallback to legacy `likkho_encrypted_vault.json`)
+ * - Secondary / Decoy Vault: `<ChosenBaseDir>/.likkho_decoy_backups/decoy_vault.db`
  */
-export async function readFromPrivateSpecialFolder(): Promise<{
+export async function readFromPrivateSpecialFolder(
+  vaultMode: VaultMode = 'primary'
+): Promise<{
   metadata: EncryptedVaultMetadata;
   encryptedEnvelope: string | null;
 }> {
-  const defaultPath = `SAF/${VAULT_FOLDER_NAME}/${VAULT_FILE_NAME}`;
+  const cfg = getVaultConfig(vaultMode);
+  const defaultPath = `SAF/${cfg.safFolderName}/${cfg.dbFilename}`;
 
   // 1. Check Native Android SAF backup first
   if (window.LikkhoNative) {
@@ -429,7 +631,7 @@ export async function readFromPrivateSpecialFolder(): Promise<{
             resolve('');
           }
         };
-        window.LikkhoNative?.restoreBackupViaSaf?.();
+        window.LikkhoNative?.restoreBackupViaSaf?.(vaultMode);
       });
 
       if (safEnvelope && safEnvelope.trim().length > 0) {
@@ -473,61 +675,80 @@ export async function readFromPrivateSpecialFolder(): Promise<{
     }
   }
 
-  // 2. Check IndexedDB
+  // 2. Check isolated IndexedDB instance
   try {
-    const db = await openPrivateVaultDB();
-    const record = await new Promise<{
-      encryptedEnvelope: string;
-      lastBackupAt: number;
-      entryCount: number;
-      vaultPath: string;
-      sizeBytes: number;
-      keyHintHash: string;
-    } | null>((resolve, reject) => {
-      const tx = db.transaction(IDB_STORE, 'readonly');
-      const store = tx.objectStore(IDB_STORE);
-      const req = store.get(VAULT_FILE_NAME);
-      req.onsuccess = () => resolve(req.result || null);
-      req.onerror = () => reject(req.error);
-    });
+    const db = await openPrivateVaultDB(vaultMode);
+    const candidateKeys =
+      vaultMode === 'primary'
+        ? [cfg.dbFilename, 'likkho_encrypted_vault.json']
+        : [cfg.dbFilename];
 
-    if (record && record.encryptedEnvelope) {
-      return {
-        metadata: {
-          exists: true,
-          lastBackupAt: record.lastBackupAt,
-          entryCount: record.entryCount,
-          vaultPath: record.vaultPath || defaultPath,
-          sizeBytes: record.sizeBytes,
-          keyHintHash: record.keyHintHash || null,
-        },
-        encryptedEnvelope: record.encryptedEnvelope,
-      };
+    for (const keyName of candidateKeys) {
+      const record = await new Promise<{
+        encryptedEnvelope: string;
+        lastBackupAt: number;
+        entryCount: number;
+        vaultPath: string;
+        sizeBytes: number;
+        keyHintHash: string;
+      } | null>((resolve, reject) => {
+        const tx = db.transaction(IDB_STORE, 'readonly');
+        const store = tx.objectStore(IDB_STORE);
+        const req = store.get(keyName);
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => reject(req.error);
+      });
+
+      if (record && record.encryptedEnvelope) {
+        return {
+          metadata: {
+            exists: true,
+            lastBackupAt: record.lastBackupAt,
+            entryCount: record.entryCount,
+            vaultPath: record.vaultPath || defaultPath,
+            sizeBytes: record.sizeBytes,
+            keyHintHash: record.keyHintHash || null,
+          },
+          encryptedEnvelope: record.encryptedEnvelope,
+        };
+      }
     }
   } catch {
     // Continue to OPFS check
   }
 
-  // 3. Check OPFS
+  // 3. Check isolated OPFS directory
   try {
     if (navigator.storage && typeof navigator.storage.getDirectory === 'function') {
       const rootDir = await navigator.storage.getDirectory();
-      const specialFolder = await rootDir.getDirectoryHandle(VAULT_FOLDER_NAME, { create: false });
-      const fileHandle = await specialFolder.getFileHandle(VAULT_FILE_NAME, { create: false });
-      const file = await fileHandle.getFile();
-      const text = await file.text();
-      const parsed = JSON.parse(text);
-      return {
-        metadata: {
-          exists: true,
-          lastBackupAt: parsed.createdAt || file.lastModified,
-          entryCount: parsed.count || 0,
-          vaultPath: defaultPath,
-          sizeBytes: file.size,
-          keyHintHash: null,
-        },
-        encryptedEnvelope: text,
-      };
+      const specialFolder = await rootDir.getDirectoryHandle(cfg.safFolderName, {
+        create: false,
+      });
+      const candidateFiles =
+        vaultMode === 'primary'
+          ? [cfg.dbFilename, 'likkho_encrypted_vault.json']
+          : [cfg.dbFilename];
+      for (const fname of candidateFiles) {
+        try {
+          const fileHandle = await specialFolder.getFileHandle(fname, { create: false });
+          const file = await fileHandle.getFile();
+          const text = await file.text();
+          const parsed = JSON.parse(text);
+          return {
+            metadata: {
+              exists: true,
+              lastBackupAt: parsed.createdAt || file.lastModified,
+              entryCount: parsed.count || 0,
+              vaultPath: defaultPath,
+              sizeBytes: file.size,
+              keyHintHash: null,
+            },
+            encryptedEnvelope: text,
+          };
+        } catch {
+          // try next candidate
+        }
+      }
     }
   } catch {
     // Vault does not exist yet

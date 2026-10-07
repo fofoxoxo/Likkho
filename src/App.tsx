@@ -15,13 +15,18 @@ import {
   Search,
   CheckCircle2,
   AlertTriangle,
+  KeyRound,
 } from 'lucide-react';
 import {
   CustomFontItem,
   DiaryLog,
   MicRecordingSettings,
+  VaultMode,
   loadActiveAppStateFromIDB,
   saveActiveAppStateToIDB,
+  getRemainingPasscodeCooldownSeconds,
+  recordPasscodeFailure,
+  resetPasscodeFailures,
 } from './utils/cryptoVault';
 import {
   soundManager,
@@ -39,6 +44,7 @@ import { PasscodeScreen } from './components/PasscodeScreen';
 
 type PageRoute = 'home' | 'workspace' | 'settings' | 'backup';
 
+// Primary Vault (`real_vault.db`) Storage Keys
 const STORAGE_LOGS_KEY = 'wikilog_in_app_logs_v1';
 const STORAGE_DARK_KEY = 'wikilog_dark_theme_v1';
 const STORAGE_PIN_KEY = 'wikilog_passcode_v1';
@@ -47,6 +53,14 @@ const STORAGE_ENC_HASH_KEY = 'wikilog_encryption_key_hash_v1';
 const STORAGE_MIC_SETTINGS_KEY = 'wikilog_mic_settings_v1';
 const IDB_LOGS_KEY = 'active_diary_logs_with_media';
 const IDB_FONTS_KEY = 'active_custom_ttf_fonts';
+
+// Covert Secondary / Decoy Vault (`decoy_vault.db`) Storage Keys (Completely isolated namespace)
+const STORAGE_SECONDARY_PIN_KEY = 'wikilog_covert_secondary_pin_v2';
+const STORAGE_DECOY_LOGS_KEY = 'wikilog_decoy_in_app_logs_v2';
+const STORAGE_DECOY_ENC_HASH_KEY = 'wikilog_decoy_encryption_key_hash_v2';
+const STORAGE_DECOY_MIC_SETTINGS_KEY = 'wikilog_decoy_mic_settings_v2';
+const IDB_DECOY_LOGS_KEY = 'decoy_active_diary_logs_with_media';
+const IDB_DECOY_FONTS_KEY = 'decoy_active_custom_ttf_fonts';
 
 const DEFAULT_MIC_SETTINGS: MicRecordingSettings = {
   format: 'wav',
@@ -129,6 +143,10 @@ function injectGlobalFontFaceCss(fontFamily: string, dataUrl: string) {
 }
 
 export default function App() {
+  // Active Vault Mode ('primary' -> real_vault.db, 'decoy' -> decoy_vault.db)
+  const [vaultMode, setVaultMode] = useState<VaultMode>('primary');
+  const isVaultHydratedRef = useRef<boolean>(false);
+
   const [logs, setLogs] = useState<DiaryLog[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_LOGS_KEY);
@@ -171,6 +189,15 @@ export default function App() {
     }
   });
 
+  // Covert Secondary PIN for Decoy Vault (`decoy_vault.db`), configured via 10-second hold on "Likkho" header
+  const [secondaryPasscode, setSecondaryPasscode] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem(STORAGE_SECONDARY_PIN_KEY) || null;
+    } catch {
+      return null;
+    }
+  });
+
   const [biometricsEnabled, setBiometricsEnabled] = useState<boolean>(() => {
     try {
       return localStorage.getItem(STORAGE_BIO_KEY) === 'true';
@@ -187,14 +214,24 @@ export default function App() {
     }
   });
 
-  // App starts LOCKED automatically whenever a Passcode is set (when app is closed & reopened)
+  // App starts LOCKED automatically whenever a Passcode (primary or secondary) is set
   const [isLocked, setIsLocked] = useState<boolean>(() => {
     try {
-      return Boolean(localStorage.getItem(STORAGE_PIN_KEY));
+      return Boolean(
+        localStorage.getItem(STORAGE_PIN_KEY) ||
+          localStorage.getItem(STORAGE_SECONDARY_PIN_KEY)
+      );
     } catch {
       return false;
     }
   });
+
+  // Covert 10-Second Hold Gesture on "Likkho" Home Screen Title Header
+  const headerHoldTimerRef = useRef<number | null>(null);
+  const [showCovertVaultModal, setShowCovertVaultModal] = useState<boolean>(false);
+  const [covertPinInput, setCovertPinInput] = useState<string>('');
+  const [covertPinConfirm, setCovertPinConfirm] = useState<string>('');
+  const [covertPinError, setCovertPinError] = useState<string | null>(null);
 
   const [route, setRoute] = useState<PageRoute>('home');
   const [editingLog, setEditingLog] = useState<DiaryLog | null>(null);
@@ -215,6 +252,9 @@ export default function App() {
   } | null>(null);
   const [diaryUnlockInput, setDiaryUnlockInput] = useState<string>('');
   const [diaryUnlockError, setDiaryUnlockError] = useState<string | null>(null);
+  const [diaryCooldownSec, setDiaryCooldownSec] = useState<number>(() =>
+    getRemainingPasscodeCooldownSeconds()
+  );
 
   // Active ringing Android notification alert banner
   const [ringingAlert, setRingingAlert] = useState<{
@@ -223,10 +263,19 @@ export default function App() {
     preview: string;
   } | null>(null);
 
+  // Poll cooldown timer when Locked Diary modal is open
+  useEffect(() => {
+    if (!pendingUnlockDiary) return;
+    const sync = () => setDiaryCooldownSec(getRemainingPasscodeCooldownSeconds());
+    sync();
+    const timer = window.setInterval(sync, 500);
+    return () => window.clearInterval(timer);
+  }, [pendingUnlockDiary]);
+
   // Automatically lock the app whenever it is closed, backgrounded, or hidden (if passcode is set)
   // AND dynamically toggle Android OS Anti-Screenshot / Anti-Screen-Recording (FLAG_SECURE) + Recent Apps Black/Blur Privacy Preview!
   useEffect(() => {
-    const isProtected = Boolean(savedPasscode);
+    const isProtected = Boolean(savedPasscode || secondaryPasscode);
     if (
       window.LikkhoNative &&
       typeof window.LikkhoNative.setAppPasscodeProtectionEnabled === 'function'
@@ -234,7 +283,7 @@ export default function App() {
       window.LikkhoNative.setAppPasscodeProtectionEnabled(isProtected);
     }
 
-    if (!savedPasscode) return;
+    if (!isProtected) return;
 
     const handleAppClosedOrBackgrounded = () => {
       if (document.visibilityState === 'hidden') {
@@ -252,27 +301,76 @@ export default function App() {
       document.removeEventListener('visibilitychange', handleAppClosedOrBackgrounded);
       window.removeEventListener('pagehide', handlePageHide);
     };
-  }, [savedPasscode]);
+  }, [savedPasscode, secondaryPasscode]);
 
-  // Load rich media logs & custom .ttf fonts from IndexedDB on initial mount
+  // Hydrate isolated data whenever `vaultMode` changes ('primary' -> real_vault.db vs 'decoy' -> decoy_vault.db)
   useEffect(() => {
-    loadActiveAppStateFromIDB<DiaryLog[]>(IDB_LOGS_KEY).then((idbLogs) => {
-      if (idbLogs && Array.isArray(idbLogs) && idbLogs.length > 0) {
-        setLogs(idbLogs);
-      }
-    });
+    isVaultHydratedRef.current = false;
+    const logsStorageKey =
+      vaultMode === 'decoy' ? STORAGE_DECOY_LOGS_KEY : STORAGE_LOGS_KEY;
+    const idbLogsKey = vaultMode === 'decoy' ? IDB_DECOY_LOGS_KEY : IDB_LOGS_KEY;
+    const idbFontsKey = vaultMode === 'decoy' ? IDB_DECOY_FONTS_KEY : IDB_FONTS_KEY;
+    const encHashKey =
+      vaultMode === 'decoy' ? STORAGE_DECOY_ENC_HASH_KEY : STORAGE_ENC_HASH_KEY;
+    const micKey =
+      vaultMode === 'decoy'
+        ? STORAGE_DECOY_MIC_SETTINGS_KEY
+        : STORAGE_MIC_SETTINGS_KEY;
 
-    loadActiveAppStateFromIDB<CustomFontItem[]>(IDB_FONTS_KEY).then(
-      async (idbFonts) => {
-        if (idbFonts && Array.isArray(idbFonts) && idbFonts.length > 0) {
+    // 1. Load isolated encryption key hash & mic settings
+    try {
+      setSavedKeyHash(localStorage.getItem(encHashKey) || null);
+    } catch {
+      setSavedKeyHash(null);
+    }
+
+    try {
+      const savedMic = localStorage.getItem(micKey);
+      setMicSettings(savedMic ? JSON.parse(savedMic) : DEFAULT_MIC_SETTINGS);
+    } catch {
+      setMicSettings(DEFAULT_MIC_SETTINGS);
+    }
+
+    // 2. Load initial logs from isolated localStorage before IDB resolves
+    let initialLocalLogs: DiaryLog[] =
+      vaultMode === 'decoy' ? [] : INITIAL_STARTER_LOGS;
+    try {
+      const raw = localStorage.getItem(logsStorageKey);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          initialLocalLogs = parsed;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    setLogs(initialLocalLogs);
+
+    // 3. Load rich media logs & custom .ttf fonts from isolated IndexedDB database (`WikiLogPrivateSystemVaultDB` vs `WikiLogIsolatedDecoyVaultDB`)
+    Promise.all([
+      loadActiveAppStateFromIDB<DiaryLog[]>(idbLogsKey, vaultMode),
+      loadActiveAppStateFromIDB<CustomFontItem[]>(idbFontsKey, vaultMode),
+    ])
+      .then(([idbLogs, idbFonts]) => {
+        if (idbLogs && Array.isArray(idbLogs)) {
+          if (idbLogs.length > 0 || vaultMode === 'decoy') {
+            setLogs(idbLogs);
+          }
+        }
+        if (idbFonts && Array.isArray(idbFonts)) {
           setCustomFonts(idbFonts);
           for (const f of idbFonts) {
             injectGlobalFontFaceCss(f.fontFamily, f.dataUrl);
           }
+        } else {
+          setCustomFonts([]);
         }
-      }
-    );
-  }, []);
+      })
+      .finally(() => {
+        isVaultHydratedRef.current = true;
+      });
+  }, [vaultMode]);
 
   // Sync Light & Dark Theme with DOM & Android OS Status Bar + Navigation Bar
   useEffect(() => {
@@ -304,36 +402,52 @@ export default function App() {
     }
   }, [darkMode]);
 
-  // Save in-app logs + media to IndexedDB and localStorage
+  // Save in-app logs + media to isolated IndexedDB and localStorage for the active vault
   useEffect(() => {
-    saveActiveAppStateToIDB(IDB_LOGS_KEY, logs);
+    if (!isVaultHydratedRef.current) return;
+    const logsStorageKey =
+      vaultMode === 'decoy' ? STORAGE_DECOY_LOGS_KEY : STORAGE_LOGS_KEY;
+    const idbLogsKey = vaultMode === 'decoy' ? IDB_DECOY_LOGS_KEY : IDB_LOGS_KEY;
+
+    saveActiveAppStateToIDB(idbLogsKey, logs, vaultMode);
     try {
-      localStorage.setItem(STORAGE_LOGS_KEY, JSON.stringify(logs));
+      localStorage.setItem(logsStorageKey, JSON.stringify(logs));
     } catch {
-      // Large media gracefully stored in IDB_LOGS_KEY above
+      // Large media gracefully stored in isolated IDB above
     }
-  }, [logs]);
+  }, [logs, vaultMode]);
 
-  // Save custom .ttf fonts to IndexedDB
+  // Save custom .ttf fonts to isolated IndexedDB for the active vault
   useEffect(() => {
+    if (!isVaultHydratedRef.current) return;
+    const idbFontsKey = vaultMode === 'decoy' ? IDB_DECOY_FONTS_KEY : IDB_FONTS_KEY;
     if (customFonts.length > 0) {
-      saveActiveAppStateToIDB(IDB_FONTS_KEY, customFonts);
+      saveActiveAppStateToIDB(idbFontsKey, customFonts, vaultMode);
     }
-  }, [customFonts]);
+  }, [customFonts, vaultMode]);
 
-  // Save mic recording settings
+  // Save mic recording settings for the active vault
   useEffect(() => {
+    if (!isVaultHydratedRef.current) return;
+    const micKey =
+      vaultMode === 'decoy'
+        ? STORAGE_DECOY_MIC_SETTINGS_KEY
+        : STORAGE_MIC_SETTINGS_KEY;
     try {
-      localStorage.setItem(STORAGE_MIC_SETTINGS_KEY, JSON.stringify(micSettings));
+      localStorage.setItem(micKey, JSON.stringify(micSettings));
     } catch {
       // ignore
     }
-  }, [micSettings]);
+  }, [micSettings, vaultMode]);
 
   // Sync browser/Android Hardware Back Button:
   // "User agar App me homepage ke alawa kisi aur page par ho to back karne par pahle homepage par aayega fir back hoga"
   useEffect(() => {
     window.__handleLikkhoAndroidBack = () => {
+      if (showCovertVaultModal) {
+        setShowCovertVaultModal(false);
+        return 'HANDLED';
+      }
       if (pendingUnlockDiary) {
         setPendingUnlockDiary(null);
         return 'HANDLED';
@@ -364,6 +478,11 @@ export default function App() {
     };
 
     const handlePopState = () => {
+      if (showCovertVaultModal) {
+        setShowCovertVaultModal(false);
+        window.history.pushState({ page: route }, '');
+        return;
+      }
       if (pendingDeleteLog) {
         setPendingDeleteLog(null);
         window.history.pushState({ page: route }, '');
@@ -391,7 +510,7 @@ export default function App() {
     return () => {
       window.removeEventListener('popstate', handlePopState);
     };
-  }, [route, isSearchOpen, exportingLog, pendingDeleteLog]);
+  }, [route, isSearchOpen, exportingLog, pendingDeleteLog, pendingUnlockDiary, showCovertVaultModal]);
 
   const navigateTo = (target: PageRoute, logToEdit: DiaryLog | null = null) => {
     setOpenMenuLogId(null);
@@ -410,7 +529,7 @@ export default function App() {
     }
   };
 
-  // Poll for scheduled reminders
+  // Poll for scheduled reminders inside the active vault
   useEffect(() => {
     const timer = window.setInterval(() => {
       const now = Date.now();
@@ -447,8 +566,76 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, []);
 
+  // Covert 10-Second Gesture Hold Handlers on Home Screen "Likkho" Title Header
+  const startHeaderCovertHold = () => {
+    if (headerHoldTimerRef.current) {
+      window.clearTimeout(headerHoldTimerRef.current);
+    }
+    headerHoldTimerRef.current = window.setTimeout(() => {
+      headerHoldTimerRef.current = null;
+      if (typeof navigator !== 'undefined' && navigator.vibrate) {
+        navigator.vibrate(70);
+      }
+      setCovertPinInput(secondaryPasscode || '');
+      setCovertPinConfirm(secondaryPasscode || '');
+      setCovertPinError(null);
+      setShowCovertVaultModal(true);
+    }, 10000); // Exclusively triggered after a 10-second continuous hold
+  };
+
+  const cancelHeaderCovertHold = () => {
+    if (headerHoldTimerRef.current) {
+      window.clearTimeout(headerHoldTimerRef.current);
+      headerHoldTimerRef.current = null;
+    }
+  };
+
+  const handleSaveCovertSecondaryVaultPin = (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleaned = covertPinInput.replace(/\D/g, '');
+    const confirmed = covertPinConfirm.replace(/\D/g, '');
+    if (cleaned.length < 4 || cleaned.length > 6) {
+      setCovertPinError('Secondary PIN must be 4 to 6 digits.');
+      return;
+    }
+    if (cleaned !== confirmed) {
+      setCovertPinError('Secondary PINs do not match.');
+      return;
+    }
+    if (savedPasscode && cleaned === savedPasscode) {
+      setCovertPinError('Secondary PIN must be distinct from the Primary Passcode.');
+      return;
+    }
+
+    setSecondaryPasscode(cleaned);
+    try {
+      localStorage.setItem(STORAGE_SECONDARY_PIN_KEY, cleaned);
+    } catch {
+      // ignore
+    }
+    setShowCovertVaultModal(false);
+    setExportStatusBanner('Secondary Vault (decoy_vault.db) PIN configured.');
+    window.setTimeout(() => setExportStatusBanner(null), 3000);
+  };
+
+  const handleRemoveCovertSecondaryVaultPin = () => {
+    setSecondaryPasscode(null);
+    try {
+      localStorage.removeItem(STORAGE_SECONDARY_PIN_KEY);
+    } catch {
+      // ignore
+    }
+    if (vaultMode === 'decoy') {
+      setVaultMode('primary');
+    }
+    setShowCovertVaultModal(false);
+    setExportStatusBanner('Secondary Vault PIN removed.');
+    window.setTimeout(() => setExportStatusBanner(null), 2600);
+  };
+
   const handleInstantLock = () => {
-    if (!savedPasscode) {
+    const activePin = vaultMode === 'decoy' ? secondaryPasscode : savedPasscode;
+    if (!activePin && !savedPasscode && !secondaryPasscode) {
       navigateTo('settings');
       return;
     }
@@ -532,6 +719,8 @@ export default function App() {
     return b.createdAt - a.createdAt;
   });
 
+  const effectivePrimaryPin = savedPasscode || secondaryPasscode || '';
+
   return (
     <div
       className="flex h-full w-full flex-col bg-[var(--wiki-bg)] text-[var(--wiki-text)] overflow-hidden"
@@ -539,7 +728,7 @@ export default function App() {
         if (openMenuLogId) setOpenMenuLogId(null);
       }}
     >
-      {/* Export Confirmation Banner */}
+      {/* Export / Status Confirmation Banner */}
       {exportStatusBanner && (
         <div className="fixed bottom-20 left-4 right-4 z-50 mx-auto flex max-w-sm items-center gap-2 border border-[#14866d] bg-[var(--wiki-bg)] px-3.5 py-2.5 text-xs font-semibold text-[#14866d] shadow-xl">
           <CheckCircle2 className="h-4 w-4 shrink-0" />
@@ -579,12 +768,18 @@ export default function App() {
         </div>
       )}
 
-      {/* Instant Lock & Launch Lock Overlay */}
-      {isLocked && savedPasscode ? (
+      {/* Instant Lock & Launch Lock Overlay — Routes to Primary (`real_vault.db`) or Secondary (`decoy_vault.db`) */}
+      {isLocked && effectivePrimaryPin ? (
         <PasscodeScreen
-          savedPasscode={savedPasscode}
+          savedPasscode={savedPasscode || ''}
+          secondaryPasscode={secondaryPasscode}
           biometricsEnabled={biometricsEnabled}
-          onUnlock={() => setIsLocked(false)}
+          onUnlock={(unlockedMode) => {
+            setVaultMode(unlockedMode);
+            setRoute('home');
+            setEditingLog(null);
+            setIsLocked(false);
+          }}
         />
       ) : route === 'workspace' ? (
         <WritingWorkspace
@@ -603,14 +798,32 @@ export default function App() {
         <SettingsPage
           darkMode={darkMode}
           onToggleDarkMode={() => setDarkMode((d) => !d)}
-          savedPasscode={savedPasscode}
+          savedPasscode={vaultMode === 'decoy' ? secondaryPasscode : savedPasscode}
           onUpdatePasscode={(pin) => {
-            setSavedPasscode(pin);
-            if (pin) {
-              localStorage.setItem(STORAGE_PIN_KEY, pin);
+            if (vaultMode === 'decoy') {
+              if (pin && savedPasscode && pin === savedPasscode) {
+                return;
+              }
+              setSecondaryPasscode(pin);
+              if (pin) {
+                localStorage.setItem(STORAGE_SECONDARY_PIN_KEY, pin);
+              } else {
+                localStorage.removeItem(STORAGE_SECONDARY_PIN_KEY);
+                setVaultMode('primary');
+              }
             } else {
-              localStorage.removeItem(STORAGE_PIN_KEY);
-              setIsLocked(false);
+              if (pin && secondaryPasscode && pin === secondaryPasscode) {
+                return;
+              }
+              setSavedPasscode(pin);
+              if (pin) {
+                localStorage.setItem(STORAGE_PIN_KEY, pin);
+              } else {
+                localStorage.removeItem(STORAGE_PIN_KEY);
+                if (!secondaryPasscode) {
+                  setIsLocked(false);
+                }
+              }
             }
           }}
           biometricsEnabled={biometricsEnabled}
@@ -629,13 +842,18 @@ export default function App() {
         />
       ) : route === 'backup' ? (
         <BackupRestorePage
+          vaultMode={vaultMode}
           logs={logs}
           customFonts={customFonts}
           micSettings={micSettings}
           savedKeyHash={savedKeyHash}
           onSaveKeyHash={(hash) => {
             setSavedKeyHash(hash);
-            localStorage.setItem(STORAGE_ENC_HASH_KEY, hash);
+            const encHashKey =
+              vaultMode === 'decoy'
+                ? STORAGE_DECOY_ENC_HASH_KEY
+                : STORAGE_ENC_HASH_KEY;
+            localStorage.setItem(encHashKey, hash);
           }}
           onRestoreBundle={async (bundle) => {
             setLogs(bundle.logs);
@@ -654,7 +872,7 @@ export default function App() {
       ) : (
         /* HOMEPAGE VIEW — No bar or buttons between Header and Logs */
         <div className="relative flex h-full w-full flex-col bg-[var(--wiki-bg)]">
-          {/* Header: Left App Name ("Likkho") | Right Search Button + Instant Lock + Hamburger Menu */}
+          {/* Header: Left App Name ("Likkho" — 10s Hold Triggers Covert Secondary Vault Setup) | Right Search Button + Instant Lock + Hamburger Menu */}
           <header className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-4">
             {isSearchOpen ? (
               <div className="flex flex-1 items-center gap-2 min-w-0">
@@ -681,7 +899,14 @@ export default function App() {
                 </button>
               </div>
             ) : (
-              <span className="font-wiki-serif text-2xl font-bold tracking-tight text-[var(--wiki-text)]">
+              <span
+                onPointerDown={startHeaderCovertHold}
+                onPointerUp={cancelHeaderCovertHold}
+                onPointerLeave={cancelHeaderCovertHold}
+                onPointerCancel={cancelHeaderCovertHold}
+                onContextMenu={(e) => e.preventDefault()}
+                className="font-wiki-serif text-2xl font-bold tracking-tight text-[var(--wiki-text)] select-none cursor-default"
+              >
                 Likkho
               </span>
             )}
@@ -933,7 +1158,116 @@ export default function App() {
         </div>
       )}
 
-      {/* Individual Locked Diary Passcode Verification Modal */}
+      {/* Covert Secondary Vault Setup Modal — Exclusively Triggered by 10-Second Hold on Home Screen "Likkho" Header */}
+      {showCovertVaultModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-xs"
+          onClick={() => setShowCovertVaultModal(false)}
+        >
+          <div
+            className="w-full max-w-sm border border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-text)] shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-[var(--wiki-hairline)] bg-[var(--wiki-surface)] px-4 py-3">
+              <div className="flex items-center gap-2">
+                <KeyRound className="h-4 w-4 text-[#3366cc]" />
+                <h3 className="font-wiki-serif text-base font-bold">
+                  Secondary Vault Setup
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowCovertVaultModal(false)}
+                className="flex h-7 w-7 items-center justify-center text-[var(--wiki-muted)] hover:text-[var(--wiki-text)]"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveCovertSecondaryVaultPin} className="p-4 space-y-3">
+              <p className="text-xs leading-relaxed text-[var(--wiki-muted)]">
+                Set a secondary 4 to 6 digit PIN to initialize an isolated secondary vault (<strong>decoy_vault.db</strong>). Unlocking Likkho with this PIN opens a completely independent environment.
+              </p>
+
+              {covertPinError && (
+                <p className="text-xs font-medium text-[#b32424]">
+                  {covertPinError}
+                </p>
+              )}
+
+              <div>
+                <label className="mb-1 block text-xs font-medium text-[var(--wiki-text)]">
+                  Secondary Vault PIN (4–6 digits)
+                </label>
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  maxLength={6}
+                  value={covertPinInput}
+                  onChange={(e) => {
+                    setCovertPinInput(e.target.value.replace(/\D/g, ''));
+                    setCovertPinError(null);
+                  }}
+                  placeholder="••••"
+                  className="h-10 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3 text-center font-wiki-mono text-base tracking-[0.4em] text-[var(--wiki-text)] outline-none focus:border-[#3366cc]"
+                  autoFocus
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-medium text-[var(--wiki-text)]">
+                  Confirm Secondary Vault PIN
+                </label>
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  maxLength={6}
+                  value={covertPinConfirm}
+                  onChange={(e) => {
+                    setCovertPinConfirm(e.target.value.replace(/\D/g, ''));
+                    setCovertPinError(null);
+                  }}
+                  placeholder="••••"
+                  className="h-10 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3 text-center font-wiki-mono text-base tracking-[0.4em] text-[var(--wiki-text)] outline-none focus:border-[#3366cc]"
+                />
+              </div>
+
+              <div className="flex items-center justify-between pt-2">
+                {secondaryPasscode ? (
+                  <button
+                    type="button"
+                    onClick={handleRemoveCovertSecondaryVaultPin}
+                    className="flex h-9 items-center gap-1 border border-[#b32424]/40 px-2.5 text-xs font-medium text-[#b32424]"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    Remove
+                  </button>
+                ) : (
+                  <div />
+                )}
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowCovertVaultModal(false)}
+                    className="h-9 border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3 text-xs font-medium text-[var(--wiki-text)]"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="h-9 bg-[#3366cc] px-4 text-xs font-semibold text-white"
+                  >
+                    Save PIN
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Individual Locked Diary Passcode Verification Modal (with Progressive Cooldown) */}
       {pendingUnlockDiary && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs"
@@ -962,7 +1296,15 @@ export default function App() {
             <form
               onSubmit={(e) => {
                 e.preventDefault();
+                const rem = getRemainingPasscodeCooldownSeconds();
+                if (rem > 0) {
+                  setDiaryCooldownSec(rem);
+                  setDiaryUnlockError(`Too many wrong attempts. Wait ${rem}s.`);
+                  return;
+                }
                 if (diaryUnlockInput.trim() === pendingUnlockDiary.log.diaryLockPin) {
+                  resetPasscodeFailures();
+                  setDiaryCooldownSec(0);
                   const targetLog = pendingUnlockDiary.log;
                   const act = pendingUnlockDiary.action;
                   setPendingUnlockDiary(null);
@@ -974,15 +1316,29 @@ export default function App() {
                     setExportingLog(targetLog);
                   }
                 } else {
-                  setDiaryUnlockError('Incorrect diary passcode.');
+                  const fail = recordPasscodeFailure();
+                  if (fail.cooldownSeconds > 0) {
+                    setDiaryCooldownSec(fail.cooldownSeconds);
+                    setDiaryUnlockError(
+                      `Incorrect passcode. Locked for ${fail.cooldownSeconds}s.`
+                    );
+                  } else {
+                    setDiaryUnlockError('Incorrect diary passcode.');
+                  }
                 }
               }}
               className="p-4 space-y-3"
             >
-              {diaryUnlockError && (
-                <p className="text-xs font-medium text-[#b32424]">
-                  {diaryUnlockError}
+              {diaryCooldownSec > 0 ? (
+                <p className="text-xs font-semibold text-[#b32424]">
+                  Locked for {diaryCooldownSec}s due to continuous wrong attempts.
                 </p>
+              ) : (
+                diaryUnlockError && (
+                  <p className="text-xs font-medium text-[#b32424]">
+                    {diaryUnlockError}
+                  </p>
+                )
               )}
               <div>
                 <label className="mb-1 block text-xs font-medium text-[var(--wiki-text)]">
@@ -991,12 +1347,13 @@ export default function App() {
                 <input
                   type="password"
                   value={diaryUnlockInput}
+                  disabled={diaryCooldownSec > 0}
                   onChange={(e) => {
                     setDiaryUnlockInput(e.target.value);
                     setDiaryUnlockError(null);
                   }}
                   placeholder="Passcode..."
-                  className="h-9 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3 text-xs text-[var(--wiki-text)] outline-none focus:border-[#3366cc]"
+                  className="h-9 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3 text-xs text-[var(--wiki-text)] outline-none focus:border-[#3366cc] disabled:opacity-50"
                   autoFocus
                 />
               </div>
@@ -1010,9 +1367,10 @@ export default function App() {
                 </button>
                 <button
                   type="submit"
-                  className="h-9 bg-[#3366cc] px-4 text-xs font-semibold text-white"
+                  disabled={diaryCooldownSec > 0}
+                  className="h-9 bg-[#3366cc] px-4 text-xs font-semibold text-white disabled:opacity-50"
                 >
-                  Unlock
+                  {diaryCooldownSec > 0 ? `Wait ${diaryCooldownSec}s` : 'Unlock'}
                 </button>
               </div>
             </form>

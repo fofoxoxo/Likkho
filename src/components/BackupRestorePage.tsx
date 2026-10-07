@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ArrowLeft,
   ShieldCheck,
@@ -16,14 +16,19 @@ import {
   DiaryLog,
   MicRecordingSettings,
   VaultBackupBundle,
+  VaultMode,
   encryptVaultBundle,
   decryptVaultBundle,
   hashPassphrase,
   writeToPrivateSpecialFolder,
   readFromPrivateSpecialFolder,
+  getRemainingPasscodeCooldownSeconds,
+  recordPasscodeFailure,
+  resetPasscodeFailures,
 } from '../utils/cryptoVault';
 
 interface BackupRestorePageProps {
+  vaultMode: VaultMode;
   logs: DiaryLog[];
   customFonts: CustomFontItem[];
   micSettings: MicRecordingSettings;
@@ -34,6 +39,7 @@ interface BackupRestorePageProps {
 }
 
 export const BackupRestorePage: React.FC<BackupRestorePageProps> = ({
+  vaultMode,
   logs,
   customFonts,
   micSettings,
@@ -53,6 +59,16 @@ export const BackupRestorePage: React.FC<BackupRestorePageProps> = ({
     text: string;
   } | null>(null);
   const [isBusy, setIsBusy] = useState<boolean>(false);
+  const [cooldownSec, setCooldownSec] = useState<number>(() =>
+    getRemainingPasscodeCooldownSeconds()
+  );
+
+  useEffect(() => {
+    const sync = () => setCooldownSec(getRemainingPasscodeCooldownSeconds());
+    sync();
+    const timer = window.setInterval(sync, 500);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const handleSetEncryptionKey = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -71,7 +87,7 @@ export const BackupRestorePage: React.FC<BackupRestorePageProps> = ({
       return;
     }
 
-    const hashed = await hashPassphrase(newKey.trim());
+    const hashed = await hashPassphrase(newKey.trim(), vaultMode);
     onSaveKeyHash(hashed);
     setBackupPassphrase(newKey.trim());
     setNewKey('');
@@ -84,6 +100,16 @@ export const BackupRestorePage: React.FC<BackupRestorePageProps> = ({
 
   const handleBackup = async (e: React.FormEvent) => {
     e.preventDefault();
+    const rem = getRemainingPasscodeCooldownSeconds();
+    if (rem > 0) {
+      setCooldownSec(rem);
+      setStatusBanner({
+        type: 'error',
+        text: `Too many wrong attempts. Please wait ${rem}s.`,
+      });
+      return;
+    }
+
     if (!backupPassphrase.trim()) {
       setStatusBanner({
         type: 'error',
@@ -94,28 +120,40 @@ export const BackupRestorePage: React.FC<BackupRestorePageProps> = ({
 
     setIsBusy(true);
     try {
-      const inputHash = await hashPassphrase(backupPassphrase.trim());
+      const inputHash = await hashPassphrase(backupPassphrase.trim(), vaultMode);
       if (savedKeyHash && inputHash !== savedKeyHash) {
-        setStatusBanner({
-          type: 'error',
-          text: 'Incorrect Encryption Key.',
-        });
+        const fail = recordPasscodeFailure();
+        if (fail.cooldownSeconds > 0) {
+          setCooldownSec(fail.cooldownSeconds);
+          setStatusBanner({
+            type: 'error',
+            text: `Incorrect Encryption Key. Locked for ${fail.cooldownSeconds}s.`,
+          });
+        } else {
+          setStatusBanner({
+            type: 'error',
+            text: 'Incorrect Encryption Key.',
+          });
+        }
         setIsBusy(false);
         return;
       }
 
+      resetPasscodeFailures();
       const encryptedEnvelope = await encryptVaultBundle(
         {
           logs,
           customFonts,
           micSettings,
         },
-        backupPassphrase.trim()
+        backupPassphrase.trim(),
+        vaultMode
       );
       await writeToPrivateSpecialFolder(
         encryptedEnvelope,
         logs.length,
-        inputHash
+        inputHash,
+        vaultMode
       );
       if (!savedKeyHash) {
         onSaveKeyHash(inputHash);
@@ -136,6 +174,16 @@ export const BackupRestorePage: React.FC<BackupRestorePageProps> = ({
 
   const handleRestore = async (e: React.FormEvent) => {
     e.preventDefault();
+    const rem = getRemainingPasscodeCooldownSeconds();
+    if (rem > 0) {
+      setCooldownSec(rem);
+      setStatusBanner({
+        type: 'error',
+        text: `Too many wrong attempts. Please wait ${rem}s.`,
+      });
+      return;
+    }
+
     if (!restorePassphrase.trim()) {
       setStatusBanner({
         type: 'error',
@@ -146,7 +194,9 @@ export const BackupRestorePage: React.FC<BackupRestorePageProps> = ({
 
     setIsBusy(true);
     try {
-      const { metadata, encryptedEnvelope } = await readFromPrivateSpecialFolder();
+      const { metadata, encryptedEnvelope } = await readFromPrivateSpecialFolder(
+        vaultMode
+      );
       if (!metadata.exists || !encryptedEnvelope) {
         setStatusBanner({
           type: 'error',
@@ -158,9 +208,11 @@ export const BackupRestorePage: React.FC<BackupRestorePageProps> = ({
 
       const bundle = await decryptVaultBundle(
         encryptedEnvelope,
-        restorePassphrase.trim()
+        restorePassphrase.trim(),
+        vaultMode
       );
-      const keyHash = await hashPassphrase(restorePassphrase.trim());
+      resetPasscodeFailures();
+      const keyHash = await hashPassphrase(restorePassphrase.trim(), vaultMode);
       onSaveKeyHash(keyHash);
       onRestoreBundle(bundle);
       setRestorePassphrase('');
@@ -169,14 +221,29 @@ export const BackupRestorePage: React.FC<BackupRestorePageProps> = ({
         text: 'Data restored.',
       });
     } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Incorrect Encryption Key.';
+      if (msg.includes('Incorrect Encryption Key')) {
+        const fail = recordPasscodeFailure();
+        if (fail.cooldownSeconds > 0) {
+          setCooldownSec(fail.cooldownSeconds);
+          setStatusBanner({
+            type: 'error',
+            text: `Incorrect Encryption Key. Locked for ${fail.cooldownSeconds}s.`,
+          });
+          setIsBusy(false);
+          return;
+        }
+      }
       setStatusBanner({
         type: 'error',
-        text: err instanceof Error ? err.message : 'Incorrect Encryption Key.',
+        text: msg,
       });
     } finally {
       setIsBusy(false);
     }
   };
+
+  const isCoolingDown = cooldownSec > 0;
 
   return (
     <div className="flex h-full w-full flex-col bg-[var(--wiki-bg)] text-[var(--wiki-text)]">
@@ -199,6 +266,15 @@ export const BackupRestorePage: React.FC<BackupRestorePageProps> = ({
 
       {/* Body — Clean UI with only useful texts and buttons */}
       <div className="flex-1 overflow-y-auto px-4 py-5 space-y-5">
+        {isCoolingDown && (
+          <div className="flex items-center gap-2 border border-[#b32424] bg-[#b32424]/10 p-3 text-xs font-semibold text-[#b32424]">
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            <span>
+              Cooldown active due to continuous wrong attempts: {cooldownSec}s remaining
+            </span>
+          </div>
+        )}
+
         {statusBanner && (
           <div
             className={`flex items-start gap-2.5 border p-3 text-xs leading-relaxed ${
@@ -294,19 +370,24 @@ export const BackupRestorePage: React.FC<BackupRestorePageProps> = ({
               <input
                 type={showKeyText ? 'text' : 'password'}
                 value={backupPassphrase}
+                disabled={isCoolingDown}
                 onChange={(e) => setBackupPassphrase(e.target.value)}
                 placeholder="Enter encryption key"
-                className="h-10 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3 text-xs text-[var(--wiki-text)] outline-none focus:border-[#3366cc]"
+                className="h-10 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3 text-xs text-[var(--wiki-text)] outline-none focus:border-[#3366cc] disabled:opacity-50"
               />
             </div>
 
             <button
               type="submit"
-              disabled={isBusy}
+              disabled={isBusy || isCoolingDown}
               className="flex h-10 w-full items-center justify-center gap-2 bg-[#3366cc] px-4 text-xs font-semibold text-white hover:bg-[#2a56b0] disabled:opacity-50"
             >
               <Lock className="h-4 w-4" />
-              {isBusy ? 'Backing up...' : 'Backup'}
+              {isCoolingDown
+                ? `Wait ${cooldownSec}s`
+                : isBusy
+                ? 'Backing up...'
+                : 'Backup'}
             </button>
           </form>
         </section>
@@ -328,19 +409,24 @@ export const BackupRestorePage: React.FC<BackupRestorePageProps> = ({
               <input
                 type={showKeyText ? 'text' : 'password'}
                 value={restorePassphrase}
+                disabled={isCoolingDown}
                 onChange={(e) => setRestorePassphrase(e.target.value)}
                 placeholder="Enter encryption key"
-                className="h-10 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3 text-xs text-[var(--wiki-text)] outline-none focus:border-[#3366cc]"
+                className="h-10 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3 text-xs text-[var(--wiki-text)] outline-none focus:border-[#3366cc] disabled:opacity-50"
               />
             </div>
 
             <button
               type="submit"
-              disabled={isBusy}
+              disabled={isBusy || isCoolingDown}
               className="flex h-10 w-full items-center justify-center gap-2 border border-[#3366cc] bg-[var(--wiki-surface)] px-4 text-xs font-semibold text-[#3366cc] hover:bg-[#3366cc] hover:text-white disabled:opacity-50 transition-colors"
             >
               <RotateCcw className="h-4 w-4" />
-              {isBusy ? 'Restoring...' : 'Restore'}
+              {isCoolingDown
+                ? `Wait ${cooldownSec}s`
+                : isBusy
+                ? 'Restoring...'
+                : 'Restore'}
             </button>
           </form>
         </section>
