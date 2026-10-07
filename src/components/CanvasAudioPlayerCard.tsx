@@ -33,6 +33,7 @@ export const CanvasAudioPlayerCard: React.FC<CanvasAudioPlayerCardProps> = ({
   onEndDrag,
 }) => {
   const audioElRef = useRef<HTMLAudioElement | null>(null);
+  const lastTapTimeRef = useRef<number>(0);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [currentTime, setCurrentTime] = useState<number>(0);
   const [duration, setDuration] = useState<number>(audio.durationSec || 0);
@@ -106,39 +107,72 @@ export const CanvasAudioPlayerCard: React.FC<CanvasAudioPlayerCardProps> = ({
   const xPos = audio.x ?? 24;
   const yPos = audio.y ?? 140;
   const cardWidth = audio.width ?? 270;
+  const cardHeight = audio.height ?? 56;
   const rotationDeg = audio.rotation ?? 0;
   const effectiveDuration = duration > 0 ? duration : audio.durationSec || 1;
 
+  // Double-tap selection without activating text cursor
+  const handleDoubleTapCheck = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (isReadingMode) return;
+    const now = Date.now();
+    if (now - lastTapTimeRef.current < 320) {
+      e.preventDefault();
+      e.stopPropagation();
+      // Blur editor so text cursor never becomes active when selecting the audio player
+      if (document.activeElement instanceof HTMLElement) {
+        document.activeElement.blur();
+      }
+      window.getSelection()?.removeAllRanges();
+      onSelect();
+      lastTapTimeRef.current = 0;
+    } else {
+      lastTapTimeRef.current = now;
+    }
+  };
+
   return (
     <div
+      contentEditable={false}
       onPointerDown={(e) => {
         const target = e.target as HTMLElement;
         if (target.closest('[data-audio-control="true"]')) {
           return;
         }
+        e.preventDefault();
+        e.stopPropagation();
+        handleDoubleTapCheck(e);
         onStartDrag(e, audio);
       }}
       onPointerMove={onMoveDrag}
       onPointerUp={onEndDrag}
       onPointerCancel={onEndDrag}
-      onClick={(e) => {
+      onDoubleClick={(e) => {
+        e.preventDefault();
         e.stopPropagation();
         if (!isReadingMode) {
+          if (document.activeElement instanceof HTMLElement) {
+            document.activeElement.blur();
+          }
+          window.getSelection()?.removeAllRanges();
           onSelect();
         }
+      }}
+      onClick={(e) => {
+        e.stopPropagation();
       }}
       style={{
         position: 'absolute',
         left: `${xPos}px`,
         top: `${yPos}px`,
         width: `${cardWidth}px`,
+        height: `${cardHeight}px`,
         transform: `rotate(${rotationDeg}deg)`,
         transformOrigin: 'center center',
         backgroundColor: '#b32424',
         opacity: 1,
         zIndex: computedZIndex,
       }}
-      className={`touch-none select-none rounded-none border border-[#7a1616] bg-[#b32424] px-3 py-2 text-white shadow-md ${
+      className={`touch-none select-none flex flex-col justify-center rounded-none border border-[#7a1616] bg-[#b32424] px-3 py-1.5 text-white shadow-md overflow-hidden ${
         isReadingMode
           ? 'pointer-events-auto'
           : isSelected
@@ -150,7 +184,7 @@ export const CanvasAudioPlayerCard: React.FC<CanvasAudioPlayerCardProps> = ({
       <audio ref={audioElRef} src={audio.dataUrl} preload="metadata" className="hidden" />
 
       {/* Opaque Red Rectangular Body: Play/Pause Button BEFORE the Slider */}
-      <div className="flex items-center gap-2.5">
+      <div className="flex items-center gap-2.5 w-full">
         <button
           type="button"
           data-audio-control="true"

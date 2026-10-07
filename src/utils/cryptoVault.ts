@@ -29,6 +29,7 @@ export interface CanvasAudioAttachment {
   x?: number;
   y?: number;
   width?: number;
+  height?: number;
   rotation?: number;
   playbackRate?: number;
   layer?: 'foreground' | 'background';

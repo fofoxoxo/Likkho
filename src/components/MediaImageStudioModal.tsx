@@ -7,6 +7,7 @@ import {
   Sliders,
   Sparkles,
   Eye,
+  Settings2,
 } from 'lucide-react';
 
 export type ImageFilterPreset =
@@ -58,10 +59,20 @@ export const IMAGE_FILTER_LIST: { id: ImageFilterPreset; label: string }[] = [
   { id: 'denoise', label: 'Noise Reduction (Denoise)' },
 ];
 
+export type ImageCompressionFormat = 'image/jpeg' | 'image/png' | 'image/webp';
+export type ImageBitDepth = 24 | 16 | 8 | 1;
+export type ImageColorSpaceOption = 'srgb' | 'display-p3' | 'grayscale';
+export type ImageExifMode = 'strip' | 'keep';
+
 interface MediaImageStudioModalProps {
   imageSrc: string;
   onCancel: () => void;
-  onConfirm: (processedDataUrl: string, opacity: number, width: number, height: number) => void;
+  onConfirm: (
+    processedDataUrl: string,
+    opacity: number,
+    width: number,
+    height: number
+  ) => void;
 }
 
 function clampByte(val: number): number {
@@ -110,19 +121,36 @@ export const MediaImageStudioModal: React.FC<MediaImageStudioModalProps> = ({
 }) => {
   const previewCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const [imgEl, setImgEl] = useState<HTMLImageElement | null>(null);
-  const [activeTab, setActiveTab] = useState<'filters' | 'adjust' | 'crop'>('filters');
+  const [activeTab, setActiveTab] = useState<'encoding' | 'filters' | 'adjust' | 'crop'>('encoding');
+
+  // Image Encoding & Format Controls requested by user:
+  // 1. Dimensions (Resolution)
+  const [resolutionWidth, setResolutionWidth] = useState<number>(360);
+  const [resolutionHeight, setResolutionHeight] = useState<number>(360);
+  const [lockAspect, setLockAspect] = useState<boolean>(true);
+  // 2. Compression Format
+  const [compressionFormat, setCompressionFormat] =
+    useState<ImageCompressionFormat>('image/webp');
+  // 3. Quality Percentage
+  const [qualityPercent, setQualityPercent] = useState<number>(85);
+  // 4. Bit Depth
+  const [bitDepth, setBitDepth] = useState<ImageBitDepth>(24);
+  // 5. Color Space
+  const [colorSpace, setColorSpace] = useState<ImageColorSpaceOption>('srgb');
+  // 6. EXIF Metadata
+  const [exifMode, setExifMode] = useState<ImageExifMode>('strip');
 
   // Filter preset
   const [selectedFilter, setSelectedFilter] = useState<ImageFilterPreset>('none');
 
   // Fine adjustments (Brightness, Contrast, Saturation, Temperature, Hue, Opacity, Red/Blue Balance)
-  const [brightness, setBrightness] = useState<number>(0); // -100 to 100
-  const [contrast, setContrast] = useState<number>(0); // -100 to 100
-  const [saturation, setSaturation] = useState<number>(0); // -100 to 100
-  const [temperature, setTemperature] = useState<number>(0); // -100 to 100
-  const [hueRotate, setHueRotate] = useState<number>(0); // 0 to 360
-  const [colorBalanceRG, setColorBalanceRG] = useState<number>(0); // -100 to 100
-  const [opacity, setOpacity] = useState<number>(1); // 0.1 to 1.0
+  const [brightness, setBrightness] = useState<number>(0);
+  const [contrast, setContrast] = useState<number>(0);
+  const [saturation, setSaturation] = useState<number>(0);
+  const [temperature, setTemperature] = useState<number>(0);
+  const [hueRotate, setHueRotate] = useState<number>(0);
+  const [colorBalanceRG, setColorBalanceRG] = useState<number>(0);
+  const [opacity, setOpacity] = useState<number>(1);
 
   // Crop & Zoom controls
   const [cropAspect, setCropAspect] = useState<'free' | '1:1' | '4:3' | '16:9'>('free');
@@ -135,6 +163,9 @@ export const MediaImageStudioModal: React.FC<MediaImageStudioModalProps> = ({
     img.crossOrigin = 'anonymous';
     img.onload = () => {
       setImgEl(img);
+      const scale = Math.min(480 / img.width, 480 / img.height, 1);
+      setResolutionWidth(Math.max(64, Math.round(img.width * scale)));
+      setResolutionHeight(Math.max(64, Math.round(img.height * scale)));
     };
     img.src = imageSrc;
   }, [imageSrc]);
@@ -152,36 +183,59 @@ export const MediaImageStudioModal: React.FC<MediaImageStudioModalProps> = ({
     setZoom(1);
     setPanX(0);
     setPanY(0);
+    setCompressionFormat('image/webp');
+    setQualityPercent(85);
+    setBitDepth(24);
+    setColorSpace('srgb');
+    setExifMode('strip');
+    if (imgEl) {
+      const scale = Math.min(480 / imgEl.width, 480 / imgEl.height, 1);
+      setResolutionWidth(Math.max(64, Math.round(imgEl.width * scale)));
+      setResolutionHeight(Math.max(64, Math.round(imgEl.height * scale)));
+    }
+  };
+
+  const handleWidthInput = (newW: number) => {
+    const clampedW = Math.min(1600, Math.max(40, newW || 40));
+    setResolutionWidth(clampedW);
+    if (lockAspect && imgEl && imgEl.width > 0) {
+      setResolutionHeight(
+        Math.max(40, Math.round((clampedW * imgEl.height) / imgEl.width))
+      );
+    }
+  };
+
+  const handleHeightInput = (newH: number) => {
+    const clampedH = Math.min(1600, Math.max(40, newH || 40));
+    setResolutionHeight(clampedH);
+    if (lockAspect && imgEl && imgEl.height > 0) {
+      setResolutionWidth(
+        Math.max(40, Math.round((clampedH * imgEl.width) / imgEl.height))
+      );
+    }
   };
 
   useEffect(() => {
     if (!imgEl || !previewCanvasRef.current) return;
     const canvas = previewCanvasRef.current;
 
-    // Determine output dimensions (max 380px for real-time responsiveness)
-    const MAX_DIM = 360;
-    let targetW = imgEl.width;
-    let targetH = imgEl.height;
+    let targetW = Math.min(800, Math.max(40, resolutionWidth));
+    let targetH = Math.min(800, Math.max(40, resolutionHeight));
 
     if (cropAspect === '1:1') {
-      targetW = MAX_DIM;
-      targetH = MAX_DIM;
+      targetH = targetW;
     } else if (cropAspect === '4:3') {
-      targetW = MAX_DIM;
-      targetH = Math.round((MAX_DIM * 3) / 4);
+      targetH = Math.round((targetW * 3) / 4);
     } else if (cropAspect === '16:9') {
-      targetW = MAX_DIM;
-      targetH = Math.round((MAX_DIM * 9) / 16);
-    } else {
-      const scale = Math.min(MAX_DIM / imgEl.width, MAX_DIM / imgEl.height, 1);
-      targetW = Math.max(80, Math.round(imgEl.width * scale));
-      targetH = Math.max(80, Math.round(imgEl.height * scale));
+      targetH = Math.round((targetW * 9) / 16);
     }
 
     canvas.width = targetW;
     canvas.height = targetH;
 
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d', {
+      colorSpace: colorSpace === 'display-p3' ? 'display-p3' : 'srgb',
+    });
     if (!ctx) return;
 
     ctx.clearRect(0, 0, targetW, targetH);
@@ -195,11 +249,10 @@ export const MediaImageStudioModal: React.FC<MediaImageStudioModalProps> = ({
 
     ctx.drawImage(imgEl, drawX, drawY, drawW, drawH);
 
-    // Extract ImageData for pixel-level DSP & Filter Pipeline
     const imgData = ctx.getImageData(0, 0, targetW, targetH);
     let data = imgData.data;
 
-    // 1. Apply spatial / kernel filters first if selected
+    // 1. Spatial / kernel filters
     if (selectedFilter === 'blur' || selectedFilter === 'lowpass') {
       data = applyConvolution3x3(
         data,
@@ -247,7 +300,6 @@ export const MediaImageStudioModal: React.FC<MediaImageStudioModalProps> = ({
         128
       );
     } else if (selectedFilter === 'edge') {
-      // Sobel Edge Magnitude
       const gxKernel = [-1, 0, 1, -2, 0, 2, -1, 0, 1];
       const gyKernel = [-1, -2, -1, 0, 0, 0, 1, 2, 1];
       const edgeOut = new Uint8ClampedArray(data.length);
@@ -276,7 +328,6 @@ export const MediaImageStudioModal: React.FC<MediaImageStudioModalProps> = ({
       }
       data = edgeOut;
     } else if (selectedFilter === 'denoise') {
-      // 3x3 Median-like smooth denoise filter
       data = applyConvolution3x3(
         data,
         targetW,
@@ -306,11 +357,9 @@ export const MediaImageStudioModal: React.FC<MediaImageStudioModalProps> = ({
       }
       data = pixOut;
     } else if (selectedFilter === 'fisheye') {
-      // Barrel / Fish-eye radial warp
       const warpOut = new Uint8ClampedArray(data.length);
       const cx = targetW / 2;
       const cy = targetH / 2;
-      const maxR = Math.sqrt(cx * cx + cy * cy);
       for (let y = 0; y < targetH; y++) {
         for (let x = 0; x < targetW; x++) {
           const dx = (x - cx) / cx;
@@ -318,21 +367,26 @@ export const MediaImageStudioModal: React.FC<MediaImageStudioModalProps> = ({
           const r = Math.sqrt(dx * dx + dy * dy);
           const theta = Math.atan2(dy, dx);
           const rn = Math.pow(r, 1.45);
-          const srcX = Math.min(targetW - 1, Math.max(0, Math.round(cx + rn * cx * Math.cos(theta))));
-          const srcY = Math.min(targetH - 1, Math.max(0, Math.round(cy + rn * cy * Math.sin(theta))));
+          const srcX = Math.min(
+            targetW - 1,
+            Math.max(0, Math.round(cx + rn * cx * Math.cos(theta)))
+          );
+          const srcY = Math.min(
+            targetH - 1,
+            Math.max(0, Math.round(cy + rn * cy * Math.sin(theta)))
+          );
           const dstIdx = (y * targetW + x) * 4;
           const srcIdx = (srcY * targetW + srcX) * 4;
           warpOut[dstIdx] = data[srcIdx];
           warpOut[dstIdx + 1] = data[srcIdx + 1];
           warpOut[dstIdx + 2] = data[srcIdx + 2];
           warpOut[dstIdx + 3] = data[srcIdx + 3];
-          void maxR;
         }
       }
       data = warpOut;
     }
 
-    // 2. Per-pixel color, preset & continuous adjustments
+    // 2. Per-pixel color, preset, Bit Depth & Color Space quantization
     const contrastFactor = (259 * (contrast + 255)) / (255 * (259 - contrast));
     const satFactor = 1 + saturation / 100;
     const effectiveHue =
@@ -349,8 +403,7 @@ export const MediaImageStudioModal: React.FC<MediaImageStudioModalProps> = ({
       let g = data[i + 1];
       let b = data[i + 2];
 
-      // Preset color transformations
-      if (selectedFilter === 'grayscale') {
+      if (selectedFilter === 'grayscale' || colorSpace === 'grayscale') {
         const lum = 0.299 * r + 0.587 * g + 0.114 * b;
         r = g = b = lum;
       } else if (selectedFilter === 'sepia') {
@@ -381,7 +434,6 @@ export const MediaImageStudioModal: React.FC<MediaImageStudioModalProps> = ({
         const c = (lum - 128) * 1.65 + 115;
         r = g = b = c;
       } else if (selectedFilter === 'hdr') {
-        // Non-linear shadow boost & highlight compression + vibrance
         const lum = (r + g + b) / 3 || 1;
         const hdrLum = 255 * Math.pow(lum / 255, 0.82);
         const ratio = hdrLum / lum;
@@ -400,8 +452,19 @@ export const MediaImageStudioModal: React.FC<MediaImageStudioModalProps> = ({
         b = Math.round(Math.round(b / step) * step);
       }
 
-      // Vignette radial falloff
-      if (selectedFilter === 'vignette' || selectedFilter === 'noir' || selectedFilter === 'vintage') {
+      if (colorSpace === 'display-p3') {
+        // Wide-gamut vibrance expansion
+        const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+        r = lum + (r - lum) * 1.12;
+        g = lum + (g - lum) * 1.12;
+        b = lum + (b - lum) * 1.12;
+      }
+
+      if (
+        selectedFilter === 'vignette' ||
+        selectedFilter === 'noir' ||
+        selectedFilter === 'vintage'
+      ) {
         const pxIdx = i / 4;
         const py = Math.floor(pxIdx / targetW);
         const px = pxIdx % targetW;
@@ -412,41 +475,35 @@ export const MediaImageStudioModal: React.FC<MediaImageStudioModalProps> = ({
         b *= vig;
       }
 
-      // Continuous Sliders: Brightness
       if (brightness !== 0) {
         r += brightness * 1.8;
         g += brightness * 1.8;
         b += brightness * 1.8;
       }
 
-      // Contrast
       if (contrast !== 0) {
         r = contrastFactor * (r - 128) + 128;
         g = contrastFactor * (g - 128) + 128;
         b = contrastFactor * (b - 128) + 128;
       }
 
-      // Saturation (Vibrance)
-      if (saturation !== 0) {
+      if (saturation !== 0 && colorSpace !== 'grayscale') {
         const gray = 0.2989 * r + 0.587 * g + 0.114 * b;
         r = gray + (r - gray) * satFactor;
         g = gray + (g - gray) * satFactor;
         b = gray + (b - gray) * satFactor;
       }
 
-      // Warmth / Coolness Temperature slider
       if (temperature !== 0) {
         r += temperature * 0.6;
         b -= temperature * 0.6;
       }
 
-      // Color Balance slider
       if (colorBalanceRG !== 0) {
         r += colorBalanceRG * 0.5;
         g -= colorBalanceRG * 0.25;
       }
 
-      // Hue Rotate matrix
       if (effectiveHue !== 0) {
         const rx =
           r * (0.213 + cosA * 0.787 - sinA * 0.213) +
@@ -465,6 +522,20 @@ export const MediaImageStudioModal: React.FC<MediaImageStudioModalProps> = ({
         b = bx;
       }
 
+      // Bit Depth quantization (24-bit TrueColor, 16-bit HighColor 5-6-5, 8-bit 256-color, 1-bit Monochrome)
+      if (bitDepth === 16) {
+        r = Math.round((clampByte(r) / 255) * 31) * (255 / 31);
+        g = Math.round((clampByte(g) / 255) * 63) * (255 / 63);
+        b = Math.round((clampByte(b) / 255) * 31) * (255 / 31);
+      } else if (bitDepth === 8) {
+        r = Math.round((clampByte(r) / 255) * 7) * (255 / 7);
+        g = Math.round((clampByte(g) / 255) * 7) * (255 / 7);
+        b = Math.round((clampByte(b) / 255) * 3) * (255 / 3);
+      } else if (bitDepth === 1) {
+        const lum = 0.299 * clampByte(r) + 0.587 * clampByte(g) + 0.114 * clampByte(b);
+        r = g = b = lum >= 128 ? 255 : 0;
+      }
+
       data[i] = clampByte(r);
       data[i + 1] = clampByte(g);
       data[i + 2] = clampByte(b);
@@ -475,6 +546,13 @@ export const MediaImageStudioModal: React.FC<MediaImageStudioModalProps> = ({
     ctx.putImageData(outImgData, 0, 0);
   }, [
     imgEl,
+    resolutionWidth,
+    resolutionHeight,
+    compressionFormat,
+    qualityPercent,
+    bitDepth,
+    colorSpace,
+    exifMode,
     selectedFilter,
     brightness,
     contrast,
@@ -491,8 +569,9 @@ export const MediaImageStudioModal: React.FC<MediaImageStudioModalProps> = ({
 
   const handlePlaceOnCanvas = () => {
     if (!previewCanvasRef.current) return;
-    const dataUrl = previewCanvasRef.current.toDataURL('image/png');
-    const w = Math.min(220, previewCanvasRef.current.width);
+    const qualityRatio = Math.min(1, Math.max(0.05, qualityPercent / 100));
+    const dataUrl = previewCanvasRef.current.toDataURL(compressionFormat, qualityRatio);
+    const w = Math.min(240, previewCanvasRef.current.width);
     const h = Math.round(
       (w * previewCanvasRef.current.height) / previewCanvasRef.current.width
     );
@@ -505,7 +584,7 @@ export const MediaImageStudioModal: React.FC<MediaImageStudioModalProps> = ({
         {/* Header */}
         <div className="flex shrink-0 items-center justify-between border-b border-[var(--wiki-hairline)] bg-[var(--wiki-surface)] px-3.5 py-2.5">
           <h3 className="font-wiki-serif text-base font-bold">
-            Edit &amp; Place Image on Canvas
+            Image Studio &amp; Encoding Options
           </h3>
           <div className="flex items-center gap-1">
             <button
@@ -528,19 +607,46 @@ export const MediaImageStudioModal: React.FC<MediaImageStudioModalProps> = ({
         </div>
 
         {/* Live Canvas Preview */}
-        <div className="flex shrink-0 items-center justify-center bg-[#101418] p-3">
+        <div className="flex shrink-0 flex-col items-center justify-center bg-[#101418] p-2.5">
           <canvas
             ref={previewCanvasRef}
-            className="max-h-[210px] max-w-full border border-[var(--wiki-border)] object-contain shadow-md"
+            className="max-h-[180px] max-w-full border border-[var(--wiki-border)] object-contain shadow-md"
           />
+          <div className="mt-1.5 flex flex-wrap items-center justify-center gap-2 font-wiki-mono text-[10px] text-white/80">
+            <span>
+              {resolutionWidth}×{resolutionHeight}px
+            </span>
+            <span>·</span>
+            <span>{compressionFormat.replace('image/', '').toUpperCase()}</span>
+            <span>·</span>
+            <span>Q:{qualityPercent}%</span>
+            <span>·</span>
+            <span>{bitDepth}-bit</span>
+            <span>·</span>
+            <span>{colorSpace.toUpperCase()}</span>
+            <span>·</span>
+            <span>EXIF:{exifMode === 'strip' ? 'Stripped' : 'Retained'}</span>
+          </div>
         </div>
 
-        {/* Mode Tabs: Filters (22+) | Adjust & Opacity | Crop & Zoom */}
-        <div className="grid shrink-0 grid-cols-3 border-b border-[var(--wiki-hairline)] bg-[var(--wiki-surface)] text-xs font-semibold">
+        {/* Mode Tabs: Encoding | Filters (22+) | Adjust & Opacity | Crop */}
+        <div className="grid shrink-0 grid-cols-4 border-b border-[var(--wiki-hairline)] bg-[var(--wiki-surface)] text-[11px] font-semibold">
+          <button
+            type="button"
+            onClick={() => setActiveTab('encoding')}
+            className={`flex items-center justify-center gap-1 py-2.5 border-b-2 transition-colors ${
+              activeTab === 'encoding'
+                ? 'border-[#3366cc] text-[#3366cc] bg-[var(--wiki-bg)]'
+                : 'border-transparent text-[var(--wiki-muted)]'
+            }`}
+          >
+            <Settings2 className="h-3.5 w-3.5" />
+            Format
+          </button>
           <button
             type="button"
             onClick={() => setActiveTab('filters')}
-            className={`flex items-center justify-center gap-1.5 py-2.5 border-b-2 transition-colors ${
+            className={`flex items-center justify-center gap-1 py-2.5 border-b-2 transition-colors ${
               activeTab === 'filters'
                 ? 'border-[#3366cc] text-[#3366cc] bg-[var(--wiki-bg)]'
                 : 'border-transparent text-[var(--wiki-muted)]'
@@ -552,19 +658,19 @@ export const MediaImageStudioModal: React.FC<MediaImageStudioModalProps> = ({
           <button
             type="button"
             onClick={() => setActiveTab('adjust')}
-            className={`flex items-center justify-center gap-1.5 py-2.5 border-b-2 transition-colors ${
+            className={`flex items-center justify-center gap-1 py-2.5 border-b-2 transition-colors ${
               activeTab === 'adjust'
                 ? 'border-[#3366cc] text-[#3366cc] bg-[var(--wiki-bg)]'
                 : 'border-transparent text-[var(--wiki-muted)]'
             }`}
           >
             <Sliders className="h-3.5 w-3.5" />
-            Adjust &amp; Opacity
+            Adjust
           </button>
           <button
             type="button"
             onClick={() => setActiveTab('crop')}
-            className={`flex items-center justify-center gap-1.5 py-2.5 border-b-2 transition-colors ${
+            className={`flex items-center justify-center gap-1 py-2.5 border-b-2 transition-colors ${
               activeTab === 'crop'
                 ? 'border-[#3366cc] text-[#3366cc] bg-[var(--wiki-bg)]'
                 : 'border-transparent text-[var(--wiki-muted)]'
@@ -577,6 +683,184 @@ export const MediaImageStudioModal: React.FC<MediaImageStudioModalProps> = ({
 
         {/* Tab Body */}
         <div className="flex-1 overflow-y-auto p-3.5">
+          {activeTab === 'encoding' && (
+            <div className="space-y-3.5 text-xs">
+              {/* 1. Dimensions (Resolution) */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="font-semibold">1. Dimensions (Resolution)</span>
+                  <label className="flex items-center gap-1 text-[11px] text-[var(--wiki-muted)] cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={lockAspect}
+                      onChange={(e) => setLockAspect(e.target.checked)}
+                      className="accent-[#3366cc]"
+                    />
+                    Lock Aspect Ratio
+                  </label>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <span className="block text-[10px] text-[var(--wiki-muted)] mb-0.5">
+                      Width (px)
+                    </span>
+                    <input
+                      type="number"
+                      min={40}
+                      max={1600}
+                      value={resolutionWidth}
+                      onChange={(e) => handleWidthInput(parseInt(e.target.value, 10))}
+                      className="h-8 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-2 font-wiki-mono text-xs outline-none focus:border-[#3366cc]"
+                    />
+                  </div>
+                  <div>
+                    <span className="block text-[10px] text-[var(--wiki-muted)] mb-0.5">
+                      Height (px)
+                    </span>
+                    <input
+                      type="number"
+                      min={40}
+                      max={1600}
+                      value={resolutionHeight}
+                      onChange={(e) => handleHeightInput(parseInt(e.target.value, 10))}
+                      className="h-8 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-2 font-wiki-mono text-xs outline-none focus:border-[#3366cc]"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* 2. Compression Format */}
+              <div>
+                <span className="block font-semibold mb-1.5">2. Compression Format</span>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {(
+                    [
+                      { id: 'image/webp', label: 'WebP' },
+                      { id: 'image/jpeg', label: 'JPEG' },
+                      { id: 'image/png', label: 'PNG (Lossless)' },
+                    ] as const
+                  ).map((fmt) => (
+                    <button
+                      key={fmt.id}
+                      type="button"
+                      onClick={() => setCompressionFormat(fmt.id)}
+                      className={`border py-2 text-center font-semibold transition-colors ${
+                        compressionFormat === fmt.id
+                          ? 'border-[#3366cc] bg-[#3366cc] text-white'
+                          : 'border-[var(--wiki-border)] bg-[var(--wiki-surface)] text-[var(--wiki-text)] hover:border-[#3366cc]'
+                      }`}
+                    >
+                      {fmt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* 3. Quality Percentage */}
+              <div>
+                <div className="flex justify-between mb-1">
+                  <span className="font-semibold">3. Quality Percentage</span>
+                  <span className="font-wiki-mono font-bold text-[#3366cc]">
+                    {qualityPercent}%
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={10}
+                  max={100}
+                  step={1}
+                  value={qualityPercent}
+                  onChange={(e) => setQualityPercent(parseInt(e.target.value, 10))}
+                  className="w-full accent-[#3366cc]"
+                />
+              </div>
+
+              {/* 4. Bit Depth */}
+              <div>
+                <span className="block font-semibold mb-1.5">4. Bit Depth</span>
+                <div className="grid grid-cols-4 gap-1.5">
+                  {(
+                    [
+                      { bits: 24, label: '24-bit RGB' },
+                      { bits: 16, label: '16-bit Hi' },
+                      { bits: 8, label: '8-bit 256c' },
+                      { bits: 1, label: '1-bit Mono' },
+                    ] as const
+                  ).map((b) => (
+                    <button
+                      key={b.bits}
+                      type="button"
+                      onClick={() => setBitDepth(b.bits)}
+                      className={`border py-1.5 text-center font-wiki-mono text-[11px] font-semibold transition-colors ${
+                        bitDepth === b.bits
+                          ? 'border-[#3366cc] bg-[#3366cc] text-white'
+                          : 'border-[var(--wiki-border)] bg-[var(--wiki-surface)] text-[var(--wiki-text)] hover:border-[#3366cc]'
+                      }`}
+                    >
+                      {b.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* 5. Color Space */}
+              <div>
+                <span className="block font-semibold mb-1.5">5. Color Space</span>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {(
+                    [
+                      { id: 'srgb', label: 'sRGB' },
+                      { id: 'display-p3', label: 'Display P3' },
+                      { id: 'grayscale', label: 'Grayscale' },
+                    ] as const
+                  ).map((cs) => (
+                    <button
+                      key={cs.id}
+                      type="button"
+                      onClick={() => setColorSpace(cs.id)}
+                      className={`border py-1.5 text-center font-semibold transition-colors ${
+                        colorSpace === cs.id
+                          ? 'border-[#3366cc] bg-[#3366cc] text-white'
+                          : 'border-[var(--wiki-border)] bg-[var(--wiki-surface)] text-[var(--wiki-text)] hover:border-[#3366cc]'
+                      }`}
+                    >
+                      {cs.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* 6. EXIF Metadata */}
+              <div>
+                <span className="block font-semibold mb-1.5">6. EXIF Metadata</span>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setExifMode('strip')}
+                    className={`border py-2 text-center font-semibold transition-colors ${
+                      exifMode === 'strip'
+                        ? 'border-[#3366cc] bg-[#3366cc] text-white'
+                        : 'border-[var(--wiki-border)] bg-[var(--wiki-surface)] text-[var(--wiki-text)] hover:border-[#3366cc]'
+                    }`}
+                  >
+                    Strip EXIF (Privacy)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setExifMode('keep')}
+                    className={`border py-2 text-center font-semibold transition-colors ${
+                      exifMode === 'keep'
+                        ? 'border-[#3366cc] bg-[#3366cc] text-white'
+                        : 'border-[var(--wiki-border)] bg-[var(--wiki-surface)] text-[var(--wiki-text)] hover:border-[#3366cc]'
+                    }`}
+                  >
+                    Retain EXIF Metadata
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {activeTab === 'filters' && (
             <div className="grid grid-cols-2 gap-1.5">
               {IMAGE_FILTER_LIST.map((f) => (

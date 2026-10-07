@@ -60,6 +60,11 @@ interface RichTextToolbarProps {
   canvasBgOpacity: number;
   onChangeCanvasBg: (dataUrl: string | null, opacity: number) => void;
   onOpenMediaImageStudio: (rawImageDataUrl: string) => void;
+  onOpenMediaAudioStudio?: (
+    rawAudioDataUrl: string,
+    fileName: string,
+    ext: string
+  ) => void;
   onAddAudioAttachment: (audio: CanvasAudioAttachment) => void;
   customFonts: CustomFontItem[];
   onAddCustomFont: (font: CustomFontItem) => void;
@@ -152,6 +157,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
   canvasBgOpacity,
   onChangeCanvasBg,
   onOpenMediaImageStudio,
+  onOpenMediaAudioStudio,
   onAddAudioAttachment,
   customFonts,
   onAddCustomFont,
@@ -1400,16 +1406,20 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     const reader = new FileReader();
     reader.onload = () => {
       if (typeof reader.result === 'string') {
-        const ext = (file.name.split('.').pop() || 'audio').toLowerCase();
-        onAddAudioAttachment({
-          id: `aud_${Date.now()}`,
-          name: file.name,
-          format: ext,
-          dataUrl: reader.result,
-          createdAt: Date.now(),
-        });
+        const ext = (file.name.split('.').pop() || 'wav').toLowerCase();
         setShowMediaPickerMenu(false);
-        showBriefHint(`Attached audio: ${file.name}`);
+        if (onOpenMediaAudioStudio) {
+          onOpenMediaAudioStudio(reader.result, file.name, ext);
+        } else {
+          onAddAudioAttachment({
+            id: `aud_${Date.now()}`,
+            name: file.name,
+            format: ext,
+            dataUrl: reader.result,
+            createdAt: Date.now(),
+          });
+          showBriefHint(`Attached audio: ${file.name}`);
+        }
       }
     };
     reader.readAsDataURL(file);
@@ -1528,17 +1538,19 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
 
     const span = document.createElement('span');
     span.className = 'wiki-spoiler-locked';
+    span.contentEditable = 'false';
+    span.setAttribute('contenteditable', 'false');
     span.setAttribute('data-wiki-spoiler', 'true');
     span.setAttribute('data-spoiler-pin', btoa(unescape(encodeURIComponent(pin))));
     span.appendChild(range.extractContents());
     range.insertNode(span);
 
-    // Place cursor cleanly after the spoiler span
-    const afterSpace = document.createTextNode('\u200B');
+    // Place cursor cleanly outside and after the uneditable spoiler span
+    const afterSpace = document.createTextNode('\u00A0');
     if (span.parentNode) {
       span.parentNode.insertBefore(afterSpace, span.nextSibling);
       const newRange = document.createRange();
-      newRange.setStart(afterSpace, 1);
+      newRange.setStartAfter(afterSpace);
       newRange.collapse(true);
       sel.removeAllRanges();
       sel.addRange(newRange);

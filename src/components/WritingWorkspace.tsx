@@ -19,6 +19,7 @@ import {
   Gauge,
 } from 'lucide-react';
 import {
+  AudioFormatOption,
   CanvasAudioAttachment,
   CanvasDraggableImage,
   CustomFontItem,
@@ -30,6 +31,7 @@ import { ImageCropperModal } from './ImageCropperModal';
 import { ReminderModal } from './ReminderModal';
 import { RichTextToolbar } from './RichTextToolbar';
 import { MediaImageStudioModal } from './MediaImageStudioModal';
+import { MediaAudioStudioModal } from './MediaAudioStudioModal';
 import { CanvasAudioPlayerCard } from './CanvasAudioPlayerCard';
 
 interface WritingWorkspaceProps {
@@ -73,6 +75,7 @@ function normalizeSpoilersToLockedForSave(rawHtml: string): string {
   temp.querySelectorAll('span[data-wiki-spoiler="true"]').forEach((el) => {
     el.classList.remove('wiki-spoiler-unlocked');
     el.classList.add('wiki-spoiler-locked');
+    el.setAttribute('contenteditable', 'false');
   });
   return temp.innerHTML;
 }
@@ -136,6 +139,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
       x: a.x ?? 24 + (idx * 20) % 80,
       y: a.y ?? 140 + idx * 88,
       width: a.width ?? 270,
+      height: a.height ?? 56,
       rotation: a.rotation ?? 0,
       playbackRate: a.playbackRate ?? 1,
       layer: a.layer ?? 'foreground',
@@ -153,6 +157,13 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
 
   // Media Picker Image Studio state
   const [rawMediaStudioImage, setRawMediaStudioImage] = useState<string | null>(null);
+
+  // Media Picker Audio Studio state (Bitrate, Codec, Mono/Stereo Channels, Sampling Rate)
+  const [rawMediaStudioAudio, setRawMediaStudioAudio] = useState<{
+    dataUrl: string;
+    fileName: string;
+    format: AudioFormatOption;
+  } | null>(null);
 
   // Free-dragging + 2-finger pinch resize & rotate state for Canvas Images
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
@@ -178,8 +189,11 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
   const audioPinchInitialRef = useRef<{
     id: string;
     dist: number;
+    spanX: number;
+    spanY: number;
     angle: number;
     startWidth: number;
+    startHeight: number;
     startRotation: number;
   } | null>(null);
 
@@ -200,12 +214,18 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     const startHtml = initialLog?.contentHtml || '';
     if (editorRef.current) {
       editorRef.current.innerHTML = startHtml;
+      editorRef.current
+        .querySelectorAll('span[data-wiki-spoiler="true"]')
+        .forEach((el) => {
+          el.setAttribute('contenteditable', 'false');
+        });
     }
     const normalizedAudios = (initialLog?.audioAttachments || []).map((a, idx) => ({
       ...a,
       x: a.x ?? 24 + (idx * 20) % 80,
       y: a.y ?? 140 + idx * 88,
       width: a.width ?? 270,
+      height: a.height ?? 56,
       rotation: a.rotation ?? 0,
       playbackRate: a.playbackRate ?? 1,
       layer: a.layer ?? 'foreground',
@@ -505,6 +525,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
       if (spoilerEl.classList.contains('wiki-spoiler-unlocked')) {
         spoilerEl.classList.remove('wiki-spoiler-unlocked');
         spoilerEl.classList.add('wiki-spoiler-locked');
+        spoilerEl.setAttribute('contenteditable', 'false');
       } else {
         setActiveSpoilerSpan(spoilerEl);
         setSpoilerUnlockInput('');
@@ -541,6 +562,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     if (spoilerUnlockInput.trim() === expectedPin) {
       activeSpoilerSpan.classList.remove('wiki-spoiler-locked');
       activeSpoilerSpan.classList.add('wiki-spoiler-unlocked');
+      activeSpoilerSpan.setAttribute('contenteditable', 'false');
       setActiveSpoilerSpan(null);
       setSpoilerUnlockInput('');
       setSpoilerUnlockError(null);
@@ -634,7 +656,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     }
   };
 
-  // Pointer drag + 2-finger pinch resize & rotate handlers for Canvas Audio Player Cards (active in Edit Mode)
+  // Pointer drag + 2-finger 4-directional resize & rotate handlers for Canvas Audio Player Cards (active in Edit Mode)
   const handleStartDragAudio = (
     e: React.PointerEvent<HTMLDivElement>,
     aud: CanvasAudioAttachment
@@ -642,20 +664,23 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     if (isReadingMode) return;
     e.stopPropagation();
     e.currentTarget.setPointerCapture(e.pointerId);
-    setSelectedCanvasAudioId(aud.id);
-    setSelectedCanvasImgId(null);
 
     audioPointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
     if (audioPointersRef.current.size === 2) {
       const pts = Array.from(audioPointersRef.current.values());
       const dist = Math.max(10, Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y));
+      const spanX = Math.abs(pts[1].x - pts[0].x);
+      const spanY = Math.abs(pts[1].y - pts[0].y);
       const angle = (Math.atan2(pts[1].y - pts[0].y, pts[1].x - pts[0].x) * 180) / Math.PI;
       audioPinchInitialRef.current = {
         id: aud.id,
         dist,
+        spanX,
+        spanY,
         angle,
         startWidth: aud.width ?? 270,
+        startHeight: aud.height ?? 56,
         startRotation: aud.rotation ?? 0,
       };
       setActiveAudioDragId(null);
@@ -678,13 +703,30 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
       e.stopPropagation();
       const pts = Array.from(audioPointersRef.current.values());
       const dist = Math.max(10, Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y));
+      const curSpanX = Math.abs(pts[1].x - pts[0].x);
+      const curSpanY = Math.abs(pts[1].y - pts[0].y);
       const angle = (Math.atan2(pts[1].y - pts[0].y, pts[1].x - pts[0].x) * 180) / Math.PI;
 
-      const scale = dist / audioPinchInitialRef.current.dist;
-      const nextWidth = Math.min(
-        420,
-        Math.max(190, Math.round(audioPinchInitialRef.current.startWidth * scale))
-      );
+      // 4-Directional Double-Finger Resize:
+      // Horizontal finger spread/pinch controls Width (Left/Right)
+      // Vertical finger spread/pinch controls Height (Top/Bottom)
+      const deltaSpanX = curSpanX - audioPinchInitialRef.current.spanX;
+      const deltaSpanY = curSpanY - audioPinchInitialRef.current.spanY;
+      const overallScale = dist / audioPinchInitialRef.current.dist;
+
+      const rawWidth =
+        Math.abs(deltaSpanX) > 6
+          ? audioPinchInitialRef.current.startWidth + deltaSpanX * 1.4
+          : audioPinchInitialRef.current.startWidth * overallScale;
+
+      const rawHeight =
+        Math.abs(deltaSpanY) > 6
+          ? audioPinchInitialRef.current.startHeight + deltaSpanY * 1.2
+          : audioPinchInitialRef.current.startHeight * overallScale;
+
+      const nextWidth = Math.min(440, Math.max(180, Math.round(rawWidth)));
+      const nextHeight = Math.min(180, Math.max(46, Math.round(rawHeight)));
+
       const deltaAngle = angle - audioPinchInitialRef.current.angle;
       const nextRotation = Math.round(audioPinchInitialRef.current.startRotation + deltaAngle);
       const targetId = audioPinchInitialRef.current.id;
@@ -692,7 +734,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
       setAudioAttachments((prev) =>
         prev.map((item) =>
           item.id === targetId
-            ? { ...item, width: nextWidth, rotation: nextRotation }
+            ? { ...item, width: nextWidth, height: nextHeight, rotation: nextRotation }
             : item
         )
       );
@@ -1308,7 +1350,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
                   const ax = aud.x ?? 24;
                   const ay = aud.y ?? 140;
                   const aw = aud.width ?? 270;
-                  const ah = 64;
+                  const ah = aud.height ?? 56;
                   return (
                     aud.layer === 'background' &&
                     clickX >= ax &&
@@ -1318,6 +1360,10 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
                   );
                 });
                 if (hitBgAudio) {
+                  if (document.activeElement instanceof HTMLElement) {
+                    document.activeElement.blur();
+                  }
+                  window.getSelection()?.removeAllRanges();
                   setSelectedCanvasAudioId(hitBgAudio.id);
                   setSelectedCanvasImgId(null);
                   return;
@@ -1364,6 +1410,25 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
             });
           }}
           onOpenMediaImageStudio={(rawDataUrl) => setRawMediaStudioImage(rawDataUrl)}
+          onOpenMediaAudioStudio={(rawAudioDataUrl, fileName, ext) => {
+            const validExts: AudioFormatOption[] = [
+              'wav',
+              'flac',
+              'm4a',
+              'aac',
+              'mp3',
+              'ogg',
+              'webm',
+            ];
+            const fmt: AudioFormatOption = validExts.includes(ext as AudioFormatOption)
+              ? (ext as AudioFormatOption)
+              : 'wav';
+            setRawMediaStudioAudio({
+              dataUrl: rawAudioDataUrl,
+              fileName,
+              format: fmt,
+            });
+          }}
           onAddAudioAttachment={(aud) => {
             setAudioAttachments((prev) => {
               const next: CanvasAudioAttachment[] = [
@@ -1373,6 +1438,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
                   x: 24 + (prev.length * 18) % 90,
                   y: 120 + (prev.length * 76) % 260,
                   width: 270,
+                  height: 56,
                   rotation: 0,
                   playbackRate: 1,
                   layer: 'foreground',
@@ -1519,6 +1585,44 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
             setSelectedCanvasImgId(newId);
             setSelectedCanvasAudioId(null);
             setRawMediaStudioImage(null);
+          }}
+        />
+      )}
+
+      {/* Media Picker Audio Studio Modal (Bitrate, Audio Codec, Mono/Stereo Channels, Sampling Rate) */}
+      {rawMediaStudioAudio && (
+        <MediaAudioStudioModal
+          audioDataUrl={rawMediaStudioAudio.dataUrl}
+          audioFileName={rawMediaStudioAudio.fileName}
+          initialFormat={rawMediaStudioAudio.format}
+          onCancel={() => setRawMediaStudioAudio(null)}
+          onConfirm={(processedDataUrl, finalFileName, format, durationSec) => {
+            const newId = `aud_${Date.now()}`;
+            setAudioAttachments((prev) => {
+              const next: CanvasAudioAttachment[] = [
+                ...prev,
+                {
+                  id: newId,
+                  name: finalFileName,
+                  format,
+                  dataUrl: processedDataUrl,
+                  durationSec,
+                  createdAt: Date.now(),
+                  x: 24 + (prev.length * 18) % 90,
+                  y: 120 + (prev.length * 76) % 260,
+                  width: 270,
+                  height: 56,
+                  rotation: 0,
+                  playbackRate: 1,
+                  layer: 'foreground',
+                },
+              ];
+              pushCanvasSnapshot({ audioAttachments: next });
+              return next;
+            });
+            setSelectedCanvasAudioId(newId);
+            setSelectedCanvasImgId(null);
+            setRawMediaStudioAudio(null);
           }}
         />
       )}
