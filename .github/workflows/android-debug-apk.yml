@@ -267,31 +267,31 @@ jobs:
               }
 
               private void startNativeAudioRecordLoop() {
-                  isRecording = true;
-                  recordingStartedAtMs = System.currentTimeMillis();
+                  try {
+                      int channelConfig = AudioFormat.CHANNEL_IN_MONO;
+                      int audioEncoding = AudioFormat.ENCODING_PCM_16BIT;
+                      int minBufSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioEncoding);
+                      if (minBufSize <= 0) {
+                          sampleRate = 44100;
+                          minBufSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioEncoding);
+                      }
+                      final int bufferSize = Math.max(minBufSize * 2, 8192);
 
-                  recordingThread = new Thread(() -> {
-                      try {
-                          int channelConfig = AudioFormat.CHANNEL_IN_MONO;
-                          int audioEncoding = AudioFormat.ENCODING_PCM_16BIT;
-                          int minBufSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioEncoding);
-                          if (minBufSize <= 0) {
-                              sampleRate = 44100;
-                              minBufSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioEncoding);
-                          }
-                          final int bufferSize = Math.max(minBufSize * 2, 8192);
+                      audioRecord = new AudioRecord(
+                          MediaRecorder.AudioSource.MIC,
+                          sampleRate,
+                          channelConfig,
+                          audioEncoding,
+                          bufferSize
+                      );
 
-                          audioRecord = new AudioRecord(
-                              MediaRecorder.AudioSource.MIC,
-                              sampleRate,
-                              channelConfig,
-                              audioEncoding,
-                              bufferSize
-                          );
+                      final File wavFile = new File(getFilesDir(), "likkho_active_mic_recording.wav");
+                      isRecording = true;
+                      recordingStartedAtMs = System.currentTimeMillis();
 
-                          final File wavFile = new File(getFilesDir(), "likkho_active_mic_recording.wav");
-                          audioRecord.startRecording();
+                      audioRecord.startRecording();
 
+                      recordingThread = new Thread(() -> {
                           try (FileOutputStream fos = new FileOutputStream(wavFile)) {
                               fos.write(new byte[44]);
                               byte[] buffer = new byte[bufferSize];
@@ -307,12 +307,12 @@ jobs:
                               fos.flush();
                               writeWavHeader(wavFile, totalPcmBytes, sampleRate, 1, 16);
                               latestFinishedFilePath = wavFile.getAbsolutePath();
-                          }
-                      } catch (Exception e) {
-                          isRecording = false;
-                      }
-                  }, "LikkhoNativeMicThread");
-                  recordingThread.start();
+                          } catch (Exception ignored) {}
+                      }, "LikkhoNativeMicThread");
+                      recordingThread.start();
+                  } catch (Exception e) {
+                      isRecording = false;
+                  }
               }
 
               private void writeWavHeader(File file, long totalAudioLen, long longSampleRate, int channels, int bitsPerSample) {
@@ -935,8 +935,6 @@ jobs:
               }
 
               private void startNativeMicServiceInternal(int sampleRate) {
-                  MicForegroundService.isRecording = true;
-                  MicForegroundService.recordingStartedAtMs = System.currentTimeMillis();
                   Intent serviceIntent = new Intent(MainActivity.this, MicForegroundService.class);
                   serviceIntent.setAction(MicForegroundService.ACTION_START);
                   serviceIntent.putExtra("sampleRate", sampleRate);

@@ -20,24 +20,13 @@
     <script>
       (function () {
         try {
-          var savedTheme = localStorage.getItem('wikilog_theme_mode_v2') || (localStorage.getItem('wikilog_dark_theme_v1') === 'true' ? 'dark_charcoal' : 'system');
-          var isSystemDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-          var effective = savedTheme === 'system' ? (isSystemDark ? 'dark_charcoal' : 'light') : savedTheme;
-          var bgMap = {
-            light: '#ffffff',
-            dark_charcoal: '#101418',
-            amoled: '#000000',
-            grayscale: '#e5e7eb',
-            eink: '#f6f3e9',
-            tinted_cool: '#eef3f9',
-            tinted_warm: '#f9f2ea'
-          };
-          var bg = bgMap[effective] || '#ffffff';
-          document.documentElement.setAttribute('data-theme', effective);
-          if (effective === 'dark_charcoal' || effective === 'amoled') {
+          var isDark = localStorage.getItem('wikilog_dark_theme_v1') === 'true';
+          if (isDark) {
             document.documentElement.classList.add('dark');
+            document.documentElement.style.backgroundColor = '#101418';
+          } else {
+            document.documentElement.style.backgroundColor = '#ffffff';
           }
-          document.documentElement.style.backgroundColor = bg;
           if ('serviceWorker' in navigator) {
             navigator.serviceWorker.getRegistrations().then(function (regs) {
               for (var i = 0; i < regs.length; i++) {

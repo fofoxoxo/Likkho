@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import {
   ArrowLeft,
-  Palette,
+  Moon,
+  Sun,
   KeyRound,
   FolderLock,
   ChevronRight,
@@ -11,14 +12,13 @@ import {
   Fingerprint,
 } from 'lucide-react';
 import {
-  AppThemeMode,
   AudioFormatOption,
   MicRecordingSettings,
 } from '../utils/cryptoVault';
 
 interface SettingsPageProps {
-  themeMode: AppThemeMode;
-  onChangeThemeMode: (mode: AppThemeMode) => void;
+  darkMode: boolean;
+  onToggleDarkMode: () => void;
   savedPasscode: string | null;
   onUpdatePasscode: (newPasscode: string | null) => void;
   biometricsEnabled: boolean;
@@ -28,80 +28,6 @@ interface SettingsPageProps {
   micSettings: MicRecordingSettings;
   onUpdateMicSettings: (next: MicRecordingSettings) => void;
 }
-
-export const THEME_OPTIONS: {
-  id: AppThemeMode;
-  label: string;
-  desc: string;
-  bgPreview: string;
-  surfacePreview: string;
-  textPreview: string;
-}[] = [
-  {
-    id: 'system',
-    label: 'System Default',
-    desc: 'Follows your Android OS Light / Dark setting automatically',
-    bgPreview: '#ffffff',
-    surfacePreview: '#101418',
-    textPreview: '#202122',
-  },
-  {
-    id: 'light',
-    label: 'Classic Light',
-    desc: 'Clean Wikipedia paper white',
-    bgPreview: '#ffffff',
-    surfacePreview: '#f8f9fa',
-    textPreview: '#202122',
-  },
-  {
-    id: 'amoled',
-    label: 'Pure High-Contrast (AMOLED)',
-    desc: 'True #000000 pitch black with crisp white text',
-    bgPreview: '#000000',
-    surfacePreview: '#0a0a0a',
-    textPreview: '#ffffff',
-  },
-  {
-    id: 'dark_charcoal',
-    label: 'Dark Charcoal (Soft Dark)',
-    desc: 'Low-glare charcoal slate for comfortable night writing',
-    bgPreview: '#101418',
-    surfacePreview: '#1a1f24',
-    textPreview: '#eaecf0',
-  },
-  {
-    id: 'grayscale',
-    label: 'Grayscale (Multi-Shade Gray)',
-    desc: 'Balanced neutral multi-shade monochrome gray',
-    bgPreview: '#e5e7eb',
-    surfacePreview: '#d1d5db',
-    textPreview: '#111827',
-  },
-  {
-    id: 'eink',
-    label: 'E-Ink Paperwhite',
-    desc: 'Matte warm paperwhite reading surface with ink contrast',
-    bgPreview: '#f6f3e9',
-    surfacePreview: '#ece7d8',
-    textPreview: '#1c1a17',
-  },
-  {
-    id: 'tinted_cool',
-    label: 'Tinted Monochrome (Cool)',
-    desc: 'Softnordic cool slate-blue monochrome tint',
-    bgPreview: '#eef3f9',
-    surfacePreview: '#e1eaf4',
-    textPreview: '#132235',
-  },
-  {
-    id: 'tinted_warm',
-    label: 'Tinted Monochrome (Warm)',
-    desc: 'Warm sepia parchment monochrome tint',
-    bgPreview: '#f9f2ea',
-    surfacePreview: '#f0e4d6',
-    textPreview: '#2b1d10',
-  },
-];
 
 const AUDIO_FORMATS: { id: AudioFormatOption; label: string }[] = [
   { id: 'wav', label: '.wav' },
@@ -130,8 +56,8 @@ const BIT_RATES: { value: MicRecordingSettings['bitRate']; label: string }[] = [
 ];
 
 export const SettingsPage: React.FC<SettingsPageProps> = ({
-  themeMode,
-  onChangeThemeMode,
+  darkMode,
+  onToggleDarkMode,
   savedPasscode,
   onUpdatePasscode,
   biometricsEnabled,
@@ -225,75 +151,42 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           </div>
         )}
 
-        {/* 1. App Themes Selector */}
-        <section className="border border-[var(--wiki-border)] bg-[var(--wiki-bg)] p-4 space-y-3">
-          <div className="flex items-center gap-2.5 border-b border-[var(--wiki-hairline)] pb-3">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center border border-[var(--wiki-border)] bg-[var(--wiki-surface)]">
-              <Palette className="h-4 w-4 text-[#3366cc]" />
-            </div>
-            <div>
-              <h2 className="font-wiki-serif text-base font-bold">
-                App Theme
-              </h2>
-              <p className="text-xs text-[var(--wiki-muted)]">
-                Choose your preferred reading &amp; writing color palette
-              </p>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            {THEME_OPTIONS.map((t) => {
-              const isSelected = themeMode === t.id;
-              return (
-                <button
-                  key={t.id}
-                  type="button"
-                  onClick={() => onChangeThemeMode(t.id)}
-                  className={`flex items-center justify-between gap-3 border p-3 text-left transition-colors ${
-                    isSelected
-                      ? 'border-[#3366cc] bg-[var(--wiki-surface)] ring-1 ring-[#3366cc]'
-                      : 'border-[var(--wiki-border)] bg-[var(--wiki-bg)] hover:bg-[var(--wiki-surface)]'
-                  }`}
-                >
-                  <div className="flex items-center gap-3 min-w-0">
-                    {/* Swatch Preview */}
-                    <div className="flex h-8 w-8 shrink-0 overflow-hidden border border-[var(--wiki-border)]">
-                      {t.id === 'system' ? (
-                        <>
-                          <span className="h-full w-1/2 bg-[#ffffff]" />
-                          <span className="h-full w-1/2 bg-[#101418]" />
-                        </>
-                      ) : (
-                        <span
-                          className="flex h-full w-full items-center justify-center font-wiki-serif text-xs font-bold"
-                          style={{
-                            backgroundColor: t.bgPreview,
-                            color: t.textPreview,
-                          }}
-                        >
-                          Aa
-                        </span>
-                      )}
-                    </div>
-                    <div className="min-w-0">
-                      <div className="font-wiki-serif text-sm font-bold text-[var(--wiki-text)] truncate">
-                        {t.label}
-                      </div>
-                      <div className="text-[11px] text-[var(--wiki-muted)] line-clamp-1">
-                        {t.desc}
-                      </div>
-                    </div>
-                  </div>
-                  {isSelected && (
-                    <Check className="h-4 w-4 shrink-0 text-[#3366cc]" />
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        </section>
-
         <section className="border border-[var(--wiki-border)] bg-[var(--wiki-bg)] divide-y divide-[var(--wiki-hairline)]">
+          {/* 1. Toggle Light / Dark Theme */}
+          <button
+            type="button"
+            onClick={onToggleDarkMode}
+            className="flex w-full items-center justify-between px-4 py-4 text-left hover:bg-[var(--wiki-surface)] transition-colors"
+          >
+            <div className="flex items-center gap-3.5">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center border border-[var(--wiki-border)] bg-[var(--wiki-surface)]">
+                {darkMode ? (
+                  <Moon className="h-5 w-5 text-[#6699ff]" />
+                ) : (
+                  <Sun className="h-5 w-5 text-[#ac6600]" />
+                )}
+              </div>
+              <div>
+                <div className="font-wiki-serif text-base font-bold">
+                  Dark Theme
+                </div>
+                <div className="text-xs text-[var(--wiki-muted)]">
+                  {darkMode ? 'Dark Mode' : 'Light Mode'}
+                </div>
+              </div>
+            </div>
+
+            <div
+              className={`flex h-6 w-11 shrink-0 items-center rounded-full border p-0.5 transition-colors ${
+                darkMode
+                  ? 'border-[#3366cc] bg-[#3366cc] justify-end'
+                  : 'border-[var(--wiki-border)] bg-[var(--wiki-surface)] justify-start'
+              }`}
+            >
+              <span className="h-4 w-4 rounded-full bg-white shadow-2xs" />
+            </div>
+          </button>
+
           {/* 2. Set Passcode */}
           <button
             type="button"
