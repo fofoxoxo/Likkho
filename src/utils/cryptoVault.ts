@@ -17,9 +17,6 @@ export interface CanvasDraggableImage {
   opacity: number;
   rotation?: number;
   layer?: 'foreground' | 'background';
-  isGif?: boolean;
-  pausedFrameDataUrl?: string;
-  isPlaying?: boolean;
 }
 
 export interface CanvasAudioAttachment {

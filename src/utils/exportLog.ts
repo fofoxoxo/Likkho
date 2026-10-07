@@ -33,7 +33,6 @@ declare global {
     __onLikkhoSafBackupResult?: (success: boolean, message?: string) => void;
     __onLikkhoSafRestoreResult?: (success: boolean, payload?: string) => void;
     __onLikkhoSafFolderSelected?: (folderName: string) => void;
-    __onLikkhoKeyboardGifCommitted?: (dataUrl: string, mimeType: string) => void;
   }
 }
 

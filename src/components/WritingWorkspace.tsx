@@ -18,8 +18,6 @@ import {
   Unlock,
   X,
   Gauge,
-  Play,
-  Square,
   ArrowUp,
   ArrowDown,
   ArrowRight,
@@ -79,46 +77,6 @@ function generateSpoilerSymbolMask(text: string): string {
     out += SPOILER_MASK_SYMBOLS[i % SPOILER_MASK_SYMBOLS.length];
   }
   return out;
-}
-
-function captureFirstFrameFromImageOrGif(dataUrl: string): Promise<{
-  pausedFrameUrl: string;
-  width: number;
-  height: number;
-}> {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => {
-      const w = Math.min(220, Math.max(80, img.naturalWidth || img.width || 180));
-      const h = Math.round(
-        (w * (img.naturalHeight || img.height || 180)) /
-          (img.naturalWidth || img.width || 180)
-      );
-      try {
-        const canvas = document.createElement('canvas');
-        canvas.width = img.naturalWidth || img.width || 180;
-        canvas.height = img.naturalHeight || img.height || 180;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.drawImage(img, 0, 0);
-          resolve({
-            pausedFrameUrl: canvas.toDataURL('image/png'),
-            width: w,
-            height: h,
-          });
-          return;
-        }
-      } catch {
-        // fallback
-      }
-      resolve({ pausedFrameUrl: dataUrl, width: w, height: h });
-    };
-    img.onerror = () => {
-      resolve({ pausedFrameUrl: dataUrl, width: 180, height: 180 });
-    };
-    img.src = dataUrl;
-  });
 }
 
 function stripHtmlToSingleLine(html: string): string {
@@ -229,7 +187,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     format: AudioFormatOption;
   } | null>(null);
 
-  // Free-dragging + 2-finger pinch resize & rotate state for Canvas Images & GIFs
+  // Free-dragging + 2-finger pinch resize & rotate state for Canvas Images
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [dragOffset, setDragOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [selectedCanvasImgId, setSelectedCanvasImgId] = useState<string | null>(null);
@@ -263,52 +221,6 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
   const editorRef = useRef<HTMLDivElement | null>(null);
   const canvasContainerRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-
-  // Insert an animated GIF (from Android Gboard OnCommitContentListener or web keyboard paste/drop) onto Canvas
-  const insertGifOnCanvas = async (gifDataUrl: string) => {
-    const { pausedFrameUrl, width, height } = await captureFirstFrameFromImageOrGif(
-      gifDataUrl
-    );
-    const newId = `gif_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-    setCanvasImages((prev) => {
-      const next: CanvasDraggableImage[] = [
-        ...prev,
-        {
-          id: newId,
-          dataUrl: gifDataUrl,
-          pausedFrameDataUrl: pausedFrameUrl,
-          isGif: true,
-          isPlaying: true,
-          x: 28 + (prev.length * 18) % 100,
-          y: 52 + (prev.length * 24) % 140,
-          width,
-          height,
-          opacity: 1,
-          rotation: 0,
-          layer: 'foreground',
-        },
-      ];
-      pushCanvasSnapshot({ canvasImages: next });
-      return next;
-    });
-    setSelectedCanvasImgId(newId);
-    setSelectedCanvasAudioId(null);
-  };
-
-  // Listen for Android Gboard / Keyboard GIFs committed via InputConnectionCompat.OnCommitContentListener
-  useEffect(() => {
-    window.__onLikkhoKeyboardGifCommitted = (dataUrl: string) => {
-      if (!dataUrl || isReadingMode) return;
-      insertGifOnCanvas(dataUrl);
-      // Keep keyboard focused smoothly without disrupting typing behavior
-      if (editorRef.current && document.activeElement !== editorRef.current) {
-        editorRef.current.focus({ preventScroll: true });
-      }
-    };
-    return () => {
-      window.__onLikkhoKeyboardGifCommitted = undefined;
-    };
-  });
 
   // Populate initial HTML into contentEditable once on mount & initialize history stack
   useEffect(() => {
@@ -562,22 +474,6 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     if (!nativeEv || !editorRef.current) return;
     const inputType = nativeEv.inputType || '';
 
-    // Check if an image/GIF is being inserted by a web/Android soft keyboard via beforeinput
-    if (nativeEv.dataTransfer && nativeEv.dataTransfer.files?.length > 0) {
-      const file = nativeEv.dataTransfer.files[0];
-      if (file.type === 'image/gif' || file.name.toLowerCase().endsWith('.gif')) {
-        e.preventDefault();
-        const reader = new FileReader();
-        reader.onload = () => {
-          if (typeof reader.result === 'string') {
-            insertGifOnCanvas(reader.result);
-          }
-        };
-        reader.readAsDataURL(file);
-        return;
-      }
-    }
-
     const sel = window.getSelection();
     if (!sel || sel.rangeCount === 0) return;
     const range = sel.getRangeAt(0);
@@ -721,30 +617,6 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
 
       lastValidHtmlWithSpoilersRef.current = editorRef.current.innerHTML;
       pushCanvasSnapshot();
-    }
-  };
-
-  // Handle Paste inside Editor: intercept GIFs pasted from keyboard/clipboard so they become interactive Canvas GIFs
-  const handleEditorPaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
-    if (isReadingMode) return;
-    const items = e.clipboardData?.items;
-    if (!items) return;
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
-      if (item.type === 'image/gif') {
-        const file = item.getAsFile();
-        if (file) {
-          e.preventDefault();
-          const reader = new FileReader();
-          reader.onload = () => {
-            if (typeof reader.result === 'string') {
-              insertGifOnCanvas(reader.result);
-            }
-          };
-          reader.readAsDataURL(file);
-          return;
-        }
-      }
     }
   };
 
@@ -993,7 +865,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     setSpoilerUnlockError(null);
   };
 
-  // Pointer drag + 2-finger pinch resize & rotate handlers for Canvas Images & GIFs (active in Edit Mode)
+  // Pointer drag + 2-finger pinch resize & rotate handlers for Canvas Images (active in Edit Mode)
   const handleStartDragImage = (
     e: React.PointerEvent<HTMLDivElement>,
     img: CanvasDraggableImage
@@ -1269,43 +1141,10 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
         </div>
       )}
 
-      {/* Selected Canvas Image / GIF Control Bar: Resize (-/+), Rotate (Left/Right), Play/Stop (for GIFs), Layer (Behind Text / Over Text), Delete */}
+      {/* Selected Canvas Image Control Bar: Resize (-/+), Rotate (Left/Right), Layer (Behind Text / Over Text), Delete */}
       {selectedCanvasImage && (
         <div className="relative z-30 flex flex-wrap items-center justify-between gap-2 border-b border-[#3366cc] bg-[var(--wiki-surface)] px-3 py-1.5 text-xs">
           <div className="flex items-center gap-1.5 overflow-x-auto">
-            {selectedCanvasImage.isGif && (
-              <button
-                type="button"
-                onClick={() =>
-                  updateCanvasImagesWithHistory((prev) =>
-                    prev.map((c) =>
-                      c.id === selectedCanvasImage.id
-                        ? { ...c, isPlaying: c.isPlaying === false ? true : false }
-                        : c
-                    )
-                  )
-                }
-                className={`flex h-7 items-center gap-1 border px-2.5 font-semibold transition-colors ${
-                  selectedCanvasImage.isPlaying === false
-                    ? 'border-[#14866d] bg-[#14866d] text-white'
-                    : 'border-[#b32424] bg-[#b32424] text-white'
-                }`}
-                title={selectedCanvasImage.isPlaying === false ? 'Play GIF' : 'Stop GIF'}
-              >
-                {selectedCanvasImage.isPlaying === false ? (
-                  <>
-                    <Play className="h-3.5 w-3.5 fill-current" />
-                    <span>Play GIF</span>
-                  </>
-                ) : (
-                  <>
-                    <Square className="h-3 w-3 fill-current" />
-                    <span>Stop GIF</span>
-                  </>
-                )}
-              </button>
-            )}
-
             <button
               type="button"
               onClick={() =>
@@ -1396,7 +1235,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
                   ? 'border-[#3366cc] bg-[#3366cc] text-white'
                   : 'border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-text)] hover:border-[#3366cc]'
               }`}
-              title="Toggle whether image/GIF stays behind text or in front of text"
+              title="Toggle whether image stays behind text or in front of text"
             >
               <Layers className="h-3.5 w-3.5" />
               <span>
@@ -1417,7 +1256,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
                 setSelectedCanvasImgId(null);
               }}
               className="flex h-7 items-center gap-1 border border-[#b32424]/40 bg-[#b32424]/10 px-2 font-semibold text-[#b32424]"
-              title="Remove image/GIF"
+              title="Remove image"
             >
               <Trash2 className="h-3.5 w-3.5" />
             </button>
@@ -1730,15 +1569,11 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
             }
           }}
         >
-          {/* Free-Draggable, Pinch-Resizable & Pinch-Rotatable Images & GIFs Layer on Canvas */}
+          {/* Free-Draggable, Pinch-Resizable & Pinch-Rotatable Images Layer on Canvas */}
           {canvasImages.map((img) => {
             const isSelected = !isReadingMode && selectedCanvasImgId === img.id;
             const isBehindText = img.layer === 'background';
             const computedZIndex = isSelected ? 25 : isBehindText ? 5 : 20;
-            const displaySrc =
-              img.isGif && img.isPlaying === false && img.pausedFrameDataUrl
-                ? img.pausedFrameDataUrl
-                : img.dataUrl;
 
             return (
               <div
@@ -1771,17 +1606,12 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
                 }`}
               >
                 <img
-                  src={displaySrc}
-                  alt={img.isGif ? 'Canvas GIF' : 'Canvas media'}
+                  src={img.dataUrl}
+                  alt="Canvas media"
                   referrerPolicy="no-referrer"
                   draggable={false}
                   className="block h-auto w-full pointer-events-none"
                 />
-                {img.isGif && img.isPlaying === false && (
-                  <span className="pointer-events-none absolute bottom-1 right-1 bg-black/75 px-1.5 py-0.5 font-wiki-mono text-[9px] font-bold text-white">
-                    GIF PAUSED
-                  </span>
-                )}
               </div>
             );
           })}
@@ -1810,7 +1640,6 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
               onInput={handleEditorInput}
               onCopy={(e) => handleEditorCopyOrCut(e, false)}
               onCut={(e) => handleEditorCopyOrCut(e, true)}
-              onPaste={handleEditorPaste}
               onClick={(e) => {
                 handleEditorClick(e);
               }}
@@ -1846,7 +1675,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
                   return;
                 }
 
-                // Check if user double-clicked over a background-layer Image/GIF
+                // Check if user double-clicked over a background-layer Image
                 const hitBgImg = canvasImages.find(
                   (img) =>
                     img.layer === 'background' &&
@@ -1886,14 +1715,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
               canvasBgOpacity: opacity,
             });
           }}
-          onOpenMediaImageStudio={(rawDataUrl) => {
-            // If user picked an animated GIF from Media Picker, preserve GIF animation & Play/Stop support!
-            if (rawDataUrl.startsWith('data:image/gif')) {
-              insertGifOnCanvas(rawDataUrl);
-            } else {
-              setRawMediaStudioImage(rawDataUrl);
-            }
-          }}
+          onOpenMediaImageStudio={(rawDataUrl) => setRawMediaStudioImage(rawDataUrl)}
           onOpenMediaAudioStudio={(rawAudioDataUrl, fileName, ext) => {
             const validExts: AudioFormatOption[] = [
               'wav',
