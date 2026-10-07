@@ -30,7 +30,7 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
         with:
-          packages: 'cmdline-tools;latest platform-tools build-tools;34.0.0'
+          packages: 'cmdline-tools;latest platform-tools platforms;android-35 build-tools;35.0.0 build-tools;34.0.0'
 
       - name: Install Dependencies & Build Web App
         run: |
@@ -48,12 +48,16 @@ jobs:
           fi
           npx cap sync android
 
-      - name: Configure Modern targetSdkVersion 34, SAF (.likkho_backups + .nomedia) & Microphone Foreground Service
+      - name: Configure compileSdk 35, targetSdk 34, SAF (.likkho_backups + .nomedia) & Microphone Foreground Service
         run: |
-          # Upgrade to modern compileSdkVersion = 34 & targetSdkVersion = 34 so Google Play Protect and Android 14/15 NEVER show "Unsafe App / Built for older version of Android" warnings!
+          # Set compileSdkVersion = 35 (required by androidx.core:core-ktx:1.15.0) while keeping targetSdkVersion = 34 and minSdkVersion untouched
           if [ -f android/variables.gradle ]; then
-            sed -i 's/compileSdkVersion = [0-9]*/compileSdkVersion = 34/g' android/variables.gradle || true
+            sed -i 's/compileSdkVersion = [0-9]*/compileSdkVersion = 35/g' android/variables.gradle || true
             sed -i 's/targetSdkVersion = [0-9]*/targetSdkVersion = 34/g' android/variables.gradle || true
+          fi
+          if [ -f android/app/build.gradle ]; then
+            sed -i 's/compileSdk [0-9]*/compileSdk 35/g' android/app/build.gradle || true
+            sed -i 's/compileSdkVersion [0-9]*/compileSdkVersion 35/g' android/app/build.gradle || true
           fi
 
           MANIFEST="android/app/src/main/AndroidManifest.xml"
