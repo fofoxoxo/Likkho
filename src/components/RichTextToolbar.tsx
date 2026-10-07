@@ -1183,37 +1183,43 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
         const wavBlob = new Blob([bytes], { type: 'audio/wav' });
         const dataUrl = await finalizeRecordedAudioToDataUrl(wavBlob, micSettings);
 
-        const timeLabel = new Date().toLocaleTimeString('en-IN', {
+        const nowMs = Date.now();
+        const stampLabel = new Date(nowMs).toLocaleString('en-IN', {
+          day: '2-digit',
+          month: 'short',
+          year: 'numeric',
           hour: '2-digit',
           minute: '2-digit',
-          second: '2-digit',
           hour12: true,
         });
 
         onAddAudioAttachment({
-          id: `rec_${Date.now()}`,
-          name: `Voice Recording (${timeLabel}).${micSettings.format}`,
+          id: `rec_${nowMs}`,
+          name: `Voice (${stampLabel}).${micSettings.format}`,
           format: micSettings.format,
           dataUrl,
           durationSec: Math.max(1, durationSec || 1),
-          createdAt: Date.now(),
+          createdAt: nowMs,
         });
         showBriefHint(`Saved voice recording (.${micSettings.format})`);
       } catch {
         // fallback direct wav data url
-        const timeLabel = new Date().toLocaleTimeString('en-IN', {
+        const nowMs = Date.now();
+        const stampLabel = new Date(nowMs).toLocaleString('en-IN', {
+          day: '2-digit',
+          month: 'short',
+          year: 'numeric',
           hour: '2-digit',
           minute: '2-digit',
-          second: '2-digit',
           hour12: true,
         });
         onAddAudioAttachment({
-          id: `rec_${Date.now()}`,
-          name: `Voice Recording (${timeLabel}).wav`,
+          id: `rec_${nowMs}`,
+          name: `Voice (${stampLabel}).wav`,
           format: 'wav',
           dataUrl: `data:audio/wav;base64,${base64Wav}`,
           durationSec: Math.max(1, durationSec || 1),
-          createdAt: Date.now(),
+          createdAt: nowMs,
         });
         showBriefHint('Saved voice recording (.wav)');
       }
@@ -1356,20 +1362,23 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
         });
         const dataUrl = await finalizeRecordedAudioToDataUrl(rawBlob, micSettings);
 
-        const timeLabel = new Date().toLocaleTimeString('en-IN', {
+        const nowMs = Date.now();
+        const stampLabel = new Date(nowMs).toLocaleString('en-IN', {
+          day: '2-digit',
+          month: 'short',
+          year: 'numeric',
           hour: '2-digit',
           minute: '2-digit',
-          second: '2-digit',
           hour12: true,
         });
 
         onAddAudioAttachment({
-          id: `rec_${Date.now()}`,
-          name: `Voice Recording (${timeLabel}).${micSettings.format}`,
+          id: `rec_${nowMs}`,
+          name: `Voice (${stampLabel}).${micSettings.format}`,
           format: micSettings.format,
           dataUrl,
           durationSec,
-          createdAt: Date.now(),
+          createdAt: nowMs,
         });
 
         if (recordStreamRef.current) {

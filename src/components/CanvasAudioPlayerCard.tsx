@@ -17,6 +17,22 @@ function formatAudioSeconds(sec: number): string {
   return `${String(mins).padStart(2, '0')}:${String(rem).padStart(2, '0')}`;
 }
 
+function formatAudioCreatedAtStamp(ms?: number): string {
+  const ts = ms && Number.isFinite(ms) ? ms : Date.now();
+  const d = new Date(ts);
+  const datePart = d.toLocaleDateString('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  });
+  const timePart = d.toLocaleTimeString('en-IN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+  });
+  return `${datePart} · ${timePart}`;
+}
+
 export const CanvasAudioPlayerCard: React.FC<CanvasAudioPlayerCardProps> = ({
   audio,
   isReadingMode,
@@ -98,9 +114,10 @@ export const CanvasAudioPlayerCard: React.FC<CanvasAudioPlayerCardProps> = ({
   const xPos = audio.x ?? 24;
   const yPos = audio.y ?? 140;
   const cardWidth = audio.width ?? 270;
-  const cardHeight = audio.height ?? 56;
+  const cardHeight = audio.height ?? 64;
   const rotationDeg = audio.rotation ?? 0;
   const effectiveDuration = duration > 0 ? duration : audio.durationSec || 1;
+  const createdAtLabel = formatAudioCreatedAtStamp(audio.createdAt);
 
   // Strictly ONLY Double-Tap activates editing tools on the Audio Player!
   // Triggered on pointerUp so inserting the toolbar row above the canvas NEVER causes a synthetic click on the underlying editor that closes the toolbar!
@@ -203,11 +220,14 @@ export const CanvasAudioPlayerCard: React.FC<CanvasAudioPlayerCardProps> = ({
             onChange={handleSeek}
             className="h-1.5 w-full cursor-pointer accent-white"
           />
-          <div className="flex items-center justify-between font-wiki-mono text-[10px] text-white/90">
-            <span className="truncate max-w-[110px]">{audio.name}</span>
+          <div className="flex items-center justify-between font-wiki-mono text-[10px] leading-tight text-white/95">
+            <span className="truncate max-w-[115px] font-semibold">{audio.name}</span>
             <span className="shrink-0">
               {formatAudioSeconds(currentTime)} / {formatAudioSeconds(effectiveDuration)}
             </span>
+          </div>
+          <div className="font-wiki-mono text-[9px] leading-tight text-white/85 truncate">
+            {createdAtLabel}
           </div>
         </div>
       </div>

@@ -239,7 +239,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
       x: a.x ?? 24 + (idx * 20) % 80,
       y: a.y ?? 140 + idx * 88,
       width: a.width ?? 270,
-      height: a.height ?? 56,
+      height: a.height ?? 64,
       rotation: a.rotation ?? 0,
       playbackRate: a.playbackRate ?? 1,
       layer: a.layer ?? 'foreground',
