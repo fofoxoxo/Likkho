@@ -25,6 +25,7 @@ declare global {
       isNativeMicRecordingActive?: () => boolean;
       getNativeMicRecordingSeconds?: () => number;
       setSystemBarsTheme?: (statusBarHex: string, navBarHex: string, isLightIcons: boolean) => void;
+      setAppPasscodeProtectionEnabled?: (enabled: boolean) => void;
     };
     __handleLikkhoAndroidBack?: () => string;
     __onLikkhoBiometricResult?: (success: boolean, message?: string) => void;

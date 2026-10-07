@@ -180,6 +180,9 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
   // Media Picker Image Studio state
   const [rawMediaStudioImage, setRawMediaStudioImage] = useState<string | null>(null);
 
+  // Canvas Background Image Studio state (Compression Format, Resolution, Quality, Bit Depth, Color Space, EXIF, Crop, Adjust & 22+ Filters)
+  const [rawBgStudioImage, setRawBgStudioImage] = useState<string | null>(null);
+
   // Media Picker Audio Studio state (Bitrate, Codec, Mono/Stereo Channels, Sampling Rate)
   const [rawMediaStudioAudio, setRawMediaStudioAudio] = useState<{
     dataUrl: string;
@@ -1794,6 +1797,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
               canvasBgOpacity: opacity,
             });
           }}
+          onOpenBgImageStudio={(rawBgDataUrl) => setRawBgStudioImage(rawBgDataUrl)}
           onOpenMediaImageStudio={(rawDataUrl) => setRawMediaStudioImage(rawDataUrl)}
           onOpenMediaAudioStudio={(rawAudioDataUrl, fileName, ext) => {
             const validExts: AudioFormatOption[] = [
@@ -1948,6 +1952,27 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
             setPfpDataUrl(croppedUrl);
             setRawSelectedImage(null);
             pushCanvasSnapshot({ pfpDataUrl: croppedUrl });
+          }}
+        />
+      )}
+
+      {/* Canvas Background Image Studio Modal (Same Compression, Resolution, Quality, Bit Depth, Color Space, EXIF, Crop, Transparency & Filters as Canvas Image) */}
+      {rawBgStudioImage && (
+        <MediaImageStudioModal
+          imageSrc={rawBgStudioImage}
+          onCancel={() => setRawBgStudioImage(null)}
+          onConfirm={(processedDataUrl, opacity) => {
+            const nextOpacity =
+              typeof opacity === 'number' && opacity > 0 && opacity < 1
+                ? opacity
+                : canvasBgOpacity;
+            setCanvasBgDataUrl(processedDataUrl);
+            setCanvasBgOpacity(nextOpacity);
+            pushCanvasSnapshot({
+              canvasBgDataUrl: processedDataUrl,
+              canvasBgOpacity: nextOpacity,
+            });
+            setRawBgStudioImage(null);
           }}
         />
       )}

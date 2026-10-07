@@ -63,6 +63,7 @@ interface RichTextToolbarProps {
   canvasBgDataUrl: string | null;
   canvasBgOpacity: number;
   onChangeCanvasBg: (dataUrl: string | null, opacity: number) => void;
+  onOpenBgImageStudio?: (rawBgImageDataUrl: string) => void;
   onOpenMediaImageStudio: (rawImageDataUrl: string) => void;
   onOpenMediaAudioStudio?: (
     rawAudioDataUrl: string,
@@ -160,6 +161,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
   canvasBgDataUrl,
   canvasBgOpacity,
   onChangeCanvasBg,
+  onOpenBgImageStudio,
   onOpenMediaImageStudio,
   onOpenMediaAudioStudio,
   onAddAudioAttachment,
@@ -1538,7 +1540,11 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     const reader = new FileReader();
     reader.onload = () => {
       if (typeof reader.result === 'string') {
-        onChangeCanvasBg(reader.result, canvasBgOpacity);
+        if (onOpenBgImageStudio) {
+          onOpenBgImageStudio(reader.result);
+        } else {
+          onChangeCanvasBg(reader.result, canvasBgOpacity);
+        }
       }
     };
     reader.readAsDataURL(file);

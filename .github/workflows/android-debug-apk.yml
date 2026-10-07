@@ -478,6 +478,7 @@ jobs:
 
               private static final String PREFS_NAME = "likkho_saf_prefs";
               private static final String KEY_SAF_TREE_URI = "saf_base_tree_uri";
+              private static final String KEY_PASSCODE_PROTECTED = "app_passcode_protection_enabled";
               private static final String HIDDEN_SUBFOLDER_NAME = ".likkho_backups";
               private static final String VAULT_FILENAME = "likkho_encrypted_vault.json";
               private static final String LEGACY_VAULT_FILENAME = "likkho_encrypted_vault.bak";
@@ -496,6 +497,8 @@ jobs:
 
               private int pendingSafOperation = SAF_OP_NONE;
               private String pendingBackupEnvelope = null;
+              private boolean isAppPasscodeProtected = false;
+              private android.view.View recentsPrivacyOverlayView = null;
 
               @Override
               public void onCreate(Bundle savedInstanceState) {
@@ -504,6 +507,13 @@ jobs:
 
                   // Configure seamless Android OS Status Bar & Navigation Bar colors from the very first frame (no top/bottom mismatched gaps)
                   applyWindowSystemBarsColor("#f8f9fa", "#ffffff", true);
+
+                  // Restore persisted App Passcode Protection state immediately on launch:
+                  // - If Passcode is enabled: sets FLAG_SECURE (blocks screenshots & screen recording on every page + blanks Recent Apps preview) + Android 13+ setRecentsScreenshotEnabled(false)
+                  // - If Passcode is NOT enabled: clears FLAG_SECURE so screenshots & screen recording are allowed
+                  SharedPreferences initPrefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+                  isAppPasscodeProtected = initPrefs.getBoolean(KEY_PASSCODE_PROTECTED, false);
+                  applyAppPasscodeProtection(isAppPasscodeProtected);
 
                   if (this.bridge != null && this.bridge.getWebView() != null) {
                       final WebView webView = this.bridge.getWebView();
@@ -584,9 +594,91 @@ jobs:
               public void onResume() {
                   super.onResume();
                   currentInstance = this;
+                  hideRecentsPrivacyShield();
                   if (!MicForegroundService.isRecording && MicForegroundService.latestFinishedFilePath != null) {
                       deliverFinishedNativeRecordingIfPossible(this);
                   }
+              }
+
+              @Override
+              public void onPause() {
+                  if (isAppPasscodeProtected) {
+                      showRecentsPrivacyShield();
+                  }
+                  super.onPause();
+              }
+
+              @Override
+              public void onWindowFocusChanged(boolean hasFocus) {
+                  super.onWindowFocusChanged(hasFocus);
+                  if (isAppPasscodeProtected) {
+                      if (!hasFocus) {
+                          showRecentsPrivacyShield();
+                      } else {
+                          hideRecentsPrivacyShield();
+                      }
+                  } else {
+                      hideRecentsPrivacyShield();
+                  }
+              }
+
+              private void showRecentsPrivacyShield() {
+                  runOnUiThread(() -> {
+                      try {
+                          android.view.Window window = getWindow();
+                          if (window == null) return;
+                          android.view.View decor = window.getDecorView();
+                          if (!(decor instanceof android.view.ViewGroup)) return;
+                          android.view.ViewGroup rootGroup = (android.view.ViewGroup) decor;
+                          if (recentsPrivacyOverlayView == null) {
+                              recentsPrivacyOverlayView = new android.view.View(MainActivity.this);
+                              recentsPrivacyOverlayView.setBackgroundColor(android.graphics.Color.BLACK);
+                              recentsPrivacyOverlayView.setLayoutParams(new android.view.ViewGroup.LayoutParams(
+                                  android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                                  android.view.ViewGroup.LayoutParams.MATCH_PARENT
+                              ));
+                          }
+                          if (recentsPrivacyOverlayView.getParent() == null) {
+                              rootGroup.addView(recentsPrivacyOverlayView);
+                          }
+                          recentsPrivacyOverlayView.setVisibility(android.view.View.VISIBLE);
+                          recentsPrivacyOverlayView.bringToFront();
+                      } catch (Exception ignored) {}
+                  });
+              }
+
+              private void hideRecentsPrivacyShield() {
+                  runOnUiThread(() -> {
+                      try {
+                          if (recentsPrivacyOverlayView != null) {
+                              recentsPrivacyOverlayView.setVisibility(android.view.View.GONE);
+                          }
+                      } catch (Exception ignored) {}
+                  });
+              }
+
+              private void applyAppPasscodeProtection(final boolean enabled) {
+                  isAppPasscodeProtected = enabled;
+                  getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                      .edit()
+                      .putBoolean(KEY_PASSCODE_PROTECTED, enabled)
+                      .apply();
+                  runOnUiThread(() -> {
+                      try {
+                          android.view.Window window = getWindow();
+                          if (window != null) {
+                              if (enabled) {
+                                  window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE);
+                              } else {
+                                  window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE);
+                                  hideRecentsPrivacyShield();
+                              }
+                          }
+                          if (Build.VERSION.SDK_INT >= 33) {
+                              setRecentsScreenshotEnabled(!enabled);
+                          }
+                      } catch (Exception ignored) {}
+                  });
               }
 
               public static void deliverFinishedNativeRecordingIfPossible(Context ctx) {
@@ -946,6 +1038,10 @@ jobs:
               }
 
               public class LikkhoAndroidBridge {
+                  @JavascriptInterface
+                  public void setAppPasscodeProtectionEnabled(boolean enabled) {
+                      applyAppPasscodeProtection(enabled);
+                  }
                   @JavascriptInterface
                   public void setSystemBarsTheme(String statusBarHex, String navBarHex, boolean isLightIcons) {
                       applyWindowSystemBarsColor(statusBarHex, navBarHex, isLightIcons);

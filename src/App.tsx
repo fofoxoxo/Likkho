@@ -224,7 +224,16 @@ export default function App() {
   } | null>(null);
 
   // Automatically lock the app whenever it is closed, backgrounded, or hidden (if passcode is set)
+  // AND dynamically toggle Android OS Anti-Screenshot / Anti-Screen-Recording (FLAG_SECURE) + Recent Apps Black/Blur Privacy Preview!
   useEffect(() => {
+    const isProtected = Boolean(savedPasscode);
+    if (
+      window.LikkhoNative &&
+      typeof window.LikkhoNative.setAppPasscodeProtectionEnabled === 'function'
+    ) {
+      window.LikkhoNative.setAppPasscodeProtectionEnabled(isProtected);
+    }
+
     if (!savedPasscode) return;
 
     const handleAppClosedOrBackgrounded = () => {
