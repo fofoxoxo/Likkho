@@ -52,12 +52,11 @@ jobs:
         run: |
           # Set compileSdkVersion = 35 (required by androidx.core:core-ktx:1.15.0) while keeping targetSdkVersion = 34 and minSdkVersion untouched
           if [ -f android/variables.gradle ]; then
-            sed -i 's/compileSdkVersion = [0-9]*/compileSdkVersion = 35/g' android/variables.gradle || true
-            sed -i 's/targetSdkVersion = [0-9]*/targetSdkVersion = 34/g' android/variables.gradle || true
+            sed -i 's/compileSdkVersion = [0-9][0-9]*/compileSdkVersion = 35/g' android/variables.gradle || true
+            sed -i 's/targetSdkVersion = [0-9][0-9]*/targetSdkVersion = 34/g' android/variables.gradle || true
           fi
           if [ -f android/app/build.gradle ]; then
-            sed -i 's/compileSdk [0-9]*/compileSdk 35/g' android/app/build.gradle || true
-            sed -i 's/compileSdkVersion [0-9]*/compileSdkVersion 35/g' android/app/build.gradle || true
+            sed -i 's/^[[:space:]]*compileSdk.*/    compileSdk 35/' android/app/build.gradle || true
           fi
 
           MANIFEST="android/app/src/main/AndroidManifest.xml"
