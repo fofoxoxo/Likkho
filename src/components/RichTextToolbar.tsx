@@ -619,7 +619,9 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
   };
 
   /**
-   * Selection-Scoped Text Color
+   * Selection-Scoped Text Color:
+   * - Wraps ONLY the selected text in `<span data-wiki-color="...">`.
+   * - Ensures unstyled boundary text nodes exist immediately before and after the colored span and places the cursor OUTSIDE the span after applying, so typing at the start or end of the word never bleeds the text color!
    */
   const applySelectionTextColor = (color: string) => {
     const range = restoreSavedSelection();
@@ -659,32 +661,49 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
       return;
     }
 
+    let targetSpan: HTMLElement;
     if (existingColorSpan && existingColorSpan.textContent === sel.toString()) {
       existingColorSpan.style.color = color;
       existingColorSpan.setAttribute('data-wiki-color', color);
+      targetSpan = existingColorSpan;
     } else {
       const span = document.createElement('span');
       span.style.color = color;
       span.setAttribute('data-wiki-color', color);
       span.appendChild(range.extractContents());
       range.insertNode(span);
+      targetSpan = span;
+    }
 
+    // Ensure unstyled text anchor nodes exist right before and right after `targetSpan`
+    // and move cursor outside `targetSpan` so typing after/before never continues the color
+    const parent = targetSpan.parentNode;
+    if (parent) {
+      if (!targetSpan.previousSibling || targetSpan.previousSibling.nodeType !== Node.TEXT_NODE) {
+        parent.insertBefore(document.createTextNode('\u200B'), targetSpan);
+      }
+      let afterNode = targetSpan.nextSibling;
+      if (!afterNode || afterNode.nodeType !== Node.TEXT_NODE) {
+        afterNode = document.createTextNode('\u200B');
+        parent.insertBefore(afterNode, targetSpan.nextSibling);
+      }
       const newRange = document.createRange();
-      newRange.selectNodeContents(span);
+      newRange.setStart(afterNode, (afterNode.textContent || '').startsWith('\u200B') ? 1 : 0);
+      newRange.collapse(true);
       sel.removeAllRanges();
       sel.addRange(newRange);
+      savedRangeRef.current = newRange.cloneRange();
     }
 
-    if (sel.rangeCount > 0) {
-      savedRangeRef.current = sel.getRangeAt(0).cloneRange();
-    }
     setShowColorPicker(null);
     checkActiveFormats();
     onContentChange();
   };
 
   /**
-   * Selection-Scoped Highlight (<mark>)
+   * Selection-Scoped Highlight (<mark>):
+   * - Wraps ONLY the selected text in `<mark>`.
+   * - Ensures unstyled boundary text nodes exist immediately before and after the highlight `<mark>` and places the cursor OUTSIDE `<mark>` after applying, so typing at the start or end of the word never bleeds the highlight!
    */
   const applySelectionHighlight = (color: string) => {
     const range = restoreSavedSelection();
@@ -724,8 +743,10 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
       return;
     }
 
+    let targetMark: HTMLElement;
     if (existingMark && existingMark.textContent === sel.toString()) {
       existingMark.style.backgroundColor = color;
+      targetMark = existingMark;
     } else {
       const mark = document.createElement('mark');
       mark.style.backgroundColor = color;
@@ -735,16 +756,29 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
       const contents = range.extractContents();
       mark.appendChild(contents);
       range.insertNode(mark);
+      targetMark = mark;
+    }
 
+    // Ensure unstyled text anchor nodes exist right before and right after `targetMark`
+    // and move cursor outside `targetMark` so typing after/before never continues the highlight
+    const parent = targetMark.parentNode;
+    if (parent) {
+      if (!targetMark.previousSibling || targetMark.previousSibling.nodeType !== Node.TEXT_NODE) {
+        parent.insertBefore(document.createTextNode('\u200B'), targetMark);
+      }
+      let afterNode = targetMark.nextSibling;
+      if (!afterNode || afterNode.nodeType !== Node.TEXT_NODE) {
+        afterNode = document.createTextNode('\u200B');
+        parent.insertBefore(afterNode, targetMark.nextSibling);
+      }
       const newRange = document.createRange();
-      newRange.selectNodeContents(mark);
+      newRange.setStart(afterNode, (afterNode.textContent || '').startsWith('\u200B') ? 1 : 0);
+      newRange.collapse(true);
       sel.removeAllRanges();
       sel.addRange(newRange);
+      savedRangeRef.current = newRange.cloneRange();
     }
 
-    if (sel.rangeCount > 0) {
-      savedRangeRef.current = sel.getRangeAt(0).cloneRange();
-    }
     setShowColorPicker(null);
     checkActiveFormats();
     onContentChange();

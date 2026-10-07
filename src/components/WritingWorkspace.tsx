@@ -469,6 +469,83 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     return false;
   };
 
+  /**
+   * If the collapsed cursor is at the VERY START or VERY END of a Text Color (`span[data-wiki-color]`)
+   * or Highlight (`<mark>`) element, step the cursor right outside that element before inserting text/space:
+   * - If cursor is in the MIDDLE of the colored/highlighted word, it stays inside so the color/highlight continues normally.
+   * - If cursor is at the start or end edge of the colored/highlighted word, typing a new word or space will NOT continue the color/highlight!
+   */
+  const escapeColorOrHighlightEdgeIfAtBoundary = (sel: Selection, range: Range) => {
+    if (!range.collapsed || !editorRef.current) return;
+
+    let outermostBoundaryEl: HTMLElement | null = null;
+    let boundarySide: 'start' | 'end' | null = null;
+
+    let cur: Node | null = range.startContainer;
+    while (cur && cur !== editorRef.current) {
+      if (cur.nodeType === Node.ELEMENT_NODE) {
+        const el = cur as HTMLElement;
+        const isColorOrMark =
+          el.tagName === 'MARK' || el.hasAttribute('data-wiki-color');
+
+        if (isColorOrMark) {
+          const preRange = document.createRange();
+          preRange.selectNodeContents(el);
+          preRange.setEnd(range.startContainer, range.startOffset);
+          const textBefore = (preRange.toString() || '').replace(/\u200B/g, '');
+
+          const postRange = document.createRange();
+          postRange.selectNodeContents(el);
+          postRange.setStart(range.startContainer, range.startOffset);
+          const textAfter = (postRange.toString() || '').replace(/\u200B/g, '');
+
+          if (textBefore.length === 0) {
+            outermostBoundaryEl = el;
+            boundarySide = 'start';
+          } else if (textAfter.length === 0) {
+            outermostBoundaryEl = el;
+            boundarySide = 'end';
+          } else {
+            // Cursor is strictly in the middle of this colored/highlighted word — keep style active!
+            return;
+          }
+        }
+      }
+      cur = cur.parentNode;
+    }
+
+    if (!outermostBoundaryEl || !boundarySide || !outermostBoundaryEl.parentNode) {
+      return;
+    }
+
+    const parent = outermostBoundaryEl.parentNode;
+    if (boundarySide === 'start') {
+      let prev = outermostBoundaryEl.previousSibling;
+      if (!prev || prev.nodeType !== Node.TEXT_NODE) {
+        prev = document.createTextNode('\u200B');
+        parent.insertBefore(prev, outermostBoundaryEl);
+      }
+      const nextRange = document.createRange();
+      const len = (prev.textContent || '').length;
+      nextRange.setStart(prev, len);
+      nextRange.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(nextRange);
+    } else {
+      let next = outermostBoundaryEl.nextSibling;
+      if (!next || next.nodeType !== Node.TEXT_NODE) {
+        next = document.createTextNode('\u200B');
+        parent.insertBefore(next, outermostBoundaryEl.nextSibling);
+      }
+      const nextRange = document.createRange();
+      const offset = (next.textContent || '').startsWith('\u200B') ? 1 : 0;
+      nextRange.setStart(next, offset);
+      nextRange.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(nextRange);
+    }
+  };
+
   const handleEditorBeforeInput = (e: React.FormEvent<HTMLDivElement>) => {
     const nativeEv = e.nativeEvent as InputEvent;
     if (!nativeEv || !editorRef.current) return;
@@ -494,6 +571,8 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
       // Prevent overwriting a selection that contains a spoiler span
       e.preventDefault();
       return;
+    } else if (range.collapsed && inputType.startsWith('insert')) {
+      escapeColorOrHighlightEdgeIfAtBoundary(sel, range);
     }
   };
 
