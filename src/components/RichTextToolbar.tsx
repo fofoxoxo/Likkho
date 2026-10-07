@@ -1271,14 +1271,19 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
       return;
     }
 
-    // Use Native Android Foreground Service AudioRecord when running in APK (survives Recent Apps clear + shows floating overlay badge)
+    // Immediately display the Active Mic Recorder Banner on tap so there is zero 4-5 second UI delay!
+    setIsRecording(true);
+    setRecordingSeconds(0);
+    if (recordTimerRef.current) window.clearInterval(recordTimerRef.current);
+
+    // Use Native Android Foreground Service AudioRecord when running in APK (survives Recent Apps clear + shows persistent Notification Bell)
     if (window.LikkhoNative && typeof window.LikkhoNative.startNativeMicRecording === 'function') {
+      const invokedAt = Date.now();
       window.LikkhoNative.startNativeMicRecording(micSettings.sampleRate, micSettings.bitRate);
-      setIsRecording(true);
-      setRecordingSeconds(0);
-      if (recordTimerRef.current) window.clearInterval(recordTimerRef.current);
       recordTimerRef.current = window.setInterval(() => {
+        // Give the Android ForegroundService a 2.5s grace window to spin up (or prompt permission) before checking active state
         if (
+          Date.now() - invokedAt > 2500 &&
           window.LikkhoNative?.isNativeMicRecordingActive &&
           !window.LikkhoNative.isNativeMicRecordingActive()
         ) {
@@ -1300,9 +1305,14 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
       }
 
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        setIsRecording(false);
         showBriefHint('Microphone recording is not supported in this browser.');
         return;
       }
+
+      recordTimerRef.current = window.setInterval(() => {
+        setRecordingSeconds((s) => s + 1);
+      }, 1000);
 
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -1370,12 +1380,12 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
       };
 
       recorder.start(1000);
-      setIsRecording(true);
-      setRecordingSeconds(0);
-      recordTimerRef.current = window.setInterval(() => {
-        setRecordingSeconds((s) => s + 1);
-      }, 1000);
     } catch {
+      if (recordTimerRef.current) {
+        window.clearInterval(recordTimerRef.current);
+        recordTimerRef.current = null;
+      }
+      setIsRecording(false);
       showBriefHint('Please allow Microphone permission in Android OS to record audio.');
     }
   };

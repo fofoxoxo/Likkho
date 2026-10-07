@@ -1,7 +1,8 @@
 @import "tailwindcss";
 
 @layer base {
-  :root {
+  :root,
+  [data-theme="light"] {
     --wiki-bg: #ffffff;
     --wiki-surface: #f8f9fa;
     --wiki-border: #a2a9b1;
@@ -16,7 +17,33 @@
     --font-mono-wiki: 'IBM Plex Mono', monospace;
   }
 
-  .dark {
+  /* Pure High-Contrast (AMOLED) */
+  [data-theme="amoled"] {
+    --wiki-bg: #000000;
+    --wiki-surface: #0a0a0a;
+    --wiki-border: #3a3a3a;
+    --wiki-hairline: #1f1f1f;
+    --wiki-text: #ffffff;
+    --wiki-muted: #b0b0b0;
+    --wiki-link: #66a3ff;
+    --wiki-link-hover: #99c2ff;
+  }
+
+  /* Grayscale (Multi-Shade Gray) */
+  [data-theme="grayscale"] {
+    --wiki-bg: #e5e7eb;
+    --wiki-surface: #d1d5db;
+    --wiki-border: #6b7280;
+    --wiki-hairline: #9ca3af;
+    --wiki-text: #111827;
+    --wiki-muted: #374151;
+    --wiki-link: #1f2937;
+    --wiki-link-hover: #000000;
+  }
+
+  /* Dark Charcoal (Soft Dark) */
+  .dark,
+  [data-theme="dark_charcoal"] {
     --wiki-bg: #101418;
     --wiki-surface: #1a1f24;
     --wiki-border: #3a4047;
@@ -25,6 +52,42 @@
     --wiki-muted: #9aa0a6;
     --wiki-link: #6699ff;
     --wiki-link-hover: #88b3ff;
+  }
+
+  /* E-Ink Paperwhite */
+  [data-theme="eink"] {
+    --wiki-bg: #f6f3e9;
+    --wiki-surface: #ece7d8;
+    --wiki-border: #8c8574;
+    --wiki-hairline: #d8d1c0;
+    --wiki-text: #1c1a17;
+    --wiki-muted: #575248;
+    --wiki-link: #264c80;
+    --wiki-link-hover: #1b365d;
+  }
+
+  /* Tinted Monochrome (Cool) */
+  [data-theme="tinted_cool"] {
+    --wiki-bg: #eef3f9;
+    --wiki-surface: #e1eaf4;
+    --wiki-border: #859bb5;
+    --wiki-hairline: #cad7e8;
+    --wiki-text: #132235;
+    --wiki-muted: #455c78;
+    --wiki-link: #1e4d8c;
+    --wiki-link-hover: #143563;
+  }
+
+  /* Tinted Monochrome (Warm) */
+  [data-theme="tinted_warm"] {
+    --wiki-bg: #f9f2ea;
+    --wiki-surface: #f0e4d6;
+    --wiki-border: #b3987d;
+    --wiki-hairline: #e2d1be;
+    --wiki-text: #2b1d10;
+    --wiki-muted: #695039;
+    --wiki-link: #7d4018;
+    --wiki-link-hover: #592c0f;
   }
 
   html, body {
@@ -39,6 +102,7 @@
     color: var(--wiki-text);
     font-family: var(--font-sans-wiki);
     -webkit-tap-highlight-color: transparent;
+    transition: background-color 0.15s ease, color 0.15s ease;
   }
 
   #root {
@@ -49,19 +113,18 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    animation: likkhoSmoothAppLaunch 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
-    will-change: opacity, transform;
+    animation: likkhoSmoothAppLaunch 0.16s cubic-bezier(0.2, 0.9, 0.3, 1) both;
   }
 }
 
 @keyframes likkhoSmoothAppLaunch {
   0% {
-    opacity: 0;
-    transform: translateY(4px) scale(0.992);
+    opacity: 0.92;
+    transform: translateY(2px);
   }
   100% {
     opacity: 1;
-    transform: translateY(0) scale(1);
+    transform: translateY(0);
   }
 }
 

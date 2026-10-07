@@ -17,6 +17,7 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import {
+  AppThemeMode,
   CustomFontItem,
   DiaryLog,
   MicRecordingSettings,
@@ -40,6 +41,7 @@ import { PasscodeScreen } from './components/PasscodeScreen';
 type PageRoute = 'home' | 'workspace' | 'settings' | 'backup';
 
 const STORAGE_LOGS_KEY = 'wikilog_in_app_logs_v1';
+const STORAGE_THEME_KEY = 'wikilog_theme_mode_v2';
 const STORAGE_DARK_KEY = 'wikilog_dark_theme_v1';
 const STORAGE_PIN_KEY = 'wikilog_passcode_v1';
 const STORAGE_BIO_KEY = 'wikilog_biometrics_enabled_v1';
@@ -47,6 +49,19 @@ const STORAGE_ENC_HASH_KEY = 'wikilog_encryption_key_hash_v1';
 const STORAGE_MIC_SETTINGS_KEY = 'wikilog_mic_settings_v1';
 const IDB_LOGS_KEY = 'active_diary_logs_with_media';
 const IDB_FONTS_KEY = 'active_custom_ttf_fonts';
+
+const THEME_BAR_PALETTE: Record<
+  Exclude<AppThemeMode, 'system'>,
+  { bg: string; surface: string; isDark: boolean }
+> = {
+  light: { bg: '#ffffff', surface: '#f8f9fa', isDark: false },
+  amoled: { bg: '#000000', surface: '#0a0a0a', isDark: true },
+  dark_charcoal: { bg: '#101418', surface: '#1a1f24', isDark: true },
+  grayscale: { bg: '#e5e7eb', surface: '#d1d5db', isDark: false },
+  eink: { bg: '#f6f3e9', surface: '#ece7d8', isDark: false },
+  tinted_cool: { bg: '#eef3f9', surface: '#e1eaf4', isDark: false },
+  tinted_warm: { bg: '#f9f2ea', surface: '#f0e4d6', isDark: false },
+};
 
 const DEFAULT_MIC_SETTINGS: MicRecordingSettings = {
   format: 'wav',
@@ -155,12 +170,19 @@ export default function App() {
     return DEFAULT_MIC_SETTINGS;
   });
 
-  const [darkMode, setDarkMode] = useState<boolean>(() => {
+  const [themeMode, setThemeMode] = useState<AppThemeMode>(() => {
     try {
-      return localStorage.getItem(STORAGE_DARK_KEY) === 'true';
+      const savedV2 = localStorage.getItem(STORAGE_THEME_KEY) as AppThemeMode | null;
+      if (savedV2 && (savedV2 === 'system' || savedV2 in THEME_BAR_PALETTE)) {
+        return savedV2;
+      }
+      const legacyDark = localStorage.getItem(STORAGE_DARK_KEY);
+      if (legacyDark === 'true') return 'dark_charcoal';
+      if (legacyDark === 'false') return 'light';
     } catch {
-      return false;
+      // ignore
     }
+    return 'system';
   });
 
   const [savedPasscode, setSavedPasscode] = useState<string | null>(() => {
@@ -265,27 +287,66 @@ export default function App() {
     );
   }, []);
 
-  // Sync Dark Theme with DOM & Android Status Bar / Navigation Bar theme-color
+  // Sync Selected Theme (including System Default) with DOM & Android OS Status Bar + Navigation Bar
   useEffect(() => {
-    const rootEl = document.documentElement;
-    const metaTheme = document.getElementById('meta-theme-color');
-    const surfaceColor = darkMode ? '#101418' : '#ffffff';
+    const applyResolvedTheme = () => {
+      const rootEl = document.documentElement;
+      const metaTheme = document.getElementById('meta-theme-color');
+      const isSystemDark =
+        typeof window.matchMedia === 'function' &&
+        window.matchMedia('(prefers-color-scheme: dark)').matches;
 
-    if (darkMode) {
-      rootEl.classList.add('dark');
-    } else {
-      rootEl.classList.remove('dark');
-    }
+      const resolvedTheme: Exclude<AppThemeMode, 'system'> =
+        themeMode === 'system'
+          ? isSystemDark
+            ? 'dark_charcoal'
+            : 'light'
+          : themeMode;
+
+      const palette = THEME_BAR_PALETTE[resolvedTheme] || THEME_BAR_PALETTE.light;
+
+      rootEl.setAttribute('data-theme', resolvedTheme);
+      rootEl.style.backgroundColor = palette.bg;
+
+      if (palette.isDark) {
+        rootEl.classList.add('dark');
+      } else {
+        rootEl.classList.remove('dark');
+      }
+
+      if (metaTheme) {
+        metaTheme.setAttribute('content', palette.surface);
+      }
+
+      // Sync Android OS Status Bar (matches top header --wiki-surface) & Navigation Bar (matches bottom --wiki-bg)
+      if (window.LikkhoNative && typeof window.LikkhoNative.setSystemBarsTheme === 'function') {
+        window.LikkhoNative.setSystemBarsTheme(
+          palette.surface,
+          palette.bg,
+          !palette.isDark
+        );
+      }
+    };
+
+    applyResolvedTheme();
+
     try {
-      localStorage.setItem(STORAGE_DARK_KEY, String(darkMode));
+      localStorage.setItem(STORAGE_THEME_KEY, themeMode);
+      localStorage.setItem(
+        STORAGE_DARK_KEY,
+        String(themeMode === 'dark_charcoal' || themeMode === 'amoled')
+      );
     } catch {
       // ignore
     }
 
-    if (metaTheme) {
-      metaTheme.setAttribute('content', surfaceColor);
+    if (themeMode === 'system' && typeof window.matchMedia === 'function') {
+      const mq = window.matchMedia('(prefers-color-scheme: dark)');
+      const listener = () => applyResolvedTheme();
+      mq.addEventListener('change', listener);
+      return () => mq.removeEventListener('change', listener);
     }
-  }, [darkMode]);
+  }, [themeMode]);
 
   // Save in-app logs + media to IndexedDB and localStorage
   useEffect(() => {
@@ -518,10 +579,6 @@ export default function App() {
   return (
     <div
       className="flex h-full w-full flex-col bg-[var(--wiki-bg)] text-[var(--wiki-text)] overflow-hidden"
-      style={{
-        paddingTop: 'env(safe-area-inset-top, 0px)',
-        paddingBottom: 'env(safe-area-inset-bottom, 0px)',
-      }}
       onClick={() => {
         if (openMenuLogId) setOpenMenuLogId(null);
       }}
@@ -588,8 +645,8 @@ export default function App() {
         />
       ) : route === 'settings' ? (
         <SettingsPage
-          darkMode={darkMode}
-          onToggleDarkMode={() => setDarkMode((d) => !d)}
+          themeMode={themeMode}
+          onChangeThemeMode={(mode) => setThemeMode(mode)}
           savedPasscode={savedPasscode}
           onUpdatePasscode={(pin) => {
             setSavedPasscode(pin);

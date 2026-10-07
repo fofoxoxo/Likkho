@@ -45,6 +45,16 @@ export interface CustomFontItem {
 
 export type AudioFormatOption = 'wav' | 'flac' | 'm4a' | 'aac' | 'mp3' | 'ogg' | 'webm';
 
+export type AppThemeMode =
+  | 'system'
+  | 'light'
+  | 'amoled'
+  | 'grayscale'
+  | 'dark_charcoal'
+  | 'eink'
+  | 'tinted_cool'
+  | 'tinted_warm';
+
 export interface MicRecordingSettings {
   format: AudioFormatOption;
   sampleRate: 8000 | 16000 | 22050 | 44100 | 48000;
