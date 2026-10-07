@@ -7,12 +7,6 @@ interface CanvasAudioPlayerCardProps {
   isReadingMode: boolean;
   isSelected: boolean;
   onSelect: () => void;
-  onStartDrag: (
-    e: React.PointerEvent<HTMLDivElement>,
-    audio: CanvasAudioAttachment
-  ) => void;
-  onMoveDrag: (e: React.PointerEvent<HTMLDivElement>) => void;
-  onEndDrag: (e: React.PointerEvent<HTMLDivElement>) => void;
 }
 
 function formatAudioSeconds(sec: number): string {
@@ -28,9 +22,6 @@ export const CanvasAudioPlayerCard: React.FC<CanvasAudioPlayerCardProps> = ({
   isReadingMode,
   isSelected,
   onSelect,
-  onStartDrag,
-  onMoveDrag,
-  onEndDrag,
 }) => {
   const audioElRef = useRef<HTMLAudioElement | null>(null);
   const lastTapTimeRef = useRef<number>(0);
@@ -111,14 +102,14 @@ export const CanvasAudioPlayerCard: React.FC<CanvasAudioPlayerCardProps> = ({
   const rotationDeg = audio.rotation ?? 0;
   const effectiveDuration = duration > 0 ? duration : audio.durationSec || 1;
 
-  // Double-tap selection without activating text cursor
-  const handleDoubleTapCheck = (e: React.PointerEvent<HTMLDivElement>) => {
+  // Strictly ONLY Double-Tap activates editing tools on the Audio Player!
+  // Single tap & drag, pinch, and two-finger drag are completely disabled.
+  const handleDoubleTapOnly = (e: React.PointerEvent<HTMLDivElement>) => {
     if (isReadingMode) return;
     const now = Date.now();
     if (now - lastTapTimeRef.current < 320) {
       e.preventDefault();
       e.stopPropagation();
-      // Blur editor so text cursor never becomes active when selecting the audio player
       if (document.activeElement instanceof HTMLElement) {
         document.activeElement.blur();
       }
@@ -140,12 +131,8 @@ export const CanvasAudioPlayerCard: React.FC<CanvasAudioPlayerCardProps> = ({
         }
         e.preventDefault();
         e.stopPropagation();
-        handleDoubleTapCheck(e);
-        onStartDrag(e, audio);
+        handleDoubleTapOnly(e);
       }}
-      onPointerMove={onMoveDrag}
-      onPointerUp={onEndDrag}
-      onPointerCancel={onEndDrag}
       onDoubleClick={(e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -174,10 +161,10 @@ export const CanvasAudioPlayerCard: React.FC<CanvasAudioPlayerCardProps> = ({
       }}
       className={`touch-none select-none flex flex-col justify-center rounded-none border border-[#7a1616] bg-[#b32424] px-3 py-1.5 text-white shadow-md overflow-hidden ${
         isReadingMode
-          ? 'pointer-events-auto'
+          ? 'pointer-events-auto cursor-default'
           : isSelected
-          ? 'cursor-move ring-2 ring-[#3366cc] pointer-events-auto'
-          : 'cursor-move pointer-events-auto'
+          ? 'cursor-pointer ring-2 ring-[#3366cc] pointer-events-auto'
+          : 'cursor-pointer pointer-events-auto'
       }`}
     >
       {/* Hidden native HTML5 Audio Engine */}

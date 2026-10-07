@@ -1501,10 +1501,8 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
         findAncestorByAttr(range.endContainer, 'data-wiki-spoiler');
 
       if (existingSpoiler) {
-        unwrapElement(existingSpoiler);
-        checkActiveFormats();
-        onContentChange();
-        showBriefHint('Spoiler removed.');
+        existingSpoiler.click();
+        showBriefHint('Tap spoiler and enter passcode to disable or view it.');
         return;
       }
     }

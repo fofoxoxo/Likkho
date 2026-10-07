@@ -455,6 +455,12 @@ jobs:
           import androidx.activity.OnBackPressedCallback;
           import androidx.core.app.ActivityCompat;
           import androidx.core.content.ContextCompat;
+          import androidx.core.view.ContentInfoCompat;
+          import androidx.core.view.OnReceiveContentListener;
+          import androidx.core.view.ViewCompat;
+          import androidx.core.view.inputmethod.EditorInfoCompat;
+          import androidx.core.view.inputmethod.InputConnectionCompat;
+          import androidx.core.view.inputmethod.InputContentInfoCompat;
           import com.getcapacitor.BridgeActivity;
           import java.io.ByteArrayOutputStream;
           import java.io.File;
@@ -512,6 +518,29 @@ jobs:
                       webView.getSettings().setAllowContentAccess(true);
                       webView.getSettings().setMediaPlaybackRequiresUserGesture(false);
                       webView.addJavascriptInterface(new LikkhoAndroidBridge(), "LikkhoNative");
+
+                      // Enable Gboard / Android Keyboard GIF & Sticker insertion via InputConnectionCompat / OnReceiveContentListener
+                      // Supports MIME types image/gif, image/png, image/webp, image/jpeg without affecting normal keyboard typing behavior!
+                      final String[] SUPPORTED_KEYBOARD_MIMES = new String[]{"image/gif", "image/png", "image/webp", "image/jpeg"};
+                      ViewCompat.setOnReceiveContentListener(webView, SUPPORTED_KEYBOARD_MIMES, new OnReceiveContentListener() {
+                          @Override
+                          public ContentInfoCompat onReceiveContent(android.view.View view, ContentInfoCompat payload) {
+                              android.util.Pair<ContentInfoCompat, ContentInfoCompat> split = payload.partition(item -> item.getUri() != null);
+                              ContentInfoCompat uriContent = split.first;
+                              ContentInfoCompat remaining = split.second;
+                              if (uriContent != null) {
+                                  android.content.ClipData clip = uriContent.getClip();
+                                  for (int i = 0; i < clip.getItemCount(); i++) {
+                                      final Uri contentUri = clip.getItemAt(i).getUri();
+                                      if (contentUri != null) {
+                                          new Thread(() -> readAndDeliverKeyboardGifUri(contentUri, webView)).start();
+                                      }
+                                  }
+                              }
+                              // Return remaining text/keystrokes so normal keyboard typing behavior is 100% unaffected!
+                              return remaining;
+                          }
+                      });
 
                       webView.setWebChromeClient(new WebChromeClient() {
                           @Override
@@ -581,6 +610,34 @@ jobs:
                   if (!MicForegroundService.isRecording && MicForegroundService.latestFinishedFilePath != null) {
                       deliverFinishedNativeRecordingIfPossible(this);
                   }
+              }
+
+              private void readAndDeliverKeyboardGifUri(Uri contentUri, WebView webView) {
+                  try {
+                      ContentResolver cr = getContentResolver();
+                      String mime = cr.getType(contentUri);
+                      if (mime == null || mime.isEmpty()) {
+                          mime = "image/gif";
+                      }
+                      try (InputStream is = cr.openInputStream(contentUri)) {
+                          if (is == null) return;
+                          ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                          byte[] buf = new byte[8192];
+                          int n;
+                          while ((n = is.read(buf)) != -1) {
+                              baos.write(buf, 0, n);
+                          }
+                          final String b64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP);
+                          final String finalMime = mime;
+                          final String dataUrl = "data:" + finalMime + ";base64," + b64;
+                          runOnUiThread(() -> {
+                              webView.evaluateJavascript(
+                                  "if(window.__onLikkhoKeyboardGifCommitted) window.__onLikkhoKeyboardGifCommitted('" + dataUrl + "', '" + finalMime + "');",
+                                  null
+                              );
+                          });
+                      }
+                  } catch (Exception ignored) {}
               }
 
               public static void deliverFinishedNativeRecordingIfPossible(Context ctx) {
