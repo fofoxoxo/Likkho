@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ArrowLeft,
   ShieldCheck,
@@ -10,6 +10,7 @@ import {
   Eye,
   EyeOff,
   Lock,
+  FolderOpen,
 } from 'lucide-react';
 import {
   CustomFontItem,
@@ -48,11 +49,44 @@ export const BackupRestorePage: React.FC<BackupRestorePageProps> = ({
 
   const [backupPassphrase, setBackupPassphrase] = useState<string>('');
   const [restorePassphrase, setRestorePassphrase] = useState<string>('');
+  const [selectedFolderName, setSelectedFolderName] = useState<string>(() => {
+    try {
+      return window.LikkhoNative?.getSafBaseFolderName?.() || '';
+    } catch {
+      return '';
+    }
+  });
   const [statusBanner, setStatusBanner] = useState<{
     type: 'success' | 'error';
     text: string;
   } | null>(null);
   const [isBusy, setIsBusy] = useState<boolean>(false);
+
+  useEffect(() => {
+    window.__onLikkhoSafFolderSelected = (folderName: string) => {
+      setSelectedFolderName(folderName || '');
+      if (folderName) {
+        setStatusBanner({
+          type: 'success',
+          text: `Backup folder selected: ${folderName}`,
+        });
+      }
+    };
+    return () => {
+      window.__onLikkhoSafFolderSelected = undefined;
+    };
+  }, []);
+
+  const handleChooseSafFolder = () => {
+    if (window.LikkhoNative?.chooseSafBaseFolder) {
+      window.LikkhoNative.chooseSafBaseFolder();
+    } else {
+      setStatusBanner({
+        type: 'success',
+        text: 'Backup folder ready.',
+      });
+    }
+  };
 
   const handleSetEncryptionKey = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -117,6 +151,12 @@ export const BackupRestorePage: React.FC<BackupRestorePageProps> = ({
         logs.length,
         inputHash
       );
+      try {
+        const folder = window.LikkhoNative?.getSafBaseFolderName?.();
+        if (folder) setSelectedFolderName(folder);
+      } catch {
+        // ignore
+      }
       if (!savedKeyHash) {
         onSaveKeyHash(inputHash);
       }
@@ -147,6 +187,12 @@ export const BackupRestorePage: React.FC<BackupRestorePageProps> = ({
     setIsBusy(true);
     try {
       const { metadata, encryptedEnvelope } = await readFromPrivateSpecialFolder();
+      try {
+        const folder = window.LikkhoNative?.getSafBaseFolderName?.();
+        if (folder) setSelectedFolderName(folder);
+      } catch {
+        // ignore
+      }
       if (!metadata.exists || !encryptedEnvelope) {
         setStatusBanner({
           type: 'error',
@@ -195,9 +241,19 @@ export const BackupRestorePage: React.FC<BackupRestorePageProps> = ({
             Backup &amp; Restore
           </h1>
         </div>
+
+        <button
+          type="button"
+          onClick={handleChooseSafFolder}
+          className="flex h-9 items-center gap-1.5 border border-[var(--wiki-border)] bg-[var(--wiki-bg)] px-3 text-xs font-semibold text-[var(--wiki-text)] hover:border-[#3366cc]"
+          title="Select base folder (e.g. Documents)"
+        >
+          <FolderOpen className="h-3.5 w-3.5 text-[#3366cc]" />
+          <span>{selectedFolderName ? `Folder: ${selectedFolderName}` : 'Select Folder'}</span>
+        </button>
       </header>
 
-      {/* Body — Clean UI with only useful texts and buttons, zero backend info */}
+      {/* Body — Clean UI with only useful texts and buttons */}
       <div className="flex-1 overflow-y-auto px-4 py-5 space-y-5">
         {statusBanner && (
           <div

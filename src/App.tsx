@@ -75,6 +75,16 @@ const INITIAL_STARTER_LOGS: DiaryLog[] = [
       minute: '2-digit',
       hour12: true,
     }),
+    updatedDateStamp: new Date(Date.now() - 3600 * 1000 * 2).toLocaleDateString('en-IN', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    }),
+    updatedTimeStamp: new Date(Date.now() - 3600 * 1000 * 2).toLocaleTimeString('en-IN', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+    }),
     reminderAt: null,
     pinned: false,
   },
@@ -741,23 +751,68 @@ export default function App() {
                         {log.plainPreview}
                       </p>
 
-                      <div className="mt-1.5 flex items-center gap-1.5 font-wiki-mono text-[11px] text-[var(--wiki-muted)]">
-                        <span>{log.dateStamp}</span>
-                        <span aria-hidden="true">·</span>
-                        <span>{log.timeStamp}</span>
-                        {log.reminderAt && log.reminderAt > Date.now() && (
-                          <>
-                            <span aria-hidden="true">·</span>
-                            <span className="flex items-center gap-1 text-[#3366cc]">
-                              <BellRing className="h-3 w-3" />
-                              {new Date(log.reminderAt).toLocaleTimeString('en-IN', {
+                      <div className="mt-1.5 flex flex-col gap-0.5 font-wiki-mono text-[10px] text-[var(--wiki-muted)]">
+                        <div className="flex flex-wrap items-center gap-1">
+                          <span className="font-semibold text-[var(--wiki-text)]/80">Created:</span>
+                          <span>
+                            {log.dateStamp ||
+                              new Date(log.createdAt).toLocaleDateString('en-IN', {
+                                day: '2-digit',
+                                month: 'short',
+                                year: 'numeric',
+                              })}
+                          </span>
+                          <span aria-hidden="true">·</span>
+                          <span>
+                            {log.timeStamp ||
+                              new Date(log.createdAt).toLocaleTimeString('en-IN', {
                                 hour: '2-digit',
                                 minute: '2-digit',
                                 hour12: true,
                               })}
-                            </span>
-                          </>
-                        )}
+                          </span>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-1">
+                          <span className="font-semibold text-[var(--wiki-text)]/80">Modified:</span>
+                          <span>
+                            {log.updatedDateStamp ||
+                              new Date(log.updatedAt || log.createdAt).toLocaleDateString(
+                                'en-IN',
+                                {
+                                  day: '2-digit',
+                                  month: 'short',
+                                  year: 'numeric',
+                                }
+                              )}
+                          </span>
+                          <span aria-hidden="true">·</span>
+                          <span>
+                            {log.updatedTimeStamp ||
+                              new Date(log.updatedAt || log.createdAt).toLocaleTimeString(
+                                'en-IN',
+                                {
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                  hour12: true,
+                                }
+                              )}
+                          </span>
+
+                          {log.reminderAt && log.reminderAt > Date.now() && (
+                            <>
+                              <span aria-hidden="true">·</span>
+                              <span className="flex items-center gap-1 text-[#3366cc]">
+                                <BellRing className="h-3 w-3" />
+                                {new Date(log.reminderAt).toLocaleTimeString('en-IN', {
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                  hour12: true,
+                                })}
+                              </span>
+                            </>
+                          )}
+                        </div>
                       </div>
                     </div>
 

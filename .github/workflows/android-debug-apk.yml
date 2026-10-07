@@ -48,16 +48,17 @@ jobs:
           fi
           npx cap sync android
 
-      - name: Configure Android Permissions, Hidden .nomedia Backup (/storage/emulated/0/.likkho_backups/) & Microphone Foreground Service
+      - name: Configure Modern targetSdkVersion 34, SAF (.likkho_backups + .nomedia) & Microphone Foreground Service
         run: |
-          # Set targetSdkVersion to 29 in variables.gradle so Android allows direct read/write to /storage/emulated/0/.likkho_backups/ with .nomedia across app reinstalls WITHOUT needing Manage All Files permission!
+          # Upgrade to modern compileSdkVersion = 34 & targetSdkVersion = 34 so Google Play Protect and Android 14/15 NEVER show "Unsafe App / Built for older version of Android" warnings!
           if [ -f android/variables.gradle ]; then
-            sed -i 's/targetSdkVersion = [0-9]*/targetSdkVersion = 29/g' android/variables.gradle || true
+            sed -i 's/compileSdkVersion = [0-9]*/compileSdkVersion = 34/g' android/variables.gradle || true
+            sed -i 's/targetSdkVersion = [0-9]*/targetSdkVersion = 34/g' android/variables.gradle || true
           fi
 
           MANIFEST="android/app/src/main/AndroidManifest.xml"
           if ! grep -q "FOREGROUND_SERVICE_MICROPHONE" "$MANIFEST"; then
-            sed -i 's/<application/<uses-permission android:name="android.permission.POST_NOTIFICATIONS" \/>\n    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" \/>\n    <uses-permission android:name="android.permission.USE_EXACT_ALARM" \/>\n    <uses-permission android:name="android.permission.VIBRATE" \/>\n    <uses-permission android:name="android.permission.WAKE_LOCK" \/>\n    <uses-permission android:name="android.permission.USE_BIOMETRIC" \/>\n    <uses-permission android:name="android.permission.USE_FINGERPRINT" \/>\n    <uses-permission android:name="android.permission.RECORD_AUDIO" \/>\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" \/>\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" \/>\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" \/>\n    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" \/>\n    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" \/>\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" \/>\n    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" \/>\n    <application android:requestLegacyExternalStorage="true" android:hardwareAccelerated="true"/' "$MANIFEST"
+            sed -i 's/<application/<uses-permission android:name="android.permission.POST_NOTIFICATIONS" \/>\n    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" \/>\n    <uses-permission android:name="android.permission.USE_EXACT_ALARM" \/>\n    <uses-permission android:name="android.permission.VIBRATE" \/>\n    <uses-permission android:name="android.permission.WAKE_LOCK" \/>\n    <uses-permission android:name="android.permission.USE_BIOMETRIC" \/>\n    <uses-permission android:name="android.permission.USE_FINGERPRINT" \/>\n    <uses-permission android:name="android.permission.RECORD_AUDIO" \/>\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" \/>\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" \/>\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" \/>\n    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" \/>\n    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" \/>\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" \/>\n    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" \/>\n    <application android:hardwareAccelerated="true"/' "$MANIFEST"
           fi
 
           # Ensure MainActivity uses adjustResize for smooth keyboard and toolbar docking
@@ -148,7 +149,6 @@ jobs:
           # 2. Create MicForegroundService.java:
           #    - Uses Microphone Foreground Service (foregroundServiceType="microphone") with START_STICKY and persistent Notification Bell
           #    - Keeps recording when screen is off, phone is locked, or app is swiped away from Recent Apps WITHOUT requiring "Display over other apps" permission!
-          #    - (Future-ready overlay helper method is preserved in commented form at the bottom for future reference if ever needed)
           cat << 'EOF' > "$PKG_DIR/MicForegroundService.java"
           package com.likkho.diary;
 
@@ -411,23 +411,14 @@ jobs:
               public IBinder onBind(Intent intent) {
                   return null;
               }
-
-              /*
-               * PRESERVED FOR FUTURE USE (If Display Over Other Apps / Floating Overlay is ever needed in future):
-               *
-               * private void showFloatingOverlayBadgeFuture() {
-               *     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && Settings.canDrawOverlays(this)) {
-               *         WindowManager wm = (WindowManager) getSystemService(WINDOW_SERVICE);
-               *         // Add TYPE_APPLICATION_OVERLAY view
-               *     }
-               * }
-               */
           }
           EOF
 
           # 3. Configure MainActivity.java:
-          #    - Auto-scans and writes AES-256-GCM JSON backup to /storage/emulated/0/.likkho_backups/ with .nomedia file
-          #    - Does NOT force Manage All Files or Display Over Other Apps permissions (preserved in commented block for future use)
+          #    - Uses SAF (Storage Access Framework) System File Picker (ACTION_OPEN_DOCUMENT_TREE)
+          #    - User chooses base directory once (e.g., Documents), inside which Likkho automatically creates
+          #      hidden subfolder (.likkho_backups) + .nomedia file + AES-256-GCM encrypted backup file (likkho_encrypted_vault.json)
+          #    - Works on modern targetSdkVersion = 34 with zero Play Protect warnings and survives app reinstalls!
           cat << 'EOF' > "$PKG_DIR/MainActivity.java"
           package com.likkho.diary;
 
@@ -436,10 +427,10 @@ jobs:
           import android.app.KeyguardManager;
           import android.app.PendingIntent;
           import android.content.ContentResolver;
-          import android.content.ContentUris;
           import android.content.ContentValues;
           import android.content.Context;
           import android.content.Intent;
+          import android.content.SharedPreferences;
           import android.content.pm.PackageManager;
           import android.database.Cursor;
           import android.hardware.biometrics.BiometricManager;
@@ -449,6 +440,7 @@ jobs:
           import android.os.Bundle;
           import android.os.CancellationSignal;
           import android.os.Environment;
+          import android.provider.DocumentsContract;
           import android.provider.MediaStore;
           import android.util.Base64;
           import android.webkit.JavascriptInterface;
@@ -477,11 +469,18 @@ jobs:
               private static final int FILE_CHOOSER_RESULT_CODE = 1003;
               private static final int NOTIF_PERMISSION_REQUEST_CODE = 1004;
               private static final int DEVICE_CREDENTIAL_UNLOCK_CODE = 1005;
+              private static final int SAF_TREE_PICKER_CODE = 1006;
 
-              // Public storage hidden backup folder (/storage/emulated/0/.likkho_backups/) with .nomedia
-              private static final String HIDDEN_ROOT_FOLDER = ".likkho_backups";
+              private static final String PREFS_NAME = "likkho_saf_prefs";
+              private static final String KEY_SAF_TREE_URI = "saf_base_tree_uri";
+              private static final String HIDDEN_SUBFOLDER_NAME = ".likkho_backups";
               private static final String VAULT_FILENAME = "likkho_encrypted_vault.json";
               private static final String LEGACY_VAULT_FILENAME = "likkho_encrypted_vault.bak";
+
+              private static final int SAF_OP_NONE = 0;
+              private static final int SAF_OP_CHOOSE_ONLY = 1;
+              private static final int SAF_OP_BACKUP = 2;
+              private static final int SAF_OP_RESTORE = 3;
 
               public static MainActivity currentInstance;
 
@@ -490,12 +489,15 @@ jobs:
               private int pendingMicSampleRate = 44100;
               private CancellationSignal activeBiometricCancelSignal;
 
+              private int pendingSafOperation = SAF_OP_NONE;
+              private String pendingBackupEnvelope = null;
+
               @Override
               public void onCreate(Bundle savedInstanceState) {
                   super.onCreate(savedInstanceState);
                   currentInstance = this;
 
-                  requestStorageAndNotificationPermissionsOnStart();
+                  requestNotificationPermissionOnStart();
 
                   if (this.bridge != null && this.bridge.getWebView() != null) {
                       final WebView webView = this.bridge.getWebView();
@@ -606,21 +608,11 @@ jobs:
                   } catch (Exception ignored) {}
               }
 
-              private void requestStorageAndNotificationPermissionsOnStart() {
-                  List<String> needed = new ArrayList<>();
+              private void requestNotificationPermissionOnStart() {
                   if (Build.VERSION.SDK_INT >= 33) {
                       if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                          needed.add(Manifest.permission.POST_NOTIFICATIONS);
+                          ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.POST_NOTIFICATIONS}, NOTIF_PERMISSION_REQUEST_CODE);
                       }
-                  }
-                  if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-                      needed.add(Manifest.permission.READ_EXTERNAL_STORAGE);
-                  }
-                  if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-                      needed.add(Manifest.permission.WRITE_EXTERNAL_STORAGE);
-                  }
-                  if (!needed.isEmpty()) {
-                      ActivityCompat.requestPermissions(this, needed.toArray(new String[0]), MEDIA_PERMISSION_REQUEST_CODE);
                   }
               }
 
@@ -633,18 +625,256 @@ jobs:
                       if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_AUDIO) != PackageManager.PERMISSION_GRANTED) {
                           needed.add(Manifest.permission.READ_MEDIA_AUDIO);
                       }
-                  }
-                  if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-                      needed.add(Manifest.permission.READ_EXTERNAL_STORAGE);
-                  }
-                  if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-                      needed.add(Manifest.permission.WRITE_EXTERNAL_STORAGE);
+                  } else {
+                      if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+                          needed.add(Manifest.permission.READ_EXTERNAL_STORAGE);
+                      }
                   }
                   if (!needed.isEmpty()) {
                       ActivityCompat.requestPermissions(this, needed.toArray(new String[0]), MEDIA_PERMISSION_REQUEST_CODE);
                       return true;
                   }
                   return false;
+              }
+
+              // ==================== SAF (Storage Access Framework) Helpers ====================
+
+              private Uri getPersistedSafTreeUri() {
+                  SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+                  String uriStr = prefs.getString(KEY_SAF_TREE_URI, null);
+                  if (uriStr == null || uriStr.isEmpty()) return null;
+                  try {
+                      Uri uri = Uri.parse(uriStr);
+                      for (android.content.UriPermission perm : getContentResolver().getPersistedUriPermissions()) {
+                          if (perm.getUri().equals(uri) && perm.isReadPermission() && perm.isWritePermission()) {
+                              return uri;
+                          }
+                      }
+                  } catch (Exception ignored) {}
+                  return null;
+              }
+
+              private String extractSafFolderDisplayName(Uri treeUri) {
+                  if (treeUri == null) return "";
+                  try {
+                      String docId = DocumentsContract.getTreeDocumentId(treeUri);
+                      if (docId != null && docId.contains(":")) {
+                          String tail = docId.substring(docId.indexOf(":") + 1);
+                          return tail.isEmpty() ? "Internal Storage" : tail;
+                      }
+                      return docId != null ? docId : "Selected Folder";
+                  } catch (Exception e) {
+                      return "Selected Folder";
+                  }
+              }
+
+              private void launchSafDirectoryPicker(int operation) {
+                  pendingSafOperation = operation;
+                  runOnUiThread(() -> {
+                      try {
+                          Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+                          intent.addFlags(
+                              Intent.FLAG_GRANT_READ_URI_PERMISSION |
+                              Intent.FLAG_GRANT_WRITE_URI_PERMISSION |
+                              Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION |
+                              Intent.FLAG_GRANT_PREFIX_URI_PERMISSION
+                          );
+                          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                              Uri initialDocsUri = Uri.parse("content://com.android.externalstorage.documents/document/primary%3ADocuments");
+                              intent.putExtra(DocumentsContract.EXTRA_INITIAL_URI, initialDocsUri);
+                          }
+                          startActivityForResult(intent, SAF_TREE_PICKER_CODE);
+                      } catch (Exception e) {
+                          if (operation == SAF_OP_BACKUP) {
+                              notifySafBackupResult(false, "Unable to open folder picker: " + e.getMessage());
+                          } else if (operation == SAF_OP_RESTORE) {
+                              notifySafRestoreResult(false, "");
+                          }
+                      }
+                  });
+              }
+
+              private String findChildDocumentId(Uri treeUri, String parentDocId, String targetDisplayName) {
+                  ContentResolver resolver = getContentResolver();
+                  Uri childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, parentDocId);
+                  String[] projection = new String[]{
+                      DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                      DocumentsContract.Document.COLUMN_DISPLAY_NAME
+                  };
+                  try (Cursor c = resolver.query(childrenUri, projection, null, null, null)) {
+                      if (c != null) {
+                          while (c.moveToNext()) {
+                              String docId = c.getString(0);
+                              String name = c.getString(1);
+                              if (targetDisplayName.equalsIgnoreCase(name)) {
+                                  return docId;
+                              }
+                          }
+                      }
+                  } catch (Exception ignored) {}
+                  return null;
+              }
+
+              private String getOrCreateChildDirectory(Uri treeUri, String parentDocId, String folderName) throws Exception {
+                  // If the user directly selected .likkho_backups itself as the tree root, use parentDocId directly
+                  if (parentDocId != null && parentDocId.endsWith("/" + folderName) || (parentDocId != null && parentDocId.endsWith(":" + folderName))) {
+                      return parentDocId;
+                  }
+                  String existingId = findChildDocumentId(treeUri, parentDocId, folderName);
+                  if (existingId != null) return existingId;
+
+                  Uri parentDocUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, parentDocId);
+                  Uri createdDirUri = DocumentsContract.createDocument(
+                      getContentResolver(),
+                      parentDocUri,
+                      DocumentsContract.Document.MIME_TYPE_DIR,
+                      folderName
+                  );
+                  if (createdDirUri == null) {
+                      throw new Exception("Could not create " + folderName + " folder.");
+                  }
+                  return DocumentsContract.getDocumentId(createdDirUri);
+              }
+
+              private void ensureNomediaInSafFolder(Uri treeUri, String backupDirDocId) {
+                  try {
+                      String existingNomedia = findChildDocumentId(treeUri, backupDirDocId, ".nomedia");
+                      if (existingNomedia == null) {
+                          Uri backupDirUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, backupDirDocId);
+                          DocumentsContract.createDocument(
+                              getContentResolver(),
+                              backupDirUri,
+                              "application/octet-stream",
+                              ".nomedia"
+                          );
+                      }
+                  } catch (Exception ignored) {}
+              }
+
+              private void performSafBackupWrite(Uri treeUri, String envelope) {
+                  new Thread(() -> {
+                      try {
+                          ContentResolver resolver = getContentResolver();
+                          String rootDocId = DocumentsContract.getTreeDocumentId(treeUri);
+                          String backupDirDocId = getOrCreateChildDirectory(treeUri, rootDocId, HIDDEN_SUBFOLDER_NAME);
+                          ensureNomediaInSafFolder(treeUri, backupDirDocId);
+
+                          String existingFileDocId = findChildDocumentId(treeUri, backupDirDocId, VAULT_FILENAME);
+                          Uri targetFileUri;
+                          if (existingFileDocId != null) {
+                              targetFileUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, existingFileDocId);
+                          } else {
+                              Uri backupDirUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, backupDirDocId);
+                              targetFileUri = DocumentsContract.createDocument(
+                                  resolver,
+                                  backupDirUri,
+                                  "application/json",
+                                  VAULT_FILENAME
+                              );
+                          }
+
+                          if (targetFileUri == null) {
+                              notifySafBackupResult(false, "Could not create backup file in selected folder.");
+                              return;
+                          }
+
+                          byte[] bytes = envelope.getBytes(StandardCharsets.UTF_8);
+                          try (OutputStream os = resolver.openOutputStream(targetFileUri, "wt")) {
+                              if (os == null) {
+                                  notifySafBackupResult(false, "Unable to write to backup file.");
+                                  return;
+                              }
+                              os.write(bytes);
+                              os.flush();
+                          }
+
+                          notifySafBackupResult(true, "Backup saved in " + extractSafFolderDisplayName(treeUri) + "/" + HIDDEN_SUBFOLDER_NAME);
+                      } catch (Exception e) {
+                          notifySafBackupResult(false, e.getMessage());
+                      }
+                  }).start();
+              }
+
+              private void performSafRestoreRead(Uri treeUri) {
+                  new Thread(() -> {
+                      try {
+                          ContentResolver resolver = getContentResolver();
+                          String rootDocId = DocumentsContract.getTreeDocumentId(treeUri);
+
+                          // Check inside <SelectedFolder>/.likkho_backups/ first, or directly inside <SelectedFolder> if user picked .likkho_backups
+                          String backupDirDocId = findChildDocumentId(treeUri, rootDocId, HIDDEN_SUBFOLDER_NAME);
+                          String[] searchDirs = backupDirDocId != null
+                              ? new String[]{backupDirDocId, rootDocId}
+                              : new String[]{rootDocId};
+                          String[] candidateFileNames = new String[]{VAULT_FILENAME, LEGACY_VAULT_FILENAME};
+
+                          for (String dirDocId : searchDirs) {
+                              for (String fname : candidateFileNames) {
+                                  String fileDocId = findChildDocumentId(treeUri, dirDocId, fname);
+                                  if (fileDocId != null) {
+                                      Uri fileUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, fileDocId);
+                                      try (InputStream is = resolver.openInputStream(fileUri)) {
+                                          if (is != null) {
+                                              ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                                              byte[] buf = new byte[8192];
+                                              int r;
+                                              while ((r = is.read(buf)) != -1) {
+                                                  baos.write(buf, 0, r);
+                                              }
+                                              String content = new String(baos.toByteArray(), StandardCharsets.UTF_8);
+                                              if (!content.trim().isEmpty()) {
+                                                  notifySafRestoreResult(true, content);
+                                                  return;
+                                              }
+                                          }
+                                      }
+                                  }
+                              }
+                          }
+
+                          notifySafRestoreResult(false, "");
+                      } catch (Exception e) {
+                          notifySafRestoreResult(false, "");
+                      }
+                  }).start();
+              }
+
+              private void notifySafBackupResult(final boolean success, final String msg) {
+                  runOnUiThread(() -> {
+                      if (bridge != null && bridge.getWebView() != null) {
+                          String safeMsg = msg != null ? msg.replace("\\", "\\\\").replace("'", "\\'") : "";
+                          bridge.getWebView().evaluateJavascript(
+                              "if(window.__onLikkhoSafBackupResult) window.__onLikkhoSafBackupResult(" + success + ", '" + safeMsg + "');",
+                              null
+                          );
+                      }
+                  });
+              }
+
+              private void notifySafRestoreResult(final boolean success, final String payload) {
+                  runOnUiThread(() -> {
+                      if (bridge != null && bridge.getWebView() != null) {
+                          String b64 = payload != null && !payload.isEmpty()
+                              ? Base64.encodeToString(payload.getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP)
+                              : "";
+                          bridge.getWebView().evaluateJavascript(
+                              "if(window.__onLikkhoSafRestoreResult) window.__onLikkhoSafRestoreResult(" + success + ", " + (b64.isEmpty() ? "''" : "atob('" + b64 + "')") + ");",
+                              null
+                          );
+                      }
+                  });
+              }
+
+              private void notifySafFolderSelected(final String folderName) {
+                  runOnUiThread(() -> {
+                      if (bridge != null && bridge.getWebView() != null) {
+                          String safeName = folderName != null ? folderName.replace("'", "\\'") : "";
+                          bridge.getWebView().evaluateJavascript(
+                              "if(window.__onLikkhoSafFolderSelected) window.__onLikkhoSafFolderSelected('" + safeName + "');",
+                              null
+                          );
+                      }
+                  });
               }
 
               private void notifyBiometricResult(final boolean success, final String msg) {
@@ -669,25 +899,6 @@ jobs:
                       startService(serviceIntent);
                   }
               }
-
-              /*
-               * PRESERVED FOR FUTURE USE (Manage All Files & Display Over Other Apps permission helpers):
-               *
-               * private void requestManageAllFilesFuture() {
-               *     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !Environment.isExternalStorageManager()) {
-               *         Intent intent = new Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION);
-               *         intent.setData(Uri.parse("package:" + getPackageName()));
-               *         startActivity(intent);
-               *     }
-               * }
-               *
-               * private void requestDisplayOverOtherAppsFuture() {
-               *     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !android.provider.Settings.canDrawOverlays(this)) {
-               *         Intent overlayIntent = new Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:" + getPackageName()));
-               *         startActivity(overlayIntent);
-               *     }
-               * }
-               */
 
               public class LikkhoAndroidBridge {
                   @JavascriptInterface
@@ -872,70 +1083,40 @@ jobs:
                   }
 
                   /**
-                   * Saves AES-256-GCM JSON payload to /storage/emulated/0/.likkho_backups/ with .nomedia file
+                   * SAF (Storage Access Framework) Methods:
+                   * - User picks base directory once (e.g. Documents) via Android System File Picker
+                   * - Likkho automatically creates hidden subfolder (.likkho_backups) + .nomedia + likkho_encrypted_vault.json
                    */
                   @JavascriptInterface
-                  public boolean writePersistentVaultBackup(String envelope) {
-                      byte[] bytes = envelope.getBytes(StandardCharsets.UTF_8);
-                      boolean wroteAny = false;
-
-                      File[] candidateDirs = new File[]{
-                          new File(Environment.getExternalStorageDirectory(), HIDDEN_ROOT_FOLDER),
-                          new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), HIDDEN_ROOT_FOLDER),
-                          new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), HIDDEN_ROOT_FOLDER)
-                      };
-
-                      for (File dir : candidateDirs) {
-                          try {
-                              if (!dir.exists()) dir.mkdirs();
-                              File nomedia = new File(dir, ".nomedia");
-                              if (!nomedia.exists()) nomedia.createNewFile();
-                              File outFile = new File(dir, VAULT_FILENAME);
-                              try (FileOutputStream fos = new FileOutputStream(outFile, false)) {
-                                  fos.write(bytes);
-                                  fos.flush();
-                                  wroteAny = true;
-                              }
-                          } catch (Exception ignored) {}
-                      }
-                      return wroteAny;
+                  public String getSafBaseFolderName() {
+                      Uri treeUri = getPersistedSafTreeUri();
+                      return treeUri != null ? extractSafFolderDisplayName(treeUri) : "";
                   }
 
-                  /**
-                   * Auto-scans /storage/emulated/0/.likkho_backups/ (and fallback paths) for the encrypted backup JSON file
-                   */
                   @JavascriptInterface
-                  public String readPersistentVaultBackup() {
-                      File[] candidateDirs = new File[]{
-                          new File(Environment.getExternalStorageDirectory(), HIDDEN_ROOT_FOLDER),
-                          new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), HIDDEN_ROOT_FOLDER),
-                          new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), HIDDEN_ROOT_FOLDER),
-                          new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), ".likkho_private_vault"),
-                          new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "Likkho_Backup")
-                      };
-                      String[] fileNames = new String[]{VAULT_FILENAME, LEGACY_VAULT_FILENAME};
+                  public void chooseSafBaseFolder() {
+                      launchSafDirectoryPicker(SAF_OP_CHOOSE_ONLY);
+                  }
 
-                      for (File dir : candidateDirs) {
-                          if (dir == null) continue;
-                          for (String fname : fileNames) {
-                              try {
-                                  File candidate = new File(dir, fname);
-                                  if (candidate.exists() && candidate.length() > 0) {
-                                      try (FileInputStream fis = new FileInputStream(candidate)) {
-                                          ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                                          byte[] buf = new byte[8192];
-                                          int r;
-                                          while ((r = fis.read(buf)) != -1) {
-                                              baos.write(buf, 0, r);
-                                          }
-                                          String content = new String(baos.toByteArray(), StandardCharsets.UTF_8);
-                                          if (!content.trim().isEmpty()) return content;
-                                      }
-                                  }
-                              } catch (Exception ignored) {}
-                          }
+                  @JavascriptInterface
+                  public void saveBackupViaSaf(String envelope) {
+                      pendingBackupEnvelope = envelope;
+                      Uri treeUri = getPersistedSafTreeUri();
+                      if (treeUri != null) {
+                          performSafBackupWrite(treeUri, envelope);
+                      } else {
+                          launchSafDirectoryPicker(SAF_OP_BACKUP);
                       }
-                      return "";
+                  }
+
+                  @JavascriptInterface
+                  public void restoreBackupViaSaf() {
+                      Uri treeUri = getPersistedSafTreeUri();
+                      if (treeUri != null) {
+                          performSafRestoreRead(treeUri);
+                      } else {
+                          launchSafDirectoryPicker(SAF_OP_RESTORE);
+                      }
                   }
 
                   @JavascriptInterface
@@ -983,6 +1164,37 @@ jobs:
                       }
                   } else if (requestCode == DEVICE_CREDENTIAL_UNLOCK_CODE) {
                       notifyBiometricResult(resultCode == RESULT_OK, "");
+                  } else if (requestCode == SAF_TREE_PICKER_CODE) {
+                      int op = pendingSafOperation;
+                      pendingSafOperation = SAF_OP_NONE;
+                      if (resultCode == RESULT_OK && data != null && data.getData() != null) {
+                          Uri treeUri = data.getData();
+                          try {
+                              final int takeFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION;
+                              getContentResolver().takePersistableUriPermission(treeUri, takeFlags);
+                              getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                                  .edit()
+                                  .putString(KEY_SAF_TREE_URI, treeUri.toString())
+                                  .apply();
+                          } catch (Exception ignored) {}
+
+                          String folderName = extractSafFolderDisplayName(treeUri);
+                          notifySafFolderSelected(folderName);
+
+                          if (op == SAF_OP_BACKUP && pendingBackupEnvelope != null) {
+                              String env = pendingBackupEnvelope;
+                              pendingBackupEnvelope = null;
+                              performSafBackupWrite(treeUri, env);
+                          } else if (op == SAF_OP_RESTORE) {
+                              performSafRestoreRead(treeUri);
+                          }
+                      } else {
+                          if (op == SAF_OP_BACKUP) {
+                              notifySafBackupResult(false, "Folder selection cancelled.");
+                          } else if (op == SAF_OP_RESTORE) {
+                              notifySafRestoreResult(false, "");
+                          }
+                      }
                   } else {
                       super.onActivityResult(requestCode, resultCode, data);
                   }

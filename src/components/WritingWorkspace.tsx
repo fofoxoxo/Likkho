@@ -7,7 +7,6 @@ import {
   ImagePlus,
   Save,
   Trash2,
-  Volume2,
   RotateCw,
   RotateCcw,
   ZoomIn,
@@ -27,6 +26,7 @@ import { ImageCropperModal } from './ImageCropperModal';
 import { ReminderModal } from './ReminderModal';
 import { RichTextToolbar } from './RichTextToolbar';
 import { MediaImageStudioModal } from './MediaImageStudioModal';
+import { CanvasAudioPlayerCard } from './CanvasAudioPlayerCard';
 
 interface WritingWorkspaceProps {
   initialLog: DiaryLog | null;
@@ -56,6 +56,22 @@ function stripHtmlToSingleLine(html: string): string {
   return text.replace(/\s+/g, ' ').trim();
 }
 
+function formatDateStamp(ms: number): string {
+  return new Date(ms).toLocaleDateString('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  });
+}
+
+function formatTimeStamp(ms: number): string {
+  return new Date(ms).toLocaleTimeString('en-IN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+  });
+}
+
 export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
   initialLog,
   onSaveLog,
@@ -69,6 +85,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
   const stableLogIdRef = useRef<string>(
     initialLog?.id || `log_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
   );
+  const stableCreatedAtRef = useRef<number>(initialLog?.createdAt || Date.now());
 
   // Saved diaries open in Reading Mode by default; new diaries open in Editing Mode
   const [isReadingMode, setIsReadingMode] = useState<boolean>(() => Boolean(initialLog));
@@ -89,8 +106,14 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
   const [canvasImages, setCanvasImages] = useState<CanvasDraggableImage[]>(
     initialLog?.canvasImages || []
   );
-  const [audioAttachments, setAudioAttachments] = useState<CanvasAudioAttachment[]>(
-    initialLog?.audioAttachments || []
+  const [audioAttachments, setAudioAttachments] = useState<CanvasAudioAttachment[]>(() =>
+    (initialLog?.audioAttachments || []).map((a, idx) => ({
+      ...a,
+      x: a.x ?? 24 + (idx * 20) % 80,
+      y: a.y ?? 140 + idx * 88,
+      width: a.width ?? 285,
+      layer: a.layer ?? 'foreground',
+    }))
   );
 
   // Full-Canvas Undo & Redo History Stack (tracks text, formatting, fonts, images, background, audio, heading, PFP)
@@ -118,6 +141,14 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     startRotation: number;
   } | null>(null);
 
+  // Free-dragging state for Canvas Audio Players
+  const [selectedCanvasAudioId, setSelectedCanvasAudioId] = useState<string | null>(null);
+  const [activeAudioDragId, setActiveAudioDragId] = useState<string | null>(null);
+  const [audioDragOffset, setAudioDragOffset] = useState<{ x: number; y: number }>({
+    x: 0,
+    y: 0,
+  });
+
   const [showReminderModal, setShowReminderModal] = useState<boolean>(false);
   const [savedIndicator, setSavedIndicator] = useState<boolean>(false);
 
@@ -131,6 +162,13 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     if (editorRef.current) {
       editorRef.current.innerHTML = startHtml;
     }
+    const normalizedAudios = (initialLog?.audioAttachments || []).map((a, idx) => ({
+      ...a,
+      x: a.x ?? 24 + (idx * 20) % 80,
+      y: a.y ?? 140 + idx * 88,
+      width: a.width ?? 285,
+      layer: a.layer ?? 'foreground',
+    }));
     const initialSnap: CanvasHistorySnapshot = {
       heading: initialLog?.heading || '',
       pfpDataUrl: initialLog?.pfpDataUrl || null,
@@ -138,11 +176,30 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
       canvasBgDataUrl: initialLog?.canvasBgDataUrl || null,
       canvasBgOpacity: initialLog?.canvasBgOpacity ?? 0.25,
       canvasImages: JSON.parse(JSON.stringify(initialLog?.canvasImages || [])),
-      audioAttachments: JSON.parse(JSON.stringify(initialLog?.audioAttachments || [])),
+      audioAttachments: JSON.parse(JSON.stringify(normalizedAudios)),
     };
     historyStackRef.current = [initialSnap];
     historyIndexRef.current = 0;
   }, [initialLog]);
+
+  // Check whether the user actually modified any diary content compared to initialLog
+  const hasContentChangedFromInitial = (): boolean => {
+    if (!initialLog) return true;
+    const initialSnap = historyStackRef.current[0];
+    if (!initialSnap) return false;
+    const currentHtml = editorRef.current ? editorRef.current.innerHTML : '';
+
+    if (heading.trim() !== initialSnap.heading.trim()) return true;
+    if (pfpDataUrl !== initialSnap.pfpDataUrl) return true;
+    if (currentHtml !== initialSnap.contentHtml) return true;
+    if (canvasBgDataUrl !== initialSnap.canvasBgDataUrl) return true;
+    if (Math.abs(canvasBgOpacity - initialSnap.canvasBgOpacity) > 0.001) return true;
+    if (JSON.stringify(canvasImages) !== JSON.stringify(initialSnap.canvasImages)) return true;
+    if (JSON.stringify(audioAttachments) !== JSON.stringify(initialSnap.audioAttachments))
+      return true;
+
+    return false;
+  };
 
   // Push a full-canvas snapshot onto the Undo/Redo stack
   const pushCanvasSnapshot = (overrides?: Partial<CanvasHistorySnapshot>) => {
@@ -238,9 +295,12 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     }, 350);
   };
 
-  // Build a DiaryLog object from current workspace state (including all media attachments)
+  // Build a DiaryLog object from current workspace state:
+  // - Creation dateStamp & timeStamp NEVER change once created!
+  // - Modification updatedDateStamp & updatedTimeStamp ONLY update when actual content is edited!
   const buildCurrentLogObject = (
-    overrideReminderAt?: number | null
+    overrideReminderAt?: number | null,
+    didModifyContent: boolean = true
   ): {
     log: DiaryLog;
     hasAnyEntry: boolean;
@@ -261,19 +321,24 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
       effectiveReminder !== null;
 
     const now = Date.now();
-    const dateObj = initialLog ? new Date(initialLog.createdAt) : new Date(now);
+    const createdAtMs = initialLog ? initialLog.createdAt : stableCreatedAtRef.current;
 
-    const dateStamp = dateObj.toLocaleDateString('en-IN', {
-      day: '2-digit',
-      month: 'short',
-      year: 'numeric',
-    });
+    // Original Creation Date & Time Stamp — strictly locked to createdAt!
+    const dateStamp = initialLog?.dateStamp || formatDateStamp(createdAtMs);
+    const timeStamp = initialLog?.timeStamp || formatTimeStamp(createdAtMs);
 
-    const timeStamp = new Date(now).toLocaleTimeString('en-IN', {
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: true,
-    });
+    // Modification Date & Time Stamp — only updates when the user actually edits the entry!
+    const updatedAtMs = didModifyContent
+      ? now
+      : initialLog?.updatedAt || createdAtMs;
+
+    const updatedDateStamp = didModifyContent
+      ? formatDateStamp(now)
+      : initialLog?.updatedDateStamp || formatDateStamp(updatedAtMs);
+
+    const updatedTimeStamp = didModifyContent
+      ? formatTimeStamp(now)
+      : initialLog?.updatedTimeStamp || formatTimeStamp(updatedAtMs);
 
     const log: DiaryLog = {
       id: stableLogIdRef.current,
@@ -287,10 +352,12 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
           ? `Image attachment (${canvasImages.length})`
           : 'Reminder scheduled.'),
       pfpDataUrl,
-      createdAt: initialLog?.createdAt || now,
-      updatedAt: now,
+      createdAt: createdAtMs,
+      updatedAt: updatedAtMs,
       dateStamp,
       timeStamp,
+      updatedDateStamp,
+      updatedTimeStamp,
       reminderAt: effectiveReminder,
       reminderFired:
         effectiveReminder && effectiveReminder > Date.now()
@@ -306,9 +373,17 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     return { log, hasAnyEntry };
   };
 
-  // Handle Back / Exit: Auto-save if user entered anything; otherwise discard if empty
+  // Handle Back / Exit:
+  // - If viewing an existing log without any edits, exit WITHOUT modifying timestamps!
+  // - If user edited or created a new log with content, save with updated modification timestamp.
   const handleExitWorkspace = () => {
-    const { log, hasAnyEntry } = buildCurrentLogObject();
+    const contentEdited = hasContentChangedFromInitial();
+    if (initialLog && !contentEdited) {
+      onExitWithoutSave();
+      return;
+    }
+
+    const { log, hasAnyEntry } = buildCurrentLogObject(undefined, true);
     if (hasAnyEntry) {
       scheduleAndroidNativeReminder(
         log.id,
@@ -328,9 +403,13 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     }
   });
 
-  // Handle explicit Save button tap — saves and switches to clean Reading Mode
+  // Handle explicit Save button tap — only updates modification timestamp if content was edited (or new entry)
   const handleExplicitSave = () => {
-    const { log, hasAnyEntry } = buildCurrentLogObject();
+    const contentEdited = hasContentChangedFromInitial();
+    const { log, hasAnyEntry } = buildCurrentLogObject(
+      undefined,
+      !initialLog || contentEdited
+    );
     if (!hasAnyEntry) {
       return;
     }
@@ -342,6 +421,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     );
     onSaveLog(log, false);
     setSelectedCanvasImgId(null);
+    setSelectedCanvasAudioId(null);
     setIsReadingMode(true);
     setSavedIndicator(true);
     setTimeout(() => setSavedIndicator(false), 1800);
@@ -363,6 +443,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
   // Open links in browser when tapped
   const handleEditorClick = (e: React.MouseEvent<HTMLDivElement>) => {
     setSelectedCanvasImgId(null);
+    setSelectedCanvasAudioId(null);
     const target = e.target as HTMLElement;
     const anchor = target.closest('a') as HTMLAnchorElement | null;
     if (anchor && anchor.href) {
@@ -387,6 +468,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     e.stopPropagation();
     e.currentTarget.setPointerCapture(e.pointerId);
     setSelectedCanvasImgId(img.id);
+    setSelectedCanvasAudioId(null);
 
     imgPointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
@@ -462,6 +544,48 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     }
   };
 
+  // Pointer drag handlers for Canvas Audio Player Cards (active in Edit Mode)
+  const handleStartDragAudio = (
+    e: React.PointerEvent<HTMLDivElement>,
+    aud: CanvasAudioAttachment
+  ) => {
+    if (isReadingMode) return;
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setSelectedCanvasAudioId(aud.id);
+    setSelectedCanvasImgId(null);
+    setActiveAudioDragId(aud.id);
+    setAudioDragOffset({
+      x: e.clientX - (aud.x ?? 24),
+      y: e.clientY - (aud.y ?? 140),
+    });
+  };
+
+  const handleMoveDragAudio = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (isReadingMode || !activeAudioDragId) return;
+    e.stopPropagation();
+    const nextX = Math.max(0, e.clientX - audioDragOffset.x);
+    const nextY = Math.max(0, e.clientY - audioDragOffset.y);
+    setAudioAttachments((prev) =>
+      prev.map((item) =>
+        item.id === activeAudioDragId ? { ...item, x: nextX, y: nextY } : item
+      )
+    );
+  };
+
+  const handleEndDragAudio = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (isReadingMode) return;
+    if (activeAudioDragId) {
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch {
+        // ignore
+      }
+      setActiveAudioDragId(null);
+      pushCanvasSnapshot();
+    }
+  };
+
   const updateCanvasImagesWithHistory = (
     updater: (prev: CanvasDraggableImage[]) => CanvasDraggableImage[]
   ) => {
@@ -472,9 +596,24 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     });
   };
 
+  const updateAudioAttachmentsWithHistory = (
+    updater: (prev: CanvasAudioAttachment[]) => CanvasAudioAttachment[]
+  ) => {
+    setAudioAttachments((prev) => {
+      const next = updater(prev);
+      pushCanvasSnapshot({ audioAttachments: next });
+      return next;
+    });
+  };
+
   const selectedCanvasImage =
     !isReadingMode
       ? canvasImages.find((c) => c.id === selectedCanvasImgId) || null
+      : null;
+
+  const selectedCanvasAudio =
+    !isReadingMode
+      ? audioAttachments.find((a) => a.id === selectedCanvasAudioId) || null
       : null;
 
   return (
@@ -765,6 +904,102 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
         </div>
       )}
 
+      {/* Selected Canvas Audio Player Control Bar: Width (-/+), Layer (Behind Text / Over Text), Delete */}
+      {selectedCanvasAudio && (
+        <div className="relative z-30 flex flex-wrap items-center justify-between gap-2 border-b border-[#3366cc] bg-[var(--wiki-surface)] px-3 py-1.5 text-xs">
+          <div className="flex items-center gap-1.5 overflow-x-auto">
+            <button
+              type="button"
+              onClick={() =>
+                updateAudioAttachmentsWithHistory((prev) =>
+                  prev.map((a) =>
+                    a.id === selectedCanvasAudio.id
+                      ? { ...a, width: Math.max(220, (a.width ?? 285) - 20) }
+                      : a
+                  )
+                )
+              }
+              className="flex h-7 items-center gap-1 border border-[var(--wiki-border)] bg-[var(--wiki-bg)] px-2 font-semibold hover:border-[#3366cc]"
+              title="Narrower Audio Player"
+            >
+              <ZoomOut className="h-3.5 w-3.5 text-[#3366cc]" />
+              <span>Size -</span>
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                updateAudioAttachmentsWithHistory((prev) =>
+                  prev.map((a) =>
+                    a.id === selectedCanvasAudio.id
+                      ? { ...a, width: Math.min(420, (a.width ?? 285) + 20) }
+                      : a
+                  )
+                )
+              }
+              className="flex h-7 items-center gap-1 border border-[var(--wiki-border)] bg-[var(--wiki-bg)] px-2 font-semibold hover:border-[#3366cc]"
+              title="Wider Audio Player"
+            >
+              <ZoomIn className="h-3.5 w-3.5 text-[#3366cc]" />
+              <span>Size +</span>
+            </button>
+
+            {/* Background vs Foreground Toggle for Audio Card */}
+            <button
+              type="button"
+              onClick={() =>
+                updateAudioAttachmentsWithHistory((prev) =>
+                  prev.map((a) =>
+                    a.id === selectedCanvasAudio.id
+                      ? {
+                          ...a,
+                          layer:
+                            a.layer === 'background' ? 'foreground' : 'background',
+                        }
+                      : a
+                  )
+                )
+              }
+              className={`flex h-7 items-center gap-1 border px-2.5 font-semibold transition-colors ${
+                selectedCanvasAudio.layer === 'background'
+                  ? 'border-[#3366cc] bg-[#3366cc] text-white'
+                  : 'border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-text)] hover:border-[#3366cc]'
+              }`}
+              title="Toggle whether audio card stays behind text or in front of text"
+            >
+              <Layers className="h-3.5 w-3.5" />
+              <span>
+                {selectedCanvasAudio.layer === 'background'
+                  ? 'Behind Text (BG)'
+                  : 'In Front of Text (FG)'}
+              </span>
+            </button>
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => {
+                updateAudioAttachmentsWithHistory((prev) =>
+                  prev.filter((a) => a.id !== selectedCanvasAudio.id)
+                );
+                setSelectedCanvasAudioId(null);
+              }}
+              className="flex h-7 items-center gap-1 border border-[#b32424]/40 bg-[#b32424]/10 px-2 font-semibold text-[#b32424]"
+              title="Delete audio"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedCanvasAudioId(null)}
+              className="flex h-7 items-center px-1.5 text-[var(--wiki-muted)]"
+            >
+              Done
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Canvas Viewport Wrapper — Background Image is strictly scoped inside this Canvas area (never in Header!) */}
       <div className="relative flex-1 overflow-hidden flex flex-col">
         {canvasBgDataUrl && (
@@ -784,6 +1019,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
           }`}
           onClick={(e) => {
             setSelectedCanvasImgId(null);
+            setSelectedCanvasAudioId(null);
             if (!isReadingMode && e.target === e.currentTarget && editorRef.current) {
               editorRef.current.focus({ preventScroll: true });
             }
@@ -806,6 +1042,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
                   if (isReadingMode) return;
                   e.stopPropagation();
                   setSelectedCanvasImgId(img.id);
+                  setSelectedCanvasAudioId(null);
                 }}
                 style={{
                   position: 'absolute',
@@ -835,6 +1072,23 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
             );
           })}
 
+          {/* Free-Draggable App-Themed Audio Player Cards on Canvas (with Foreground / Background Layer support) */}
+          {audioAttachments.map((aud) => (
+            <CanvasAudioPlayerCard
+              key={aud.id}
+              audio={aud}
+              isReadingMode={isReadingMode}
+              isSelected={!isReadingMode && selectedCanvasAudioId === aud.id}
+              onSelect={() => {
+                setSelectedCanvasAudioId(aud.id);
+                setSelectedCanvasImgId(null);
+              }}
+              onStartDrag={handleStartDragAudio}
+              onMoveDrag={handleMoveDragAudio}
+              onEndDrag={handleEndDragAudio}
+            />
+          ))}
+
           <div className="relative z-10 mx-auto max-w-3xl pointer-events-none">
             {/* Rich Text Editable Canvas */}
             <div
@@ -853,6 +1107,28 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
                   e.clientX - rect.left + (canvasContainerRef.current?.scrollLeft || 0);
                 const clickY =
                   e.clientY - rect.top + (canvasContainerRef.current?.scrollTop || 0);
+
+                // Check if user double-clicked over a background-layer Audio Card
+                const hitBgAudio = audioAttachments.find((aud) => {
+                  const ax = aud.x ?? 24;
+                  const ay = aud.y ?? 140;
+                  const aw = aud.width ?? 285;
+                  const ah = 86;
+                  return (
+                    aud.layer === 'background' &&
+                    clickX >= ax &&
+                    clickX <= ax + aw &&
+                    clickY >= ay &&
+                    clickY <= ay + ah
+                  );
+                });
+                if (hitBgAudio) {
+                  setSelectedCanvasAudioId(hitBgAudio.id);
+                  setSelectedCanvasImgId(null);
+                  return;
+                }
+
+                // Check if user double-clicked over a background-layer Image
                 const hitBgImg = canvasImages.find(
                   (img) =>
                     img.layer === 'background' &&
@@ -863,49 +1139,12 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
                 );
                 if (hitBgImg) {
                   setSelectedCanvasImgId(hitBgImg.id);
+                  setSelectedCanvasAudioId(null);
                 }
               }}
               data-placeholder="Start writing..."
-              className="wiki-editor-content min-h-[55vh] pb-8 pointer-events-auto"
+              className="wiki-editor-content min-h-[65vh] pb-20 pointer-events-auto"
             />
-
-            {/* Attached Audio & Voice Recordings Section inside Canvas */}
-            {audioAttachments.length > 0 && (
-              <div className="mt-4 space-y-2 border-t border-[var(--wiki-hairline)] pt-4 pb-10 pointer-events-auto">
-                {audioAttachments.map((aud) => (
-                  <div
-                    key={aud.id}
-                    className="flex flex-col gap-1.5 border border-[var(--wiki-border)] bg-[var(--wiki-surface)] p-2.5"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <Volume2 className="h-4 w-4 shrink-0 text-[#3366cc]" />
-                        <span className="truncate text-xs font-semibold text-[var(--wiki-text)]">
-                          {aud.name}
-                        </span>
-                      </div>
-                      {!isReadingMode && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setAudioAttachments((prev) => {
-                              const next = prev.filter((item) => item.id !== aud.id);
-                              pushCanvasSnapshot({ audioAttachments: next });
-                              return next;
-                            });
-                          }}
-                          className="text-[var(--wiki-muted)] hover:text-[#b32424]"
-                          title="Delete audio"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      )}
-                    </div>
-                    <audio controls src={aud.dataUrl} className="h-9 w-full" />
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
         </div>
       </div>
@@ -932,10 +1171,21 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
           onOpenMediaImageStudio={(rawDataUrl) => setRawMediaStudioImage(rawDataUrl)}
           onAddAudioAttachment={(aud) => {
             setAudioAttachments((prev) => {
-              const next = [...prev, aud];
+              const next: CanvasAudioAttachment[] = [
+                ...prev,
+                {
+                  ...aud,
+                  x: 24 + (prev.length * 18) % 90,
+                  y: 120 + (prev.length * 88) % 260,
+                  width: 285,
+                  layer: 'foreground',
+                },
+              ];
               pushCanvasSnapshot({ audioAttachments: next });
               return next;
             });
+            setSelectedCanvasAudioId(aud.id);
+            setSelectedCanvasImgId(null);
           }}
           customFonts={customFonts}
           onAddCustomFont={onAddCustomFont}
@@ -982,12 +1232,13 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
               return next;
             });
             setSelectedCanvasImgId(newId);
+            setSelectedCanvasAudioId(null);
             setRawMediaStudioImage(null);
           }}
         />
       )}
 
-      {/* Reminder Date & Time Modal — Immediately persists log & schedules Android OS Alarm */}
+      {/* Reminder Date & Time Modal — Preserves creation & modification stamps when only reminder is changed */}
       {showReminderModal && (
         <ReminderModal
           currentReminder={reminderAt}
@@ -995,7 +1246,8 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
           onClose={() => setShowReminderModal(false)}
           onSaveReminder={(ts) => {
             setReminderAt(ts);
-            const { log } = buildCurrentLogObject(ts);
+            const contentEdited = hasContentChangedFromInitial();
+            const { log } = buildCurrentLogObject(ts, !initialLog || contentEdited);
             scheduleAndroidNativeReminder(
               log.id,
               `Likkho: ${log.heading}`,

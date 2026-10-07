@@ -1,8 +1,10 @@
 /**
- * AES-256-GCM Authenticated Encryption Architecture
+ * AES-256-GCM Authenticated Encryption Architecture + Android SAF (Storage Access Framework)
  * - Derives a 256-bit key from user's passphrase via PBKDF2 (100,000 iterations + random 16-byte salt)
  * - Encrypts with a fresh 12-byte IV producing ciphertext + 128-bit GCM Authentication Tag stored in JSON format
- * - Persists to public storage hidden folder (/storage/emulated/0/.likkho_backups/) with a .nomedia file
+ * - Uses Android SAF System File Picker (ACTION_OPEN_DOCUMENT_TREE) to create a hidden subfolder (.likkho_backups)
+ *   with a .nomedia file inside the user's chosen directory (e.g., Documents), allowing targetSdkVersion = 34
+ *   with zero Google Play Protect warnings while surviving app reinstalls.
  */
 
 export interface CanvasDraggableImage {
@@ -24,6 +26,10 @@ export interface CanvasAudioAttachment {
   dataUrl: string;
   durationSec?: number;
   createdAt: number;
+  x?: number;
+  y?: number;
+  width?: number;
+  layer?: 'foreground' | 'background';
 }
 
 export interface CustomFontItem {
@@ -52,6 +58,8 @@ export interface DiaryLog {
   updatedAt: number;
   dateStamp: string;
   timeStamp: string;
+  updatedDateStamp?: string;
+  updatedTimeStamp?: string;
   reminderAt: number | null;
   reminderFired?: boolean;
   pinned?: boolean;
@@ -309,7 +317,10 @@ export async function loadActiveAppStateFromIDB<T>(key: string): Promise<T | nul
   }
 }
 
-// Write to /storage/emulated/0/.likkho_backups/ with .nomedia + OPFS + IndexedDB mirror
+/**
+ * Write encrypted backup via Android SAF (Storage Access Framework) into `<ChosenBaseDir>/.likkho_backups/likkho_encrypted_vault.json`
+ * with `.nomedia` file. If no SAF directory is selected yet, Android automatically launches the SAF System Directory Picker!
+ */
 export async function writeToPrivateSpecialFolder(
   encryptedEnvelope: string,
   entryCount: number,
@@ -317,18 +328,28 @@ export async function writeToPrivateSpecialFolder(
 ): Promise<EncryptedVaultMetadata> {
   const now = Date.now();
   const sizeBytes = new Blob([encryptedEnvelope]).size;
-  const vaultPath = `/storage/emulated/0/${VAULT_FOLDER_NAME}/${VAULT_FILE_NAME}`;
+  const vaultPath = `SAF/${VAULT_FOLDER_NAME}/${VAULT_FILE_NAME}`;
 
-  // 1. Write to Native Android hidden folder (/storage/emulated/0/.likkho_backups/ with .nomedia)
-  try {
-    if (window.LikkhoNative && typeof window.LikkhoNative.writePersistentVaultBackup === 'function') {
+  // 1. If running in Native Android WebView, use SAF (Storage Access Framework)
+  if (window.LikkhoNative) {
+    if (typeof window.LikkhoNative.saveBackupViaSaf === 'function') {
+      await new Promise<void>((resolve, reject) => {
+        window.__onLikkhoSafBackupResult = (success: boolean, message?: string) => {
+          window.__onLikkhoSafBackupResult = undefined;
+          if (success) {
+            resolve();
+          } else {
+            reject(new Error(message || 'Backup cancelled or folder not selected.'));
+          }
+        };
+        window.LikkhoNative?.saveBackupViaSaf?.(encryptedEnvelope);
+      });
+    } else if (typeof window.LikkhoNative.writePersistentVaultBackup === 'function') {
       window.LikkhoNative.writePersistentVaultBackup(encryptedEnvelope);
     }
-  } catch {
-    // ignore
   }
 
-  // 2. Write to OPFS
+  // 2. Mirror to OPFS
   try {
     if (navigator.storage && typeof navigator.storage.getDirectory === 'function') {
       const rootDir = await navigator.storage.getDirectory();
@@ -346,7 +367,7 @@ export async function writeToPrivateSpecialFolder(
     // Fallback to IndexedDB
   }
 
-  // 3. Write to IndexedDB
+  // 3. Mirror to IndexedDB
   try {
     const db = await openPrivateVaultDB();
     await new Promise<void>((resolve, reject) => {
@@ -380,33 +401,72 @@ export async function writeToPrivateSpecialFolder(
   };
 }
 
+/**
+ * Read encrypted backup from Android SAF (`<ChosenBaseDir>/.likkho_backups/likkho_encrypted_vault.json`).
+ * If the app was freshly reinstalled and hasn't been granted the SAF directory URI yet, Android automatically
+ * opens the SAF System Directory Picker so the user picks their base folder (e.g., Documents) once and Likkho
+ * immediately reads `.likkho_backups/likkho_encrypted_vault.json` inside it!
+ */
 export async function readFromPrivateSpecialFolder(): Promise<{
   metadata: EncryptedVaultMetadata;
   encryptedEnvelope: string | null;
 }> {
-  const defaultPath = `/storage/emulated/0/${VAULT_FOLDER_NAME}/${VAULT_FILE_NAME}`;
+  const defaultPath = `SAF/${VAULT_FOLDER_NAME}/${VAULT_FILE_NAME}`;
 
-  // 1. Auto-scan Native Android /storage/emulated/0/.likkho_backups/ FIRST (survives app uninstall & reinstall!)
-  try {
-    if (window.LikkhoNative && typeof window.LikkhoNative.readPersistentVaultBackup === 'function') {
-      const nativeEnvelope = window.LikkhoNative.readPersistentVaultBackup();
-      if (nativeEnvelope && nativeEnvelope.trim().length > 0) {
-        const parsed = JSON.parse(nativeEnvelope);
-        return {
-          metadata: {
-            exists: true,
-            lastBackupAt: parsed.createdAt || Date.now(),
-            entryCount: parsed.count || 0,
-            vaultPath: defaultPath,
-            sizeBytes: new Blob([nativeEnvelope]).size,
-            keyHintHash: null,
-          },
-          encryptedEnvelope: nativeEnvelope,
+  // 1. Check Native Android SAF backup first
+  if (window.LikkhoNative) {
+    if (typeof window.LikkhoNative.restoreBackupViaSaf === 'function') {
+      const safEnvelope = await new Promise<string>((resolve) => {
+        window.__onLikkhoSafRestoreResult = (success: boolean, payload?: string) => {
+          window.__onLikkhoSafRestoreResult = undefined;
+          if (success && payload && payload.trim().length > 0) {
+            resolve(payload);
+          } else {
+            resolve('');
+          }
         };
+        window.LikkhoNative?.restoreBackupViaSaf?.();
+      });
+
+      if (safEnvelope && safEnvelope.trim().length > 0) {
+        try {
+          const parsed = JSON.parse(safEnvelope);
+          return {
+            metadata: {
+              exists: true,
+              lastBackupAt: parsed.createdAt || Date.now(),
+              entryCount: parsed.count || 0,
+              vaultPath: defaultPath,
+              sizeBytes: new Blob([safEnvelope]).size,
+              keyHintHash: null,
+            },
+            encryptedEnvelope: safEnvelope,
+          };
+        } catch {
+          // ignore
+        }
+      }
+    } else if (typeof window.LikkhoNative.readPersistentVaultBackup === 'function') {
+      try {
+        const nativeEnvelope = window.LikkhoNative.readPersistentVaultBackup();
+        if (nativeEnvelope && nativeEnvelope.trim().length > 0) {
+          const parsed = JSON.parse(nativeEnvelope);
+          return {
+            metadata: {
+              exists: true,
+              lastBackupAt: parsed.createdAt || Date.now(),
+              entryCount: parsed.count || 0,
+              vaultPath: defaultPath,
+              sizeBytes: new Blob([nativeEnvelope]).size,
+              keyHintHash: null,
+            },
+            encryptedEnvelope: nativeEnvelope,
+          };
+        }
+      } catch {
+        // ignore
       }
     }
-  } catch {
-    // Continue to IndexedDB check
   }
 
   // 2. Check IndexedDB

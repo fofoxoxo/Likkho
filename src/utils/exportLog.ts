@@ -8,6 +8,10 @@ declare global {
       saveExportedFile?: (base64Data: string, filename: string, mimeType: string) => void;
       writePersistentVaultBackup?: (envelope: string) => boolean;
       readPersistentVaultBackup?: () => string;
+      saveBackupViaSaf?: (envelope: string) => void;
+      restoreBackupViaSaf?: () => void;
+      chooseSafBaseFolder?: () => void;
+      getSafBaseFolderName?: () => string;
       pickVaultBackupFile?: () => void;
       authenticateBiometric?: () => void;
       cancelBiometricPrompt?: () => void;
@@ -26,6 +30,9 @@ declare global {
     __onLikkhoDeviceLockBackupResult?: (success: boolean, message?: string) => void;
     __onLikkhoNativeMicFinished?: (base64Wav: string, durationSec: number) => void;
     __onLikkhoVaultFilePicked?: (envelope: string) => void;
+    __onLikkhoSafBackupResult?: (success: boolean, message?: string) => void;
+    __onLikkhoSafRestoreResult?: (success: boolean, payload?: string) => void;
+    __onLikkhoSafFolderSelected?: (folderName: string) => void;
   }
 }
 
