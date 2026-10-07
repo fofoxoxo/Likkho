@@ -197,6 +197,29 @@
   cursor: pointer;
 }
 
+/* Passcode-Protected Spoiler Text on Canvas */
+.wiki-editor-content span[data-wiki-spoiler="true"].wiki-spoiler-locked {
+  display: inline-block;
+  filter: blur(6px) contrast(1.8);
+  background-color: rgba(120, 125, 132, 0.35);
+  border-radius: 2px;
+  padding: 0 3px;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: filter 0.15s ease;
+}
+
+.wiki-editor-content span[data-wiki-spoiler="true"].wiki-spoiler-unlocked {
+  display: inline;
+  filter: none;
+  background-color: rgba(51, 102, 204, 0.12);
+  border-bottom: 1px dashed #3366cc;
+  border-radius: 2px;
+  padding: 0 2px;
+  cursor: pointer;
+}
+
 /* Custom subtle scrollbars */
 ::-webkit-scrollbar {
   width: 5px;

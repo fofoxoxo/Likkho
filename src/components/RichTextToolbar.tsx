@@ -35,6 +35,10 @@ import {
   CaseSensitive,
   ALargeSmall,
   Upload,
+  EyeOff,
+  Lock,
+  Unlock,
+  FileUp,
 } from 'lucide-react';
 import {
   CanvasAudioAttachment,
@@ -45,6 +49,7 @@ import {
   finalizeRecordedAudioToDataUrl,
   getMimeTypeForFormat,
 } from '../utils/audioRecorder';
+import { parseImportedFileToHtml } from '../utils/importFileToCanvas';
 
 interface RichTextToolbarProps {
   editorRef: React.RefObject<HTMLDivElement | null>;
@@ -59,6 +64,9 @@ interface RichTextToolbarProps {
   customFonts: CustomFontItem[];
   onAddCustomFont: (font: CustomFontItem) => void;
   micSettings: MicRecordingSettings;
+  diaryLockPin?: string | null;
+  onChangeDiaryLockPin?: (pin: string | null) => void;
+  onImportDocument?: (title: string, html: string) => void;
 }
 
 interface ActiveFormats {
@@ -148,6 +156,9 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
   customFonts,
   onAddCustomFont,
   micSettings,
+  diaryLockPin,
+  onChangeDiaryLockPin,
+  onImportDocument,
 }) => {
   const [showColorPicker, setShowColorPicker] = useState<'text' | 'highlight' | null>(null);
   const [showLinkInput, setShowLinkInput] = useState<boolean>(false);
@@ -155,6 +166,10 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
   const [showFontPanel, setShowFontPanel] = useState<boolean>(false);
   const [showSizePanel, setShowSizePanel] = useState<boolean>(false);
   const [showMediaPickerMenu, setShowMediaPickerMenu] = useState<boolean>(false);
+  const [showSpoilerPopover, setShowSpoilerPopover] = useState<boolean>(false);
+  const [spoilerPin, setSpoilerPin] = useState<string>('');
+  const [showDiaryLockPopover, setShowDiaryLockPopover] = useState<boolean>(false);
+  const [diaryPinInput, setDiaryPinInput] = useState<string>('');
 
   const [linkUrl, setLinkUrl] = useState<string>('https://');
   const [selectedTextPreview, setSelectedTextPreview] = useState<string>('');
@@ -181,6 +196,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
   const mediaImageInputRef = useRef<HTMLInputElement | null>(null);
   const mediaAudioInputRef = useRef<HTMLInputElement | null>(null);
   const ttfFontInputRef = useRef<HTMLInputElement | null>(null);
+  const importDocInputRef = useRef<HTMLInputElement | null>(null);
 
   const [activeFormats, setActiveFormats] = useState<ActiveFormats>({
     bold: false,
@@ -218,6 +234,8 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     setShowFontPanel(false);
     setShowSizePanel(false);
     setShowMediaPickerMenu(false);
+    setShowSpoilerPopover(false);
+    setShowDiaryLockPopover(false);
   };
 
   const findAncestorTag = (node: Node | null, tags: string[]): HTMLElement | null => {
@@ -1460,6 +1478,126 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     e.target.value = '';
   };
 
+  // Selection-Scoped Passcode Spoiler Tool
+  const handleToggleSpoilerTool = () => {
+    saveCurrentSelection();
+    const sel = window.getSelection();
+    const range = savedRangeRef.current;
+
+    if (range) {
+      const existingSpoiler =
+        findAncestorByAttr(range.commonAncestorContainer, 'data-wiki-spoiler') ||
+        findAncestorByAttr(range.startContainer, 'data-wiki-spoiler') ||
+        findAncestorByAttr(range.endContainer, 'data-wiki-spoiler');
+
+      if (existingSpoiler) {
+        unwrapElement(existingSpoiler);
+        checkActiveFormats();
+        onContentChange();
+        showBriefHint('Spoiler removed.');
+        return;
+      }
+    }
+
+    if (!sel || !range || range.collapsed || sel.toString().trim().length === 0) {
+      showBriefHint('Select text first to apply Spoiler');
+      return;
+    }
+
+    setSelectedTextPreview(sel.toString().trim().slice(0, 24));
+    const next = !showSpoilerPopover;
+    closeAllPopovers();
+    setSpoilerPin('');
+    setShowSpoilerPopover(next);
+  };
+
+  const handleApplySpoiler = (e: React.FormEvent) => {
+    e.preventDefault();
+    const pin = spoilerPin.trim();
+    if (!pin) {
+      showBriefHint('Please enter a passcode for this spoiler.');
+      return;
+    }
+
+    const range = restoreSavedSelection();
+    const sel = window.getSelection();
+    if (!sel || !range || range.collapsed || !editorRef.current) {
+      setShowSpoilerPopover(false);
+      return;
+    }
+
+    const span = document.createElement('span');
+    span.className = 'wiki-spoiler-locked';
+    span.setAttribute('data-wiki-spoiler', 'true');
+    span.setAttribute('data-spoiler-pin', btoa(unescape(encodeURIComponent(pin))));
+    span.appendChild(range.extractContents());
+    range.insertNode(span);
+
+    // Place cursor cleanly after the spoiler span
+    const afterSpace = document.createTextNode('\u200B');
+    if (span.parentNode) {
+      span.parentNode.insertBefore(afterSpace, span.nextSibling);
+      const newRange = document.createRange();
+      newRange.setStart(afterSpace, 1);
+      newRange.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(newRange);
+      savedRangeRef.current = newRange.cloneRange();
+    }
+
+    setShowSpoilerPopover(false);
+    setSpoilerPin('');
+    checkActiveFormats();
+    onContentChange();
+    showBriefHint('Spoiler applied. Tap blurred text to unlock with passcode.');
+  };
+
+  // Individual Diary Lock Tool
+  const handleApplyDiaryLock = (e: React.FormEvent) => {
+    e.preventDefault();
+    const pin = diaryPinInput.trim();
+    if (!pin) {
+      showBriefHint('Enter a passcode to lock this diary.');
+      return;
+    }
+    if (onChangeDiaryLockPin) {
+      onChangeDiaryLockPin(pin);
+    }
+    setDiaryPinInput('');
+    setShowDiaryLockPopover(false);
+    showBriefHint('Diary Lock passcode set for this entry.');
+  };
+
+  const handleRemoveDiaryLock = () => {
+    if (onChangeDiaryLockPin) {
+      onChangeDiaryLockPin(null);
+    }
+    setDiaryPinInput('');
+    setShowDiaryLockPopover(false);
+    showBriefHint('Diary Lock removed from this entry.');
+  };
+
+  // Multi-Format Document Import Tool (TXT, MD, RTF, CSV, JSON, XML, PDF, DOCX, DOC, ODT, HTML, EPUB, LOG)
+  const handleImportFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const result = await parseImportedFileToHtml(file);
+      if (onImportDocument) {
+        onImportDocument(result.title, result.html);
+      } else if (editorRef.current) {
+        editorRef.current.innerHTML =
+          (editorRef.current.innerHTML ? editorRef.current.innerHTML + '<hr>' : '') +
+          result.html;
+        onContentChange();
+      }
+      showBriefHint(`Imported ${result.format}: ${file.name}`);
+    } catch {
+      showBriefHint('Could not import selected file.');
+    }
+    e.target.value = '';
+  };
+
   const getBtnClass = (isActive: boolean = false) =>
     `flex h-9 min-w-[36px] shrink-0 items-center justify-center rounded-xs border px-2 text-xs font-medium transition-colors ${
       isActive
@@ -1496,6 +1634,13 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
         type="file"
         accept=".ttf,.otf,.woff,.woff2"
         onChange={handleTtfFileUpload}
+        className="hidden"
+      />
+      <input
+        ref={importDocInputRef}
+        type="file"
+        accept=".txt,.md,.rtf,.csv,.tsv,.json,.xml,.pdf,.docx,.doc,.odt,.html,.htm,.epub,.log,text/plain,text/markdown,text/csv,application/json,text/xml,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.oasis.opendocument.text,text/html,application/epub+zip"
+        onChange={handleImportFileSelected}
         className="hidden"
       />
 
@@ -1771,6 +1916,80 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
           <button
             type="button"
             onClick={() => setShowLinkInput(false)}
+            className="h-8 shrink-0 px-1.5 text-xs text-[var(--wiki-muted)]"
+          >
+            ✕
+          </button>
+        </form>
+      )}
+
+      {/* Popover Row: Passcode Spoiler for Selected Text */}
+      {showSpoilerPopover && (
+        <form
+          onSubmit={handleApplySpoiler}
+          className="flex w-full items-center gap-1.5 border-b border-[var(--wiki-hairline)] bg-[var(--wiki-bg)] px-3 py-2"
+        >
+          <EyeOff className="h-4 w-4 shrink-0 text-[#3366cc]" />
+          <input
+            type="password"
+            value={spoilerPin}
+            onChange={(e) => setSpoilerPin(e.target.value)}
+            placeholder="Set Spoiler Passcode..."
+            className="h-8 min-w-0 flex-1 border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-2.5 text-xs text-[var(--wiki-text)] outline-none focus:border-[#3366cc]"
+            autoFocus
+          />
+          <button
+            type="submit"
+            className="h-8 shrink-0 bg-[#3366cc] px-3 text-xs font-semibold text-white"
+          >
+            Apply Spoiler
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowSpoilerPopover(false)}
+            className="h-8 shrink-0 px-1.5 text-xs text-[var(--wiki-muted)]"
+          >
+            ✕
+          </button>
+        </form>
+      )}
+
+      {/* Popover Row: Individual Diary Lock Passcode */}
+      {showDiaryLockPopover && (
+        <form
+          onSubmit={handleApplyDiaryLock}
+          className="flex w-full items-center gap-1.5 border-b border-[var(--wiki-hairline)] bg-[var(--wiki-bg)] px-3 py-2"
+        >
+          <Lock className="h-4 w-4 shrink-0 text-[#b32424]" />
+          <input
+            type="password"
+            value={diaryPinInput}
+            onChange={(e) => setDiaryPinInput(e.target.value)}
+            placeholder={
+              diaryLockPin ? 'Change Diary Lock Passcode...' : 'Set Diary Lock Passcode...'
+            }
+            className="h-8 min-w-0 flex-1 border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-2.5 text-xs text-[var(--wiki-text)] outline-none focus:border-[#3366cc]"
+            autoFocus
+          />
+          <button
+            type="submit"
+            className="h-8 shrink-0 bg-[#3366cc] px-3 text-xs font-semibold text-white"
+          >
+            {diaryLockPin ? 'Update' : 'Lock Diary'}
+          </button>
+          {diaryLockPin && (
+            <button
+              type="button"
+              onClick={handleRemoveDiaryLock}
+              className="flex h-8 shrink-0 items-center gap-1 border border-[#b32424]/50 bg-[#b32424]/10 px-2.5 text-xs font-semibold text-[#b32424]"
+            >
+              <Unlock className="h-3.5 w-3.5" />
+              Unlock
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setShowDiaryLockPopover(false)}
             className="h-8 shrink-0 px-1.5 text-xs text-[var(--wiki-muted)]"
           >
             ✕
@@ -2218,7 +2437,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
 
         <span className="mx-0.5 h-5 w-[1px] shrink-0 bg-[var(--wiki-border)] opacity-50" />
 
-        {/* Subscript, Superscript, Timestamp */}
+        {/* Subscript, Superscript, Spoiler, Diary Lock, Import Document, Timestamp */}
         <button
           type="button"
           onMouseDown={preventFocusLoss}
@@ -2237,6 +2456,55 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
         >
           <Subscript className="h-4 w-4" />
         </button>
+
+        <span className="mx-0.5 h-5 w-[1px] shrink-0 bg-[var(--wiki-border)] opacity-50" />
+
+        {/* Passcode-Protected Spoiler Tool (Selected Text Only) */}
+        <button
+          type="button"
+          onMouseDown={preventFocusLoss}
+          onClick={handleToggleSpoilerTool}
+          className={getBtnClass(showSpoilerPopover)}
+          title="Spoiler (Blur Selected Text with Passcode)"
+        >
+          <EyeOff className="h-4 w-4" />
+        </button>
+
+        {/* Individual Diary Lock Tool */}
+        <button
+          type="button"
+          onMouseDown={preventFocusLoss}
+          onClick={() => {
+            saveCurrentSelection();
+            const next = !showDiaryLockPopover;
+            closeAllPopovers();
+            setShowDiaryLockPopover(next);
+          }}
+          className={
+            diaryLockPin
+              ? 'flex h-9 min-w-[36px] shrink-0 items-center justify-center rounded-xs border border-[#b32424] bg-[#b32424] px-2 text-xs font-medium text-white shadow-2xs'
+              : getBtnClass(showDiaryLockPopover)
+          }
+          title={diaryLockPin ? 'Diary Locked (Tap to Change/Unlock)' : 'Lock This Diary Entry'}
+        >
+          <Lock className="h-4 w-4" />
+        </button>
+
+        {/* Multi-Format Import Document Tool (TXT, MD, RTF, CSV, JSON, XML, PDF, DOCX, DOC, ODT, HTML, EPUB, LOG) */}
+        <button
+          type="button"
+          onMouseDown={preventFocusLoss}
+          onClick={() => {
+            saveCurrentSelection();
+            triggerAndroidMediaPermission();
+            importDocInputRef.current?.click();
+          }}
+          className={getBtnClass(false)}
+          title="Import Document (TXT, MD, RTF, CSV, JSON, XML, PDF, DOCX, DOC, ODT, HTML, EPUB, LOG)"
+        >
+          <FileUp className="h-4 w-4" />
+        </button>
+
         <button
           type="button"
           onMouseDown={preventFocusLoss}

@@ -13,6 +13,10 @@ import {
   ZoomOut,
   Layers,
   Pencil,
+  Eye,
+  Lock,
+  X,
+  Gauge,
 } from 'lucide-react';
 import {
   CanvasAudioAttachment,
@@ -47,13 +51,30 @@ interface CanvasHistorySnapshot {
   canvasBgOpacity: number;
   canvasImages: CanvasDraggableImage[];
   audioAttachments: CanvasAudioAttachment[];
+  diaryLockPin: string | null;
 }
+
+const AUDIO_SPEED_OPTIONS = [1, 1.25, 1.5, 2];
 
 function stripHtmlToSingleLine(html: string): string {
   const temp = document.createElement('div');
   temp.innerHTML = html;
+  // Mask spoiler spans in plain text preview so hidden text never leaks on homepage
+  temp.querySelectorAll('span[data-wiki-spoiler="true"]').forEach((el) => {
+    el.textContent = '••••';
+  });
   const text = temp.textContent || temp.innerText || '';
-  return text.replace(/\s+/g, ' ').trim();
+  return text.replace(/[\u200B]+/g, '').replace(/\s+/g, ' ').trim();
+}
+
+function normalizeSpoilersToLockedForSave(rawHtml: string): string {
+  const temp = document.createElement('div');
+  temp.innerHTML = rawHtml;
+  temp.querySelectorAll('span[data-wiki-spoiler="true"]').forEach((el) => {
+    el.classList.remove('wiki-spoiler-unlocked');
+    el.classList.add('wiki-spoiler-locked');
+  });
+  return temp.innerHTML;
 }
 
 function formatDateStamp(ms: number): string {
@@ -97,6 +118,9 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
   const [reminderAt, setReminderAt] = useState<number | null>(
     initialLog?.reminderAt || null
   );
+  const [diaryLockPin, setDiaryLockPin] = useState<string | null>(
+    initialLog?.diaryLockPin || null
+  );
   const [canvasBgDataUrl, setCanvasBgDataUrl] = useState<string | null>(
     initialLog?.canvasBgDataUrl || null
   );
@@ -111,12 +135,14 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
       ...a,
       x: a.x ?? 24 + (idx * 20) % 80,
       y: a.y ?? 140 + idx * 88,
-      width: a.width ?? 285,
+      width: a.width ?? 270,
+      rotation: a.rotation ?? 0,
+      playbackRate: a.playbackRate ?? 1,
       layer: a.layer ?? 'foreground',
     }))
   );
 
-  // Full-Canvas Undo & Redo History Stack (tracks text, formatting, fonts, images, background, audio, heading, PFP)
+  // Full-Canvas Undo & Redo History Stack
   const historyStackRef = useRef<CanvasHistorySnapshot[]>([]);
   const historyIndexRef = useRef<number>(0);
   const isRestoringHistoryRef = useRef<boolean>(false);
@@ -125,10 +151,10 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
   // Header 1:1 PFP Cropper state
   const [rawSelectedImage, setRawSelectedImage] = useState<string | null>(null);
 
-  // Media Picker Image Studio state (22+ filters, crop, adjustments, transparency)
+  // Media Picker Image Studio state
   const [rawMediaStudioImage, setRawMediaStudioImage] = useState<string | null>(null);
 
-  // Free-dragging + 2-finger pinch resize & rotate state for canvas images
+  // Free-dragging + 2-finger pinch resize & rotate state for Canvas Images
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const [dragOffset, setDragOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [selectedCanvasImgId, setSelectedCanvasImgId] = useState<string | null>(null);
@@ -141,13 +167,26 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     startRotation: number;
   } | null>(null);
 
-  // Free-dragging state for Canvas Audio Players
+  // Free-dragging + 2-finger pinch resize & rotate state for Canvas Audio Players
   const [selectedCanvasAudioId, setSelectedCanvasAudioId] = useState<string | null>(null);
   const [activeAudioDragId, setActiveAudioDragId] = useState<string | null>(null);
   const [audioDragOffset, setAudioDragOffset] = useState<{ x: number; y: number }>({
     x: 0,
     y: 0,
   });
+  const audioPointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const audioPinchInitialRef = useRef<{
+    id: string;
+    dist: number;
+    angle: number;
+    startWidth: number;
+    startRotation: number;
+  } | null>(null);
+
+  // Spoiler Unlock Modal state (when user taps a blurred spoiler span on the Canvas)
+  const [activeSpoilerSpan, setActiveSpoilerSpan] = useState<HTMLElement | null>(null);
+  const [spoilerUnlockInput, setSpoilerUnlockInput] = useState<string>('');
+  const [spoilerUnlockError, setSpoilerUnlockError] = useState<string | null>(null);
 
   const [showReminderModal, setShowReminderModal] = useState<boolean>(false);
   const [savedIndicator, setSavedIndicator] = useState<boolean>(false);
@@ -166,7 +205,9 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
       ...a,
       x: a.x ?? 24 + (idx * 20) % 80,
       y: a.y ?? 140 + idx * 88,
-      width: a.width ?? 285,
+      width: a.width ?? 270,
+      rotation: a.rotation ?? 0,
+      playbackRate: a.playbackRate ?? 1,
       layer: a.layer ?? 'foreground',
     }));
     const initialSnap: CanvasHistorySnapshot = {
@@ -177,6 +218,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
       canvasBgOpacity: initialLog?.canvasBgOpacity ?? 0.25,
       canvasImages: JSON.parse(JSON.stringify(initialLog?.canvasImages || [])),
       audioAttachments: JSON.parse(JSON.stringify(normalizedAudios)),
+      diaryLockPin: initialLog?.diaryLockPin || null,
     };
     historyStackRef.current = [initialSnap];
     historyIndexRef.current = 0;
@@ -187,11 +229,15 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     if (!initialLog) return true;
     const initialSnap = historyStackRef.current[0];
     if (!initialSnap) return false;
-    const currentHtml = editorRef.current ? editorRef.current.innerHTML : '';
+    const currentHtml = editorRef.current
+      ? normalizeSpoilersToLockedForSave(editorRef.current.innerHTML)
+      : '';
+    const initialNormalizedHtml = normalizeSpoilersToLockedForSave(initialSnap.contentHtml);
 
     if (heading.trim() !== initialSnap.heading.trim()) return true;
     if (pfpDataUrl !== initialSnap.pfpDataUrl) return true;
-    if (currentHtml !== initialSnap.contentHtml) return true;
+    if (currentHtml !== initialNormalizedHtml) return true;
+    if (diaryLockPin !== initialSnap.diaryLockPin) return true;
     if (canvasBgDataUrl !== initialSnap.canvasBgDataUrl) return true;
     if (Math.abs(canvasBgOpacity - initialSnap.canvasBgOpacity) > 0.001) return true;
     if (JSON.stringify(canvasImages) !== JSON.stringify(initialSnap.canvasImages)) return true;
@@ -233,6 +279,8 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
             : audioAttachments
         )
       ),
+      diaryLockPin:
+        overrides?.diaryLockPin !== undefined ? overrides.diaryLockPin : diaryLockPin,
     };
 
     const currentTop = historyStackRef.current[historyIndexRef.current];
@@ -257,6 +305,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     setCanvasBgOpacity(snap.canvasBgOpacity);
     setCanvasImages(JSON.parse(JSON.stringify(snap.canvasImages)));
     setAudioAttachments(JSON.parse(JSON.stringify(snap.audioAttachments)));
+    setDiaryLockPin(snap.diaryLockPin);
     if (editorRef.current && editorRef.current.innerHTML !== snap.contentHtml) {
       editorRef.current.innerHTML = snap.contentHtml;
     }
@@ -296,6 +345,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
   };
 
   // Build a DiaryLog object from current workspace state:
+  // - If content is empty, plainPreview stays '' (empty string, never "Reminder scheduled.")!
   // - Creation dateStamp & timeStamp NEVER change once created!
   // - Modification updatedDateStamp & updatedTimeStamp ONLY update when actual content is edited!
   const buildCurrentLogObject = (
@@ -305,7 +355,9 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     log: DiaryLog;
     hasAnyEntry: boolean;
   } => {
-    const rawHtml = editorRef.current ? editorRef.current.innerHTML : '';
+    const rawHtml = editorRef.current
+      ? normalizeSpoilersToLockedForSave(editorRef.current.innerHTML)
+      : '';
     const plainPreview = stripHtmlToSingleLine(rawHtml);
     const trimmedHeading = heading.trim();
     const effectiveReminder =
@@ -344,13 +396,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
       id: stableLogIdRef.current,
       heading: trimmedHeading || (plainPreview.slice(0, 40) || 'Untitled Entry'),
       contentHtml: rawHtml,
-      plainPreview:
-        plainPreview ||
-        (audioAttachments.length > 0
-          ? `Audio attachment (${audioAttachments[0].name})`
-          : canvasImages.length > 0
-          ? `Image attachment (${canvasImages.length})`
-          : 'Reminder scheduled.'),
+      plainPreview, // Strictly empty '' if no text content!
       pfpDataUrl,
       createdAt: createdAtMs,
       updatedAt: updatedAtMs,
@@ -364,6 +410,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
           ? false
           : initialLog?.reminderFired,
       pinned: initialLog?.pinned || false,
+      diaryLockPin,
       canvasBgDataUrl,
       canvasBgOpacity,
       canvasImages,
@@ -375,8 +422,11 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
 
   // Handle Back / Exit:
   // - If viewing an existing log without any edits, exit WITHOUT modifying timestamps!
-  // - If user edited or created a new log with content, save with updated modification timestamp.
   const handleExitWorkspace = () => {
+    if (activeSpoilerSpan) {
+      setActiveSpoilerSpan(null);
+      return;
+    }
     const contentEdited = hasContentChangedFromInitial();
     if (initialLog && !contentEdited) {
       onExitWithoutSave();
@@ -388,7 +438,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
       scheduleAndroidNativeReminder(
         log.id,
         `Likkho: ${log.heading}`,
-        log.plainPreview,
+        log.plainPreview || log.heading,
         log.reminderAt
       );
       onSaveLog(log, true);
@@ -403,7 +453,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     }
   });
 
-  // Handle explicit Save button tap — only updates modification timestamp if content was edited (or new entry)
+  // Handle explicit Save button tap
   const handleExplicitSave = () => {
     const contentEdited = hasContentChangedFromInitial();
     const { log, hasAnyEntry } = buildCurrentLogObject(
@@ -416,7 +466,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     scheduleAndroidNativeReminder(
       log.id,
       `Likkho: ${log.heading}`,
-      log.plainPreview,
+      log.plainPreview || log.heading,
       log.reminderAt
     );
     onSaveLog(log, false);
@@ -440,11 +490,29 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     e.target.value = '';
   };
 
-  // Open links in browser when tapped
+  // Handle clicks inside Editor:
+  // 1. Check if user clicked a Passcode-Protected Spoiler span (`data-wiki-spoiler="true"`)
+  // 2. Otherwise check if user clicked a hyperlink `<a>`
   const handleEditorClick = (e: React.MouseEvent<HTMLDivElement>) => {
     setSelectedCanvasImgId(null);
     setSelectedCanvasAudioId(null);
     const target = e.target as HTMLElement;
+
+    const spoilerEl = target.closest('span[data-wiki-spoiler="true"]') as HTMLElement | null;
+    if (spoilerEl) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (spoilerEl.classList.contains('wiki-spoiler-unlocked')) {
+        spoilerEl.classList.remove('wiki-spoiler-unlocked');
+        spoilerEl.classList.add('wiki-spoiler-locked');
+      } else {
+        setActiveSpoilerSpan(spoilerEl);
+        setSpoilerUnlockInput('');
+        setSpoilerUnlockError(null);
+      }
+      return;
+    }
+
     const anchor = target.closest('a') as HTMLAnchorElement | null;
     if (anchor && anchor.href) {
       e.preventDefault();
@@ -456,6 +524,28 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
       document.body.appendChild(tempLink);
       tempLink.click();
       document.body.removeChild(tempLink);
+    }
+  };
+
+  const handleVerifySpoilerUnlock = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeSpoilerSpan) return;
+    const encodedPin = activeSpoilerSpan.getAttribute('data-spoiler-pin') || '';
+    let expectedPin = '';
+    try {
+      expectedPin = decodeURIComponent(escape(atob(encodedPin)));
+    } catch {
+      expectedPin = '';
+    }
+
+    if (spoilerUnlockInput.trim() === expectedPin) {
+      activeSpoilerSpan.classList.remove('wiki-spoiler-locked');
+      activeSpoilerSpan.classList.add('wiki-spoiler-unlocked');
+      setActiveSpoilerSpan(null);
+      setSpoilerUnlockInput('');
+      setSpoilerUnlockError(null);
+    } else {
+      setSpoilerUnlockError('Incorrect spoiler passcode.');
     }
   };
 
@@ -544,7 +634,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     }
   };
 
-  // Pointer drag handlers for Canvas Audio Player Cards (active in Edit Mode)
+  // Pointer drag + 2-finger pinch resize & rotate handlers for Canvas Audio Player Cards (active in Edit Mode)
   const handleStartDragAudio = (
     e: React.PointerEvent<HTMLDivElement>,
     aud: CanvasAudioAttachment
@@ -554,15 +644,62 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     e.currentTarget.setPointerCapture(e.pointerId);
     setSelectedCanvasAudioId(aud.id);
     setSelectedCanvasImgId(null);
-    setActiveAudioDragId(aud.id);
-    setAudioDragOffset({
-      x: e.clientX - (aud.x ?? 24),
-      y: e.clientY - (aud.y ?? 140),
-    });
+
+    audioPointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (audioPointersRef.current.size === 2) {
+      const pts = Array.from(audioPointersRef.current.values());
+      const dist = Math.max(10, Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y));
+      const angle = (Math.atan2(pts[1].y - pts[0].y, pts[1].x - pts[0].x) * 180) / Math.PI;
+      audioPinchInitialRef.current = {
+        id: aud.id,
+        dist,
+        angle,
+        startWidth: aud.width ?? 270,
+        startRotation: aud.rotation ?? 0,
+      };
+      setActiveAudioDragId(null);
+    } else if (audioPointersRef.current.size === 1) {
+      setActiveAudioDragId(aud.id);
+      setAudioDragOffset({
+        x: e.clientX - (aud.x ?? 24),
+        y: e.clientY - (aud.y ?? 140),
+      });
+    }
   };
 
   const handleMoveDragAudio = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (isReadingMode || !activeAudioDragId) return;
+    if (isReadingMode) return;
+    if (audioPointersRef.current.has(e.pointerId)) {
+      audioPointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    }
+
+    if (audioPointersRef.current.size === 2 && audioPinchInitialRef.current) {
+      e.stopPropagation();
+      const pts = Array.from(audioPointersRef.current.values());
+      const dist = Math.max(10, Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y));
+      const angle = (Math.atan2(pts[1].y - pts[0].y, pts[1].x - pts[0].x) * 180) / Math.PI;
+
+      const scale = dist / audioPinchInitialRef.current.dist;
+      const nextWidth = Math.min(
+        420,
+        Math.max(190, Math.round(audioPinchInitialRef.current.startWidth * scale))
+      );
+      const deltaAngle = angle - audioPinchInitialRef.current.angle;
+      const nextRotation = Math.round(audioPinchInitialRef.current.startRotation + deltaAngle);
+      const targetId = audioPinchInitialRef.current.id;
+
+      setAudioAttachments((prev) =>
+        prev.map((item) =>
+          item.id === targetId
+            ? { ...item, width: nextWidth, rotation: nextRotation }
+            : item
+        )
+      );
+      return;
+    }
+
+    if (!activeAudioDragId || audioPointersRef.current.size !== 1) return;
     e.stopPropagation();
     const nextX = Math.max(0, e.clientX - audioDragOffset.x);
     const nextY = Math.max(0, e.clientY - audioDragOffset.y);
@@ -575,12 +712,11 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
 
   const handleEndDragAudio = (e: React.PointerEvent<HTMLDivElement>) => {
     if (isReadingMode) return;
-    if (activeAudioDragId) {
-      try {
-        e.currentTarget.releasePointerCapture(e.pointerId);
-      } catch {
-        // ignore
-      }
+    audioPointersRef.current.delete(e.pointerId);
+    if (audioPointersRef.current.size < 2) {
+      audioPinchInitialRef.current = null;
+    }
+    if (audioPointersRef.current.size === 0) {
       setActiveAudioDragId(null);
       pushCanvasSnapshot();
     }
@@ -668,7 +804,10 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
             )}
           </button>
 
-          <div className="flex-1 min-w-0">
+          <div className="flex flex-1 items-center gap-1.5 min-w-0">
+            {diaryLockPin && (
+              <Lock className="h-4 w-4 shrink-0 text-[#b32424]" title="Diary Locked" />
+            )}
             <input
               type="text"
               value={heading}
@@ -775,7 +914,6 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
       {selectedCanvasImage && (
         <div className="relative z-30 flex flex-wrap items-center justify-between gap-2 border-b border-[#3366cc] bg-[var(--wiki-surface)] px-3 py-1.5 text-xs">
           <div className="flex items-center gap-1.5 overflow-x-auto">
-            {/* Resize Buttons */}
             <button
               type="button"
               onClick={() =>
@@ -811,7 +949,6 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
               <span>Size +</span>
             </button>
 
-            {/* Rotate Buttons */}
             <button
               type="button"
               onClick={() =>
@@ -847,7 +984,6 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
               <span>+15°</span>
             </button>
 
-            {/* Background vs Foreground Toggle (Text covers image vs Image covers text) */}
             <button
               type="button"
               onClick={() =>
@@ -904,9 +1040,9 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
         </div>
       )}
 
-      {/* Selected Canvas Audio Player Control Bar: Width (-/+), Layer (Behind Text / Over Text), Delete */}
+      {/* Selected Canvas Audio Player Toolbar: Size (-/+), Rotate (-15°/+15°), Speed (1x..2x), Layer (BG/FG), Delete */}
       {selectedCanvasAudio && (
-        <div className="relative z-30 flex flex-wrap items-center justify-between gap-2 border-b border-[#3366cc] bg-[var(--wiki-surface)] px-3 py-1.5 text-xs">
+        <div className="relative z-30 flex flex-wrap items-center justify-between gap-2 border-b border-[#b32424] bg-[var(--wiki-surface)] px-3 py-1.5 text-xs">
           <div className="flex items-center gap-1.5 overflow-x-auto">
             <button
               type="button"
@@ -914,13 +1050,13 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
                 updateAudioAttachmentsWithHistory((prev) =>
                   prev.map((a) =>
                     a.id === selectedCanvasAudio.id
-                      ? { ...a, width: Math.max(220, (a.width ?? 285) - 20) }
+                      ? { ...a, width: Math.max(190, (a.width ?? 270) - 20) }
                       : a
                   )
                 )
               }
               className="flex h-7 items-center gap-1 border border-[var(--wiki-border)] bg-[var(--wiki-bg)] px-2 font-semibold hover:border-[#3366cc]"
-              title="Narrower Audio Player"
+              title="Smaller Audio Player"
             >
               <ZoomOut className="h-3.5 w-3.5 text-[#3366cc]" />
               <span>Size -</span>
@@ -931,16 +1067,74 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
                 updateAudioAttachmentsWithHistory((prev) =>
                   prev.map((a) =>
                     a.id === selectedCanvasAudio.id
-                      ? { ...a, width: Math.min(420, (a.width ?? 285) + 20) }
+                      ? { ...a, width: Math.min(420, (a.width ?? 270) + 20) }
                       : a
                   )
                 )
               }
               className="flex h-7 items-center gap-1 border border-[var(--wiki-border)] bg-[var(--wiki-bg)] px-2 font-semibold hover:border-[#3366cc]"
-              title="Wider Audio Player"
+              title="Larger Audio Player"
             >
               <ZoomIn className="h-3.5 w-3.5 text-[#3366cc]" />
               <span>Size +</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() =>
+                updateAudioAttachmentsWithHistory((prev) =>
+                  prev.map((a) =>
+                    a.id === selectedCanvasAudio.id
+                      ? { ...a, rotation: ((a.rotation || 0) - 15) % 360 }
+                      : a
+                  )
+                )
+              }
+              className="flex h-7 items-center gap-1 border border-[var(--wiki-border)] bg-[var(--wiki-bg)] px-2 font-semibold hover:border-[#3366cc]"
+              title="Rotate Left 15°"
+            >
+              <RotateCcw className="h-3.5 w-3.5 text-[#3366cc]" />
+              <span>-15°</span>
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                updateAudioAttachmentsWithHistory((prev) =>
+                  prev.map((a) =>
+                    a.id === selectedCanvasAudio.id
+                      ? { ...a, rotation: ((a.rotation || 0) + 15) % 360 }
+                      : a
+                  )
+                )
+              }
+              className="flex h-7 items-center gap-1 border border-[var(--wiki-border)] bg-[var(--wiki-bg)] px-2 font-semibold hover:border-[#3366cc]"
+              title="Rotate Right 15°"
+            >
+              <RotateCw className="h-3.5 w-3.5 text-[#3366cc]" />
+              <span>+15°</span>
+            </button>
+
+            {/* Playback Speed Button in Audio Toolbar */}
+            <button
+              type="button"
+              onClick={() => {
+                const curSpeed = selectedCanvasAudio.playbackRate || 1;
+                const nextIdx =
+                  (AUDIO_SPEED_OPTIONS.indexOf(curSpeed) + 1) % AUDIO_SPEED_OPTIONS.length;
+                const nextSpeed = AUDIO_SPEED_OPTIONS[nextIdx];
+                updateAudioAttachmentsWithHistory((prev) =>
+                  prev.map((a) =>
+                    a.id === selectedCanvasAudio.id
+                      ? { ...a, playbackRate: nextSpeed }
+                      : a
+                  )
+                );
+              }}
+              className="flex h-7 items-center gap-1 border border-[var(--wiki-border)] bg-[var(--wiki-bg)] px-2 font-wiki-mono font-bold text-[var(--wiki-text)] hover:border-[#3366cc]"
+              title="Change Playback Speed"
+            >
+              <Gauge className="h-3.5 w-3.5 text-[#b32424]" />
+              <span>Speed {selectedCanvasAudio.playbackRate || 1}x</span>
             </button>
 
             {/* Background vs Foreground Toggle for Audio Card */}
@@ -984,10 +1178,11 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
                 );
                 setSelectedCanvasAudioId(null);
               }}
-              className="flex h-7 items-center gap-1 border border-[#b32424]/40 bg-[#b32424]/10 px-2 font-semibold text-[#b32424]"
+              className="flex h-7 items-center gap-1 border border-[#b32424] bg-[#b32424] px-2.5 font-semibold text-white hover:bg-[#941d1d]"
               title="Delete audio"
             >
               <Trash2 className="h-3.5 w-3.5" />
+              <span>Delete</span>
             </button>
             <button
               type="button"
@@ -1072,7 +1267,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
             );
           })}
 
-          {/* Free-Draggable App-Themed Audio Player Cards on Canvas (with Foreground / Background Layer support) */}
+          {/* Free-Draggable, Pinch-Resizable & Pinch-Rotatable Opaque Red Audio Players on Canvas */}
           {audioAttachments.map((aud) => (
             <CanvasAudioPlayerCard
               key={aud.id}
@@ -1112,8 +1307,8 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
                 const hitBgAudio = audioAttachments.find((aud) => {
                   const ax = aud.x ?? 24;
                   const ay = aud.y ?? 140;
-                  const aw = aud.width ?? 285;
-                  const ah = 86;
+                  const aw = aud.width ?? 270;
+                  const ah = 64;
                   return (
                     aud.layer === 'background' &&
                     clickX >= ax &&
@@ -1176,8 +1371,10 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
                 {
                   ...aud,
                   x: 24 + (prev.length * 18) % 90,
-                  y: 120 + (prev.length * 88) % 260,
-                  width: 285,
+                  y: 120 + (prev.length * 76) % 260,
+                  width: 270,
+                  rotation: 0,
+                  playbackRate: 1,
                   layer: 'foreground',
                 },
               ];
@@ -1190,7 +1387,95 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
           customFonts={customFonts}
           onAddCustomFont={onAddCustomFont}
           micSettings={micSettings}
+          diaryLockPin={diaryLockPin}
+          onChangeDiaryLockPin={(pin) => {
+            setDiaryLockPin(pin);
+            pushCanvasSnapshot({ diaryLockPin: pin });
+          }}
+          onImportDocument={(importedTitle, importedHtml) => {
+            const nextHeading = heading.trim() ? heading : importedTitle;
+            if (!heading.trim() && importedTitle) {
+              setHeading(importedTitle);
+            }
+            if (editorRef.current) {
+              const current = editorRef.current.innerHTML.trim();
+              const combined = current ? `${current}<hr>${importedHtml}` : importedHtml;
+              editorRef.current.innerHTML = combined;
+              pushCanvasSnapshot({
+                heading: nextHeading,
+                contentHtml: combined,
+              });
+            }
+          }}
         />
+      )}
+
+      {/* Unlock Spoiler Text Passcode Modal */}
+      {activeSpoilerSpan && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs"
+          onClick={() => setActiveSpoilerSpan(null)}
+        >
+          <div
+            className="w-full max-w-xs border border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-text)] shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-[var(--wiki-hairline)] bg-[var(--wiki-surface)] px-4 py-3">
+              <div className="flex items-center gap-2">
+                <Eye className="h-4 w-4 text-[#3366cc]" />
+                <h3 className="font-wiki-serif text-base font-bold">
+                  Unlock Spoiler
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveSpoilerSpan(null)}
+                className="flex h-7 w-7 items-center justify-center text-[var(--wiki-muted)] hover:text-[var(--wiki-text)]"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleVerifySpoilerUnlock} className="p-4 space-y-3">
+              {spoilerUnlockError && (
+                <p className="text-xs font-medium text-[#b32424]">
+                  {spoilerUnlockError}
+                </p>
+              )}
+              <div>
+                <label className="mb-1 block text-xs font-medium text-[var(--wiki-text)]">
+                  Enter Spoiler Passcode
+                </label>
+                <input
+                  type="password"
+                  value={spoilerUnlockInput}
+                  onChange={(e) => {
+                    setSpoilerUnlockInput(e.target.value);
+                    setSpoilerUnlockError(null);
+                  }}
+                  placeholder="Passcode..."
+                  className="h-9 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3 text-xs text-[var(--wiki-text)] outline-none focus:border-[#3366cc]"
+                  autoFocus
+                />
+              </div>
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveSpoilerSpan(null)}
+                  className="h-9 border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3 text-xs font-medium text-[var(--wiki-text)]"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="h-9 bg-[#3366cc] px-4 text-xs font-semibold text-white"
+                >
+                  View Text
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
 
       {/* 1:1 Mandatory Image Cropper Modal before setting Header PFP */}
@@ -1251,7 +1536,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
             scheduleAndroidNativeReminder(
               log.id,
               `Likkho: ${log.heading}`,
-              log.plainPreview,
+              log.plainPreview || log.heading,
               ts
             );
             onSaveLog(log, false);

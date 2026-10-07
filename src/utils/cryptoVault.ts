@@ -29,6 +29,8 @@ export interface CanvasAudioAttachment {
   x?: number;
   y?: number;
   width?: number;
+  rotation?: number;
+  playbackRate?: number;
   layer?: 'foreground' | 'background';
 }
 
@@ -63,6 +65,7 @@ export interface DiaryLog {
   reminderAt: number | null;
   reminderFired?: boolean;
   pinned?: boolean;
+  diaryLockPin?: string | null;
   canvasBgDataUrl?: string | null;
   canvasBgOpacity?: number;
   canvasImages?: CanvasDraggableImage[];

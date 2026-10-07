@@ -204,11 +204,17 @@ export default function App() {
   const [isSearchOpen, setIsSearchOpen] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>('');
 
-  // 3-dots menu, Export modal & Delete Confirmation Modal states
+  // 3-dots menu, Export modal, Delete Confirmation Modal & Locked Diary Prompt states
   const [openMenuLogId, setOpenMenuLogId] = useState<string | null>(null);
   const [exportingLog, setExportingLog] = useState<DiaryLog | null>(null);
   const [exportStatusBanner, setExportStatusBanner] = useState<string | null>(null);
   const [pendingDeleteLog, setPendingDeleteLog] = useState<DiaryLog | null>(null);
+  const [pendingUnlockDiary, setPendingUnlockDiary] = useState<{
+    log: DiaryLog;
+    action: 'open' | 'export';
+  } | null>(null);
+  const [diaryUnlockInput, setDiaryUnlockInput] = useState<string>('');
+  const [diaryUnlockError, setDiaryUnlockError] = useState<string | null>(null);
 
   // Active ringing Android notification alert banner
   const [ringingAlert, setRingingAlert] = useState<{
@@ -311,6 +317,10 @@ export default function App() {
   // "User agar App me homepage ke alawa kisi aur page par ho to back karne par pahle homepage par aayega fir back hoga"
   useEffect(() => {
     window.__handleLikkhoAndroidBack = () => {
+      if (pendingUnlockDiary) {
+        setPendingUnlockDiary(null);
+        return 'HANDLED';
+      }
       if (pendingDeleteLog) {
         setPendingDeleteLog(null);
         return 'HANDLED';
@@ -723,7 +733,15 @@ export default function App() {
                 return (
                   <article
                     key={log.id}
-                    onClick={() => navigateTo('workspace', log)}
+                    onClick={() => {
+                      if (log.diaryLockPin) {
+                        setPendingUnlockDiary({ log, action: 'open' });
+                        setDiaryUnlockInput('');
+                        setDiaryUnlockError(null);
+                      } else {
+                        navigateTo('workspace', log);
+                      }
+                    }}
                     className="group relative flex cursor-pointer items-center gap-3.5 px-4 py-3.5 hover:bg-[var(--wiki-surface)] active:bg-[var(--wiki-hairline)] transition-colors"
                   >
                     {/* 1:1 Square PFP */}
@@ -736,19 +754,29 @@ export default function App() {
                       />
                     </div>
 
-                    {/* Log Details: Heading, 1-line preview, date stamp · time stamp */}
+                    {/* Log Details: Heading (+ Lock Icon if locked), 1-line preview (empty if no content), Created & Modified stamps */}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5">
                         {log.pinned && (
                           <Pin className="h-3.5 w-3.5 shrink-0 text-[#3366cc] fill-[#3366cc]" />
+                        )}
+                        {log.diaryLockPin && (
+                          <Lock
+                            className="h-3.5 w-3.5 shrink-0 text-[#b32424]"
+                            title="Locked Diary"
+                          />
                         )}
                         <h2 className="font-wiki-serif text-lg font-bold leading-snug text-[var(--wiki-text)] group-hover:text-[#3366cc] truncate">
                           {log.heading}
                         </h2>
                       </div>
 
-                      <p className="mt-0.5 truncate font-wiki-prose text-xs text-[var(--wiki-muted)]">
-                        {log.plainPreview}
+                      <p className="mt-0.5 min-h-[1rem] truncate font-wiki-prose text-xs text-[var(--wiki-muted)]">
+                        {log.diaryLockPin
+                          ? ''
+                          : log.plainPreview === 'Reminder scheduled.'
+                          ? ''
+                          : log.plainPreview}
                       </p>
 
                       <div className="mt-1.5 flex flex-col gap-0.5 font-wiki-mono text-[10px] text-[var(--wiki-muted)]">
@@ -848,7 +876,13 @@ export default function App() {
                             type="button"
                             onClick={() => {
                               setOpenMenuLogId(null);
-                              setExportingLog(log);
+                              if (log.diaryLockPin) {
+                                setPendingUnlockDiary({ log, action: 'export' });
+                                setDiaryUnlockInput('');
+                                setDiaryUnlockError(null);
+                              } else {
+                                setExportingLog(log);
+                              }
                             }}
                             className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-xs font-medium text-[var(--wiki-text)] hover:bg-[var(--wiki-surface)]"
                           >
@@ -883,6 +917,93 @@ export default function App() {
             <Plus className="h-5 w-5" />
             <span className="font-wiki-serif text-base tracking-wide">Create</span>
           </button>
+        </div>
+      )}
+
+      {/* Individual Locked Diary Passcode Verification Modal */}
+      {pendingUnlockDiary && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs"
+          onClick={() => setPendingUnlockDiary(null)}
+        >
+          <div
+            className="w-full max-w-xs border border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-text)] shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-[var(--wiki-hairline)] bg-[var(--wiki-surface)] px-4 py-3">
+              <div className="flex items-center gap-2 min-w-0">
+                <Lock className="h-4 w-4 shrink-0 text-[#b32424]" />
+                <h3 className="font-wiki-serif text-base font-bold truncate">
+                  Unlock "{pendingUnlockDiary.log.heading}"
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPendingUnlockDiary(null)}
+                className="flex h-7 w-7 items-center justify-center text-[var(--wiki-muted)] hover:text-[var(--wiki-text)]"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (diaryUnlockInput.trim() === pendingUnlockDiary.log.diaryLockPin) {
+                  const targetLog = pendingUnlockDiary.log;
+                  const act = pendingUnlockDiary.action;
+                  setPendingUnlockDiary(null);
+                  setDiaryUnlockInput('');
+                  setDiaryUnlockError(null);
+                  if (act === 'open') {
+                    navigateTo('workspace', targetLog);
+                  } else {
+                    setExportingLog(targetLog);
+                  }
+                } else {
+                  setDiaryUnlockError('Incorrect diary passcode.');
+                }
+              }}
+              className="p-4 space-y-3"
+            >
+              {diaryUnlockError && (
+                <p className="text-xs font-medium text-[#b32424]">
+                  {diaryUnlockError}
+                </p>
+              )}
+              <div>
+                <label className="mb-1 block text-xs font-medium text-[var(--wiki-text)]">
+                  Enter Diary Passcode
+                </label>
+                <input
+                  type="password"
+                  value={diaryUnlockInput}
+                  onChange={(e) => {
+                    setDiaryUnlockInput(e.target.value);
+                    setDiaryUnlockError(null);
+                  }}
+                  placeholder="Passcode..."
+                  className="h-9 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3 text-xs text-[var(--wiki-text)] outline-none focus:border-[#3366cc]"
+                  autoFocus
+                />
+              </div>
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPendingUnlockDiary(null)}
+                  className="h-9 border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3 text-xs font-medium text-[var(--wiki-text)]"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="h-9 bg-[#3366cc] px-4 text-xs font-semibold text-white"
+                >
+                  Unlock
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
 

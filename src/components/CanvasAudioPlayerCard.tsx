@@ -1,11 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import {
-  Play,
-  Pause,
-  Volume2,
-  VolumeX,
-  GripHorizontal,
-} from 'lucide-react';
+import { Play, Pause } from 'lucide-react';
 import { CanvasAudioAttachment } from '../utils/cryptoVault';
 
 interface CanvasAudioPlayerCardProps {
@@ -29,8 +23,6 @@ function formatAudioSeconds(sec: number): string {
   return `${String(mins).padStart(2, '0')}:${String(rem).padStart(2, '0')}`;
 }
 
-const SPEED_OPTIONS = [1, 1.25, 1.5, 2];
-
 export const CanvasAudioPlayerCard: React.FC<CanvasAudioPlayerCardProps> = ({
   audio,
   isReadingMode,
@@ -44,8 +36,6 @@ export const CanvasAudioPlayerCard: React.FC<CanvasAudioPlayerCardProps> = ({
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [currentTime, setCurrentTime] = useState<number>(0);
   const [duration, setDuration] = useState<number>(audio.durationSec || 0);
-  const [isMuted, setIsMuted] = useState<boolean>(false);
-  const [playbackRate, setPlaybackRate] = useState<number>(1);
 
   useEffect(() => {
     const el = audioElRef.current;
@@ -81,10 +71,19 @@ export const CanvasAudioPlayerCard: React.FC<CanvasAudioPlayerCardProps> = ({
     };
   }, [audio.dataUrl]);
 
+  // Sync playbackRate from toolbar state
+  useEffect(() => {
+    const el = audioElRef.current;
+    if (el) {
+      el.playbackRate = audio.playbackRate || 1;
+    }
+  }, [audio.playbackRate]);
+
   const togglePlayPause = (e: React.MouseEvent) => {
     e.stopPropagation();
     const el = audioElRef.current;
     if (!el) return;
+    el.playbackRate = audio.playbackRate || 1;
     if (isPlaying) {
       el.pause();
     } else {
@@ -102,38 +101,19 @@ export const CanvasAudioPlayerCard: React.FC<CanvasAudioPlayerCardProps> = ({
     }
   };
 
-  const toggleMute = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    const el = audioElRef.current;
-    if (!el) return;
-    const next = !isMuted;
-    el.muted = next;
-    setIsMuted(next);
-  };
-
-  const cyclePlaybackSpeed = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    const el = audioElRef.current;
-    if (!el) return;
-    const nextIdx = (SPEED_OPTIONS.indexOf(playbackRate) + 1) % SPEED_OPTIONS.length;
-    const nextSpeed = SPEED_OPTIONS[nextIdx];
-    el.playbackRate = nextSpeed;
-    setPlaybackRate(nextSpeed);
-  };
-
   const isBehindText = audio.layer === 'background';
   const computedZIndex = isSelected ? 26 : isBehindText ? 6 : 21;
   const xPos = audio.x ?? 24;
   const yPos = audio.y ?? 140;
-  const cardWidth = audio.width ?? 285;
+  const cardWidth = audio.width ?? 270;
+  const rotationDeg = audio.rotation ?? 0;
   const effectiveDuration = duration > 0 ? duration : audio.durationSec || 1;
 
   return (
     <div
       onPointerDown={(e) => {
-        // Don't start dragging if user is interacting with range slider or playback buttons
         const target = e.target as HTMLElement;
-        if (target.closest('[data-audio-interactive="true"]')) {
+        if (target.closest('[data-audio-control="true"]')) {
           return;
         }
         onStartDrag(e, audio);
@@ -152,94 +132,60 @@ export const CanvasAudioPlayerCard: React.FC<CanvasAudioPlayerCardProps> = ({
         left: `${xPos}px`,
         top: `${yPos}px`,
         width: `${cardWidth}px`,
+        transform: `rotate(${rotationDeg}deg)`,
+        transformOrigin: 'center center',
+        backgroundColor: '#b32424',
+        opacity: 1,
         zIndex: computedZIndex,
       }}
-      className={`touch-none select-none border bg-[var(--wiki-surface)] p-2.5 text-[var(--wiki-text)] shadow-sm transition-shadow ${
+      className={`touch-none select-none rounded-none border border-[#7a1616] bg-[#b32424] px-3 py-2 text-white shadow-md ${
         isReadingMode
-          ? 'border-[var(--wiki-border)] pointer-events-auto'
+          ? 'pointer-events-auto'
           : isSelected
-          ? 'cursor-move border-[#3366cc] ring-2 ring-[#3366cc] pointer-events-auto'
-          : 'cursor-move border-[var(--wiki-border)] hover:border-[#3366cc] pointer-events-auto'
+          ? 'cursor-move ring-2 ring-[#3366cc] pointer-events-auto'
+          : 'cursor-move pointer-events-auto'
       }`}
     >
       {/* Hidden native HTML5 Audio Engine */}
       <audio ref={audioElRef} src={audio.dataUrl} preload="metadata" className="hidden" />
 
-      {/* Top Row: Drag Handle + Title + Format Badge */}
-      <div className="mb-2 flex items-center justify-between gap-2 border-b border-[var(--wiki-hairline)] pb-1.5">
-        <div className="flex items-center gap-1.5 min-w-0">
-          {!isReadingMode && (
-            <GripHorizontal className="h-3.5 w-3.5 shrink-0 text-[var(--wiki-muted)]" />
-          )}
-          <Volume2 className="h-3.5 w-3.5 shrink-0 text-[#3366cc]" />
-          <span className="truncate font-wiki-sans text-xs font-semibold text-[var(--wiki-text)]">
-            {audio.name}
-          </span>
-        </div>
-
-        <span className="shrink-0 border border-[var(--wiki-border)] bg-[var(--wiki-bg)] px-1.5 py-0.5 font-wiki-mono text-[10px] font-semibold uppercase text-[var(--wiki-muted)]">
-          {audio.format || 'AUDIO'}
-        </span>
-      </div>
-
-      {/* Bottom Row: App-Themed Play/Pause + Scrubber + Timecode + Speed + Mute */}
-      <div
-        data-audio-interactive="true"
-        className="flex items-center gap-2"
-        onPointerDown={(e) => e.stopPropagation()}
-      >
+      {/* Opaque Red Rectangular Body: Play/Pause Button BEFORE the Slider */}
+      <div className="flex items-center gap-2.5">
         <button
           type="button"
+          data-audio-control="true"
+          onPointerDown={(e) => e.stopPropagation()}
           onClick={togglePlayPause}
-          className="flex h-8 w-8 shrink-0 items-center justify-center bg-[#3366cc] text-white hover:bg-[#2a56b0] active:scale-95 transition-transform"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-none border border-white/40 bg-[#8e1b1b] text-white hover:bg-[#751515] active:scale-95 transition-transform"
           title={isPlaying ? 'Pause' : 'Play'}
           aria-label={isPlaying ? 'Pause audio' : 'Play audio'}
         >
           {isPlaying ? (
-            <Pause className="h-3.5 w-3.5 fill-current" />
+            <Pause className="h-4 w-4 fill-current" />
           ) : (
-            <Play className="h-3.5 w-3.5 fill-current ml-0.5" />
+            <Play className="h-4 w-4 fill-current ml-0.5" />
           )}
         </button>
 
         <div className="flex flex-1 flex-col gap-1 min-w-0">
           <input
             type="range"
+            data-audio-control="true"
+            onPointerDown={(e) => e.stopPropagation()}
             min={0}
             max={effectiveDuration}
             step={0.1}
             value={Math.min(currentTime, effectiveDuration)}
             onChange={handleSeek}
-            className="h-1.5 w-full cursor-pointer accent-[#3366cc]"
+            className="h-1.5 w-full cursor-pointer accent-white"
           />
-          <div className="flex items-center justify-between font-wiki-mono text-[10px] text-[var(--wiki-muted)]">
-            <span>{formatAudioSeconds(currentTime)}</span>
-            <span>{formatAudioSeconds(effectiveDuration)}</span>
+          <div className="flex items-center justify-between font-wiki-mono text-[10px] text-white/90">
+            <span className="truncate max-w-[110px]">{audio.name}</span>
+            <span className="shrink-0">
+              {formatAudioSeconds(currentTime)} / {formatAudioSeconds(effectiveDuration)}
+            </span>
           </div>
         </div>
-
-        <button
-          type="button"
-          onClick={cyclePlaybackSpeed}
-          className="flex h-7 shrink-0 items-center justify-center border border-[var(--wiki-border)] bg-[var(--wiki-bg)] px-1.5 font-wiki-mono text-[10px] font-bold text-[var(--wiki-text)] hover:border-[#3366cc]"
-          title="Playback Speed"
-        >
-          {playbackRate}x
-        </button>
-
-        <button
-          type="button"
-          onClick={toggleMute}
-          className="flex h-7 w-7 shrink-0 items-center justify-center border border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-muted)] hover:border-[#3366cc] hover:text-[var(--wiki-text)]"
-          title={isMuted ? 'Unmute' : 'Mute'}
-          aria-label={isMuted ? 'Unmute' : 'Mute'}
-        >
-          {isMuted ? (
-            <VolumeX className="h-3.5 w-3.5 text-[#b32424]" />
-          ) : (
-            <Volume2 className="h-3.5 w-3.5" />
-          )}
-        </button>
       </div>
     </div>
   );
