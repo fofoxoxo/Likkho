@@ -50,6 +50,10 @@ import {
   getMimeTypeForFormat,
 } from '../utils/audioRecorder';
 import { parseImportedFileToHtml } from '../utils/importFileToCanvas';
+import {
+  buildSpoilerMaskString,
+  encryptSpoilerSecretText,
+} from '../utils/spoilerCipher';
 
 interface RichTextToolbarProps {
   editorRef: React.RefObject<HTMLDivElement | null>;
@@ -1534,21 +1538,38 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
       return;
     }
 
+    const rawSelectedText = sel.toString();
+    const cipherPayload = encryptSpoilerSecretText(rawSelectedText, pin);
+    const maskedDisplay = buildSpoilerMaskString(rawSelectedText.length);
+
     const span = document.createElement('span');
     span.className = 'wiki-spoiler-locked';
     span.contentEditable = 'false';
     span.setAttribute('contenteditable', 'false');
+    span.setAttribute('spellcheck', 'false');
     span.setAttribute('data-wiki-spoiler', 'true');
     span.setAttribute('data-spoiler-pin', btoa(unescape(encodeURIComponent(pin))));
-    span.appendChild(range.extractContents());
+    span.setAttribute('data-spoiler-cipher', cipherPayload);
+    span.setAttribute('data-spoiler-len', String(rawSelectedText.length));
+    span.textContent = maskedDisplay;
+
+    range.deleteContents();
     range.insertNode(span);
 
-    // Place cursor cleanly outside and after the uneditable spoiler span
-    const afterSpace = document.createTextNode('\u00A0');
+    // Place a normal space before and after the uneditable spoiler span so Gboard / IME treats it as an isolated boundary
+    const beforeSpace = document.createTextNode(' ');
+    const afterSpace = document.createTextNode(' ');
     if (span.parentNode) {
+      if (
+        !span.previousSibling ||
+        (span.previousSibling.nodeType === Node.TEXT_NODE &&
+          !/\s$/.test(span.previousSibling.textContent || ''))
+      ) {
+        span.parentNode.insertBefore(beforeSpace, span);
+      }
       span.parentNode.insertBefore(afterSpace, span.nextSibling);
       const newRange = document.createRange();
-      newRange.setStartAfter(afterSpace);
+      newRange.setStart(afterSpace, 1);
       newRange.collapse(true);
       sel.removeAllRanges();
       sel.addRange(newRange);

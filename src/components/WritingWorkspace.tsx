@@ -41,6 +41,11 @@ import { RichTextToolbar } from './RichTextToolbar';
 import { MediaImageStudioModal } from './MediaImageStudioModal';
 import { MediaAudioStudioModal } from './MediaAudioStudioModal';
 import { CanvasAudioPlayerCard } from './CanvasAudioPlayerCard';
+import {
+  buildSpoilerMaskString,
+  decryptSpoilerSecretText,
+  lockAndMaskSpoilerElement,
+} from '../utils/spoilerCipher';
 
 interface WritingWorkspaceProps {
   initialLog: DiaryLog | null;
@@ -131,9 +136,7 @@ function normalizeSpoilersToLockedForSave(rawHtml: string): string {
   const temp = document.createElement('div');
   temp.innerHTML = rawHtml;
   temp.querySelectorAll('span[data-wiki-spoiler="true"]').forEach((el) => {
-    el.classList.remove('wiki-spoiler-unlocked');
-    el.classList.add('wiki-spoiler-locked');
-    el.setAttribute('contenteditable', 'false');
+    lockAndMaskSpoilerElement(el as HTMLElement);
   });
   return temp.innerHTML;
 }
@@ -241,6 +244,13 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
 
   // Selected Canvas Audio Player ID (activated ONLY via Double Tap!)
   const [selectedCanvasAudioId, setSelectedCanvasAudioId] = useState<string | null>(null);
+  const lastAudioSelectTimestampRef = useRef<number>(0);
+
+  const selectAudioCardSafely = (audioId: string) => {
+    lastAudioSelectTimestampRef.current = Date.now();
+    setSelectedCanvasAudioId(audioId);
+    setSelectedCanvasImgId(null);
+  };
 
   // Spoiler Unlock / Disable Modal state (when user taps a blurred spoiler span on the Canvas)
   const [activeSpoilerSpan, setActiveSpoilerSpan] = useState<HTMLElement | null>(null);
@@ -308,7 +318,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
       editorRef.current
         .querySelectorAll('span[data-wiki-spoiler="true"]')
         .forEach((el) => {
-          el.setAttribute('contenteditable', 'false');
+          lockAndMaskSpoilerElement(el as HTMLElement);
         });
       lastValidHtmlWithSpoilersRef.current = editorRef.current.innerHTML;
     }
@@ -576,6 +586,12 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
       const isBack = inputType.includes('Backward');
       if (isBackspaceOrDeleteTouchingSpoiler(range, isBack)) {
         e.preventDefault();
+        // Reset Android Gboard / IME composition buffer by collapsing selection at current safe cursor spot
+        // so the keyboard's internal composing text doesn't desynchronize and delete paragraph words in Gboard!
+        const cloned = range.cloneRange();
+        cloned.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(cloned);
         return;
       }
     } else if (!range.collapsed && selectionContainsSpoiler(range)) {
@@ -874,9 +890,13 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
   };
 
   // Handle clicks inside Editor:
-  // 1. Check if user clicked a Passcode-Protected Spoiler span (`data-wiki-spoiler="true"`)
-  // 2. Otherwise check if user clicked a hyperlink `<a>`
+  // 1. Ignore synthetic ghost clicks that fire within 420ms of double-tapping an Audio Player Card!
+  // 2. Check if user clicked a Passcode-Protected Spoiler span (`data-wiki-spoiler="true"`)
+  // 3. Otherwise check if user clicked a hyperlink `<a>`
   const handleEditorClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (Date.now() - lastAudioSelectTimestampRef.current < 420) {
+      return;
+    }
     setSelectedCanvasImgId(null);
     setSelectedCanvasAudioId(null);
     const target = e.target as HTMLElement;
@@ -885,6 +905,14 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     if (spoilerEl) {
       e.preventDefault();
       e.stopPropagation();
+      // If spoiler is currently unlocked (showing decrypted text), tapping it immediately re-locks & masks it!
+      if (spoilerEl.classList.contains('wiki-spoiler-unlocked')) {
+        lockAndMaskSpoilerElement(spoilerEl);
+        if (editorRef.current) {
+          lastValidHtmlWithSpoilersRef.current = editorRef.current.innerHTML;
+        }
+        return;
+      }
       setActiveSpoilerSpan(spoilerEl);
       setSpoilerUnlockInput('');
       setSpoilerUnlockError(null);
@@ -921,10 +949,22 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     return false;
   };
 
+  const getSpoilerDecryptedPlainText = (el: HTMLElement, pin: string): string => {
+    const cipher = el.getAttribute('data-spoiler-cipher');
+    if (cipher) {
+      const dec = decryptSpoilerSecretText(cipher, pin);
+      if (dec) return dec;
+    }
+    return el.textContent || '';
+  };
+
   const handleVerifySpoilerView = (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeSpoilerSpan) return;
     if (verifySpoilerPasscode()) {
+      const pin = spoilerUnlockInput.trim();
+      const plain = getSpoilerDecryptedPlainText(activeSpoilerSpan, pin);
+      activeSpoilerSpan.textContent = plain;
       activeSpoilerSpan.classList.remove('wiki-spoiler-locked');
       activeSpoilerSpan.classList.add('wiki-spoiler-unlocked');
       activeSpoilerSpan.setAttribute('contenteditable', 'false');
@@ -939,12 +979,12 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     if (!activeSpoilerSpan || !editorRef.current) return;
     if (!verifySpoilerPasscode()) return;
 
+    const pin = spoilerUnlockInput.trim();
+    const plain = getSpoilerDecryptedPlainText(activeSpoilerSpan, pin);
     const parent = activeSpoilerSpan.parentNode;
     if (parent) {
-      while (activeSpoilerSpan.firstChild) {
-        parent.insertBefore(activeSpoilerSpan.firstChild, activeSpoilerSpan);
-      }
-      parent.removeChild(activeSpoilerSpan);
+      const textNode = document.createTextNode(plain);
+      parent.replaceChild(textNode, activeSpoilerSpan);
       lastValidHtmlWithSpoilersRef.current = editorRef.current.innerHTML;
       pushCanvasSnapshot({ contentHtml: editorRef.current.innerHTML });
     }
@@ -1676,6 +1716,13 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
             isReadingMode ? 'cursor-default' : 'cursor-text'
           }`}
           onClick={(e) => {
+            if (Date.now() - lastAudioSelectTimestampRef.current < 420) {
+              return;
+            }
+            const target = e.target as HTMLElement;
+            if (target.closest('[data-canvas-audio-card="true"]')) {
+              return;
+            }
             setSelectedCanvasImgId(null);
             setSelectedCanvasAudioId(null);
             if (!isReadingMode && e.target === e.currentTarget && editorRef.current) {
@@ -1747,8 +1794,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
               isReadingMode={isReadingMode}
               isSelected={!isReadingMode && selectedCanvasAudioId === aud.id}
               onSelect={() => {
-                setSelectedCanvasAudioId(aud.id);
-                setSelectedCanvasImgId(null);
+                selectAudioCardSafely(aud.id);
               }}
             />
           ))}
@@ -1796,8 +1842,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
                     document.activeElement.blur();
                   }
                   window.getSelection()?.removeAllRanges();
-                  setSelectedCanvasAudioId(hitBgAudio.id);
-                  setSelectedCanvasImgId(null);
+                  selectAudioCardSafely(hitBgAudio.id);
                   return;
                 }
 
@@ -1886,8 +1931,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
               pushCanvasSnapshot({ audioAttachments: next });
               return next;
             });
-            setSelectedCanvasAudioId(aud.id);
-            setSelectedCanvasImgId(null);
+            selectAudioCardSafely(aud.id);
           }}
           customFonts={customFonts}
           onAddCustomFont={onAddCustomFont}
@@ -2070,8 +2114,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
               pushCanvasSnapshot({ audioAttachments: next });
               return next;
             });
-            setSelectedCanvasAudioId(newId);
-            setSelectedCanvasImgId(null);
+            selectAudioCardSafely(newId);
             setRawMediaStudioAudio(null);
           }}
         />

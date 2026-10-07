@@ -417,6 +417,85 @@ jobs:
           }
           EOF
 
+          # 2.5 Create LikkhoGifWebView.java:
+          #     - Subclasses CapacitorBridgeWebView and overrides onCreateInputConnection(EditorInfo outAttrs)
+          #     - Explicitly calls EditorInfoCompat.setContentMimeTypes(outAttrs, new String[]{"image/gif", "image/png", "image/webp", "image/jpeg"})
+          #       so Gboard knows the editor supports GIFs & Stickers (never shows "This app doesn't support images here")!
+          #     - Wraps the super InputConnection with InputConnectionCompat.createWrapper(ic, outAttrs, callback)
+          #     - Calls inputContentInfo.requestPermission() to avoid SecurityException on temporary Gboard contentUri
+          #     - Copies the temporary contentUri stream immediately into getCacheDir()/keyboard_gifs/ before temporary access expires,
+          #       encodes to Base64 dataUrl, and delivers to Likkho Canvas without affecting normal keyboard typing!
+          cat << 'EOF' > "$PKG_DIR/LikkhoGifWebView.java"
+          package com.likkho.diary;
+
+          import android.content.Context;
+          import android.os.Build;
+          import android.os.Bundle;
+          import android.util.AttributeSet;
+          import android.view.inputmethod.EditorInfo;
+          import android.view.inputmethod.InputConnection;
+          import androidx.core.view.inputmethod.EditorInfoCompat;
+          import androidx.core.view.inputmethod.InputConnectionCompat;
+          import androidx.core.view.inputmethod.InputContentInfoCompat;
+          import com.getcapacitor.CapacitorBridgeWebView;
+
+          public class LikkhoGifWebView extends CapacitorBridgeWebView {
+              private static final String[] SUPPORTED_GIF_MIMES = new String[]{
+                  "image/gif",
+                  "image/png",
+                  "image/webp",
+                  "image/jpeg"
+              };
+
+              public LikkhoGifWebView(Context context, AttributeSet attrs) {
+                  super(context, attrs);
+              }
+
+              @Override
+              public InputConnection onCreateInputConnection(EditorInfo outAttrs) {
+                  InputConnection ic = super.onCreateInputConnection(outAttrs);
+                  if (ic == null) {
+                      return null;
+                  }
+
+                  // Advertise GIF & Image MIME types in EditorInfo so Gboard enables GIF insertion!
+                  EditorInfoCompat.setContentMimeTypes(outAttrs, SUPPORTED_GIF_MIMES);
+
+                  final InputConnectionCompat.OnCommitContentListener callback =
+                      new InputConnectionCompat.OnCommitContentListener() {
+                          @Override
+                          public boolean onCommitContent(
+                              InputContentInfoCompat inputContentInfo,
+                              int flags,
+                              Bundle opts
+                          ) {
+                              if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N_MR1
+                                  && (flags & InputConnectionCompat.INPUT_CONTENT_GRANT_READ_URI_PERMISSION) != 0) {
+                                  try {
+                                      inputContentInfo.requestPermission();
+                                  } catch (Exception e) {
+                                      return false;
+                                  }
+                              }
+
+                              if (MainActivity.currentInstance != null) {
+                                  MainActivity.currentInstance.handleCommittedKeyboardGif(inputContentInfo);
+                                  return true;
+                              }
+                              return false;
+                          }
+                      };
+
+                  return InputConnectionCompat.createWrapper(ic, outAttrs, callback);
+              }
+          }
+          EOF
+
+          # Patch Capacitor bridge_layout_main.xml to use com.likkho.diary.LikkhoGifWebView so Gboard always connects to LikkhoGifWebView
+          find node_modules/@capacitor/android android -name "bridge_layout_main.xml" 2>/dev/null | while read -r layout_file; do
+            sed -i 's/com.getcapacitor.CapacitorBridgeWebView/com.likkho.diary.LikkhoGifWebView/g' "$layout_file" || true
+          done
+
           # 3. Configure MainActivity.java:
           #    - Uses SAF (Storage Access Framework) System File Picker (ACTION_OPEN_DOCUMENT_TREE)
           #    - User chooses base directory once (e.g., Documents), inside which Likkho automatically creates
@@ -613,18 +692,56 @@ jobs:
               }
 
               private void readAndDeliverKeyboardGifUri(Uri contentUri, WebView webView) {
+                  handleCommittedKeyboardUriInternal(contentUri, null, webView);
+              }
+
+              public void handleCommittedKeyboardGif(final InputContentInfoCompat inputContentInfo) {
+                  if (inputContentInfo == null || this.bridge == null || this.bridge.getWebView() == null) return;
+                  final Uri contentUri = inputContentInfo.getContentUri();
+                  final WebView webView = this.bridge.getWebView();
+                  new Thread(() -> handleCommittedKeyboardUriInternal(contentUri, inputContentInfo, webView)).start();
+              }
+
+              private void handleCommittedKeyboardUriInternal(Uri contentUri, InputContentInfoCompat inputContentInfo, WebView webView) {
+                  if (contentUri == null || webView == null) return;
                   try {
                       ContentResolver cr = getContentResolver();
                       String mime = cr.getType(contentUri);
                       if (mime == null || mime.isEmpty()) {
-                          mime = "image/gif";
+                          if (inputContentInfo != null && inputContentInfo.getDescription().getMimeTypeCount() > 0) {
+                              mime = inputContentInfo.getDescription().getMimeType(0);
+                          }
+                          if (mime == null || mime.isEmpty()) {
+                              mime = "image/gif";
+                          }
                       }
-                      try (InputStream is = cr.openInputStream(contentUri)) {
+
+                      // 1. Immediately copy temporary Gboard contentUri into Likkho's internal cache storage (getCacheDir()/keyboard_gifs)
+                      //    so the GIF remains permanently accessible even after Gboard's temporary URI grant expires!
+                      File gifCacheDir = new File(getCacheDir(), "keyboard_gifs");
+                      if (!gifCacheDir.exists()) {
+                          gifCacheDir.mkdirs();
+                      }
+                      String ext = mime.contains("png") ? ".png" : mime.contains("webp") ? ".webp" : ".gif";
+                      File cachedGifFile = new File(gifCacheDir, "gboard_" + System.currentTimeMillis() + ext);
+
+                      try (InputStream is = cr.openInputStream(contentUri);
+                           FileOutputStream fos = new FileOutputStream(cachedGifFile)) {
                           if (is == null) return;
-                          ByteArrayOutputStream baos = new ByteArrayOutputStream();
                           byte[] buf = new byte[8192];
                           int n;
                           while ((n = is.read(buf)) != -1) {
+                              fos.write(buf, 0, n);
+                          }
+                          fos.flush();
+                      }
+
+                      // 2. Read from internal cached file into Base64 dataUrl and deliver to Canvas
+                      try (FileInputStream fis = new FileInputStream(cachedGifFile)) {
+                          ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                          byte[] buf = new byte[8192];
+                          int n;
+                          while ((n = fis.read(buf)) != -1) {
                               baos.write(buf, 0, n);
                           }
                           final String b64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP);
@@ -637,7 +754,14 @@ jobs:
                               );
                           });
                       }
-                  } catch (Exception ignored) {}
+                  } catch (Exception ignored) {
+                  } finally {
+                      if (inputContentInfo != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.N_MR1) {
+                          try {
+                              inputContentInfo.releasePermission();
+                          } catch (Exception ignored) {}
+                      }
+                  }
               }
 
               public static void deliverFinishedNativeRecordingIfPossible(Context ctx) {

@@ -103,19 +103,24 @@ export const CanvasAudioPlayerCard: React.FC<CanvasAudioPlayerCardProps> = ({
   const effectiveDuration = duration > 0 ? duration : audio.durationSec || 1;
 
   // Strictly ONLY Double-Tap activates editing tools on the Audio Player!
-  // Single tap & drag, pinch, and two-finger drag are completely disabled.
-  const handleDoubleTapOnly = (e: React.PointerEvent<HTMLDivElement>) => {
+  // Triggered on pointerUp so inserting the toolbar row above the canvas NEVER causes a synthetic click on the underlying editor that closes the toolbar!
+  const handlePointerUpDoubleTap = (e: React.PointerEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement;
+    if (target.closest('[data-audio-control="true"]')) {
+      return;
+    }
+    e.preventDefault();
+    e.stopPropagation();
     if (isReadingMode) return;
+
     const now = Date.now();
-    if (now - lastTapTimeRef.current < 320) {
-      e.preventDefault();
-      e.stopPropagation();
+    if (now - lastTapTimeRef.current < 380) {
+      lastTapTimeRef.current = 0;
       if (document.activeElement instanceof HTMLElement) {
         document.activeElement.blur();
       }
       window.getSelection()?.removeAllRanges();
       onSelect();
-      lastTapTimeRef.current = 0;
     } else {
       lastTapTimeRef.current = now;
     }
@@ -123,6 +128,7 @@ export const CanvasAudioPlayerCard: React.FC<CanvasAudioPlayerCardProps> = ({
 
   return (
     <div
+      data-canvas-audio-card="true"
       contentEditable={false}
       onPointerDown={(e) => {
         const target = e.target as HTMLElement;
@@ -131,21 +137,18 @@ export const CanvasAudioPlayerCard: React.FC<CanvasAudioPlayerCardProps> = ({
         }
         e.preventDefault();
         e.stopPropagation();
-        handleDoubleTapOnly(e);
+      }}
+      onPointerUp={handlePointerUpDoubleTap}
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
       }}
       onDoubleClick={(e) => {
         e.preventDefault();
         e.stopPropagation();
         if (!isReadingMode) {
-          if (document.activeElement instanceof HTMLElement) {
-            document.activeElement.blur();
-          }
-          window.getSelection()?.removeAllRanges();
           onSelect();
         }
-      }}
-      onClick={(e) => {
-        e.stopPropagation();
       }}
       style={{
         position: 'absolute',
