@@ -1,5 +1,5 @@
 import React from 'react';
-import { X, Volume2, BookOpenCheck, ExternalLink } from 'lucide-react';
+import { X, BookOpenCheck, ExternalLink } from 'lucide-react';
 import { WordAnalysisRecord } from '../utils/wordAnalysisEngine';
 
 interface WordAnalysisModalProps {
@@ -11,31 +11,6 @@ export const WordAnalysisModal: React.FC<WordAnalysisModalProps> = ({
   record,
   onClose,
 }) => {
-  const handlePlayPronunciation = () => {
-    const audioUrl = record.phonetics.pronunciationAudioUrl;
-    if (audioUrl) {
-      const audio = new Audio(audioUrl);
-      audio.play().catch(() => {
-        speakFallback();
-      });
-      return;
-    }
-    speakFallback();
-  };
-
-  const speakFallback = () => {
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      try {
-        window.speechSynthesis.cancel();
-        const utter = new SpeechSynthesisUtterance(record.word);
-        utter.lang = 'en-US';
-        window.speechSynthesis.speak(utter);
-      } catch {
-        // ignore
-      }
-    }
-  };
-
   const renderBadgeList = (items: string[], emptyLabel: string = 'None detected') => {
     if (!items || items.length === 0) {
       return <span className="text-xs italic text-[var(--wiki-muted)]">{emptyLabel}</span>;
@@ -80,15 +55,6 @@ export const WordAnalysisModal: React.FC<WordAnalysisModalProps> = ({
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={handlePlayPronunciation}
-              className="flex h-8 items-center gap-1.5 border border-[#3366cc] bg-[#3366cc]/10 px-2.5 text-xs font-semibold text-[#3366cc] hover:bg-[#3366cc] hover:text-white transition-colors"
-              title="Play Pronunciation Audio"
-            >
-              <Volume2 className="h-3.5 w-3.5" />
-              <span>Pronounce</span>
-            </button>
-            <button
-              type="button"
               onClick={onClose}
               className="flex h-8 w-8 items-center justify-center border border-transparent text-[var(--wiki-muted)] hover:border-[var(--wiki-border)] hover:text-[var(--wiki-text)]"
               aria-label="Close Word Analysis"
@@ -118,31 +84,11 @@ export const WordAnalysisModal: React.FC<WordAnalysisModalProps> = ({
 
               <div className="border border-[var(--wiki-hairline)] bg-[var(--wiki-bg)] p-2.5">
                 <div className="font-semibold text-[var(--wiki-muted)] mb-1">
-                  Pronunciation Audio
+                  Syllable Metrics
                 </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={handlePlayPronunciation}
-                    className="flex items-center gap-1.5 bg-[#3366cc] px-2.5 py-1 text-xs font-semibold text-white"
-                  >
-                    <Volume2 className="h-3.5 w-3.5" />
-                    <span>
-                      {record.phonetics.pronunciationAudioUrl
-                        ? 'Play Audio Stream'
-                        : 'Synthesize Speech'}
-                    </span>
-                  </button>
+                <div className="font-wiki-mono text-[var(--wiki-text)]">
+                  {record.phonetics.syllableMetrics}
                 </div>
-              </div>
-            </div>
-
-            <div className="border border-[var(--wiki-hairline)] bg-[var(--wiki-bg)] p-2.5">
-              <div className="font-semibold text-[var(--wiki-muted)] mb-1">
-                Syllable Metrics
-              </div>
-              <div className="font-wiki-mono text-[var(--wiki-text)]">
-                {record.phonetics.syllableMetrics}
               </div>
             </div>
 

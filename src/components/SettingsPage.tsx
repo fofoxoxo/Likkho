@@ -84,6 +84,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   onUpdateMicSettings,
 }) => {
   const [showPasscodeModal, setShowPasscodeModal] = useState<boolean>(false);
+  const [showMicModal, setShowMicModal] = useState<boolean>(false);
   // Whether the currently open Set Passcode modal is configuring the covert Secondary Vault (via 10s hold in Primary)
   const [isConfiguringSecondaryViaHold, setIsConfiguringSecondaryViaHold] =
     useState<boolean>(false);
@@ -582,101 +583,156 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             </div>
             <ChevronRight className="h-5 w-5 text-[var(--wiki-muted)]" />
           </button>
-        </section>
 
-        {/* 6. Microphone Recording Settings (Format, Sample Rate, Bitrate) */}
-        <section className="border border-[var(--wiki-border)] bg-[var(--wiki-bg)] p-4 space-y-4">
-          <div className="flex items-center gap-2.5 border-b border-[var(--wiki-hairline)] pb-3">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center border border-[var(--wiki-border)] bg-[var(--wiki-surface)]">
-              <Mic className="h-4 w-4 text-[#3366cc]" />
+          {/* 6. Audio Recording Format & Bitrate Button (Opens Pop-up Modal) */}
+          <button
+            type="button"
+            onClick={() => setShowMicModal(true)}
+            className="flex w-full items-center justify-between px-4 py-4 text-left hover:bg-[var(--wiki-surface)] transition-colors"
+          >
+            <div className="flex items-center gap-3.5">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center border border-[var(--wiki-border)] bg-[var(--wiki-surface)]">
+                <Mic className="h-5 w-5 text-[#3366cc]" />
+              </div>
+              <div>
+                <div className="font-wiki-serif text-base font-bold">
+                  Audio Recording Settings
+                </div>
+                <div className="text-xs text-[var(--wiki-muted)]">
+                  Format: .{micSettings.format} · {(micSettings.sampleRate / 1000).toFixed(1).replace(/\.0$/, '')} kHz · {Math.round(micSettings.bitRate / 1000)} kbps
+                </div>
+              </div>
             </div>
-            <div>
-              <h2 className="font-wiki-serif text-base font-bold">
-                Microphone Recording
-              </h2>
-              <p className="text-xs text-[var(--wiki-muted)]">
-                Audio format, sample rate, and bitrate
-              </p>
-            </div>
-          </div>
-
-          {/* Audio Format Selection */}
-          <div>
-            <label className="mb-1.5 block text-xs font-semibold text-[var(--wiki-text)]">
-              Recording Format
-            </label>
-            <div className="grid grid-cols-4 gap-1.5">
-              {AUDIO_FORMATS.map((fmt) => (
-                <button
-                  key={fmt.id}
-                  type="button"
-                  onClick={() =>
-                    onUpdateMicSettings({ ...micSettings, format: fmt.id })
-                  }
-                  className={`py-2 border font-wiki-mono text-xs font-semibold transition-colors ${
-                    micSettings.format === fmt.id
-                      ? 'border-[#3366cc] bg-[#3366cc] text-white'
-                      : 'border-[var(--wiki-border)] bg-[var(--wiki-surface)] text-[var(--wiki-text)] hover:border-[#3366cc]'
-                  }`}
-                >
-                  {fmt.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Sample Rate & Bitrate */}
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="mb-1 block text-xs font-semibold text-[var(--wiki-text)]">
-                Sample Rate
-              </label>
-              <select
-                value={micSettings.sampleRate}
-                onChange={(e) =>
-                  onUpdateMicSettings({
-                    ...micSettings,
-                    sampleRate: Number(
-                      e.target.value
-                    ) as MicRecordingSettings['sampleRate'],
-                  })
-                }
-                className="h-10 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-2.5 font-wiki-mono text-xs text-[var(--wiki-text)] outline-none focus:border-[#3366cc]"
-              >
-                {SAMPLE_RATES.map((sr) => (
-                  <option key={sr.value} value={sr.value}>
-                    {sr.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="mb-1 block text-xs font-semibold text-[var(--wiki-text)]">
-                Bitrate
-              </label>
-              <select
-                value={micSettings.bitRate}
-                onChange={(e) =>
-                  onUpdateMicSettings({
-                    ...micSettings,
-                    bitRate: Number(
-                      e.target.value
-                    ) as MicRecordingSettings['bitRate'],
-                  })
-                }
-                className="h-10 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-2.5 font-wiki-mono text-xs text-[var(--wiki-text)] outline-none focus:border-[#3366cc]"
-              >
-                {BIT_RATES.map((br) => (
-                  <option key={br.value} value={br.value}>
-                    {br.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
+            <ChevronRight className="h-5 w-5 text-[var(--wiki-muted)]" />
+          </button>
         </section>
       </div>
+
+      {/* Audio Recording Format, Sample Rate & Bitrate Pop-up Modal */}
+      {showMicModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs"
+          onClick={() => setShowMicModal(false)}
+        >
+          <div
+            className="w-full max-w-md border border-[var(--wiki-border)] bg-[var(--wiki-bg)] p-4 text-[var(--wiki-text)] shadow-2xl space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-[var(--wiki-hairline)] pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center border border-[var(--wiki-border)] bg-[var(--wiki-surface)]">
+                  <Mic className="h-4 w-4 text-[#3366cc]" />
+                </div>
+                <div>
+                  <h3 className="font-wiki-serif text-base font-bold">
+                    Audio Recording Settings
+                  </h3>
+                  <p className="text-xs text-[var(--wiki-muted)]">
+                    Configure recording format, sample rate &amp; bitrate
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowMicModal(false)}
+                className="flex h-8 w-8 items-center justify-center border border-transparent text-[var(--wiki-muted)] hover:border-[var(--wiki-border)] hover:text-[var(--wiki-text)]"
+                aria-label="Close Audio Recording Settings"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Audio Format Selection */}
+            <div>
+              <label className="mb-1.5 block text-xs font-semibold text-[var(--wiki-text)]">
+                Recording Format
+              </label>
+              <div className="grid grid-cols-4 gap-1.5">
+                {AUDIO_FORMATS.map((fmt) => (
+                  <button
+                    key={fmt.id}
+                    type="button"
+                    onClick={() =>
+                      onUpdateMicSettings({ ...micSettings, format: fmt.id })
+                    }
+                    className={`py-2 border font-wiki-mono text-xs font-semibold transition-colors ${
+                      micSettings.format === fmt.id
+                        ? 'border-[#3366cc] bg-[#3366cc] text-white'
+                        : 'border-[var(--wiki-border)] bg-[var(--wiki-surface)] text-[var(--wiki-text)] hover:border-[#3366cc]'
+                    }`}
+                  >
+                    {fmt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Sample Rate & Bitrate */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-[var(--wiki-text)]">
+                  Sample Rate
+                </label>
+                <select
+                  value={micSettings.sampleRate}
+                  onChange={(e) =>
+                    onUpdateMicSettings({
+                      ...micSettings,
+                      sampleRate: Number(
+                        e.target.value
+                      ) as MicRecordingSettings['sampleRate'],
+                    })
+                  }
+                  className="h-10 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-2.5 font-wiki-mono text-xs text-[var(--wiki-text)] outline-none focus:border-[#3366cc]"
+                >
+                  {SAMPLE_RATES.map((sr) => (
+                    <option key={sr.value} value={sr.value}>
+                      {sr.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-[var(--wiki-text)]">
+                  Bitrate
+                </label>
+                <select
+                  value={micSettings.bitRate}
+                  onChange={(e) =>
+                    onUpdateMicSettings({
+                      ...micSettings,
+                      bitRate: Number(
+                        e.target.value
+                      ) as MicRecordingSettings['bitRate'],
+                    })
+                  }
+                  className="h-10 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-2.5 font-wiki-mono text-xs text-[var(--wiki-text)] outline-none focus:border-[#3366cc]"
+                >
+                  {BIT_RATES.map((br) => (
+                    <option key={br.value} value={br.value}>
+                      {br.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="flex justify-end border-t border-[var(--wiki-hairline)] pt-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowMicModal(false);
+                  showToast('Audio recording settings saved.');
+                }}
+                className="h-9 bg-[#3366cc] px-5 text-xs font-semibold text-white hover:bg-[#2a56b0]"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Offline Word Analysis Detail Modal */}
       {selectedWordRecord && (

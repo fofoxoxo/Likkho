@@ -176,6 +176,7 @@ async function renderFullDiaryCanvasToJpeg(log: DiaryLog): Promise<{
   pixelHeight: number;
   logicalWidth: number;
   logicalHeight: number;
+  visualSpans: { top: number; bottom: number }[];
 }> {
   const logicalWidth = 768;
   const headerHeight = 96;
@@ -184,6 +185,7 @@ async function renderFullDiaryCanvasToJpeg(log: DiaryLog): Promise<{
 
   const images: CanvasDraggableImage[] = log.canvasImages || [];
   const audios: CanvasAudioAttachment[] = log.audioAttachments || [];
+  const visualSpans: { top: number; bottom: number }[] = [];
 
   // Measure rich text height and collect styled text blocks by mounting a hidden offscreen DOM container
   const host = document.createElement('div');
@@ -198,7 +200,7 @@ async function renderFullDiaryCanvasToJpeg(log: DiaryLog): Promise<{
   host.innerHTML = log.contentHtml || '';
   document.body.appendChild(host);
 
-  const measuredDomHeight = Math.max(420, host.scrollHeight + 80);
+  const measuredDomHeight = Math.max(420, host.scrollHeight + 120);
 
   let maxMediaBottom = 0;
   for (const im of images) {
@@ -320,6 +322,8 @@ async function renderFullDiaryCanvasToJpeg(log: DiaryLog): Promise<{
     const y = headerHeight + (aud.y ?? 140 + idx * 88);
     const rot = ((aud.rotation ?? 0) * Math.PI) / 180;
 
+    visualSpans.push({ top: y - 4, bottom: y + h + 4 });
+
     ctx.save();
     ctx.translate(x + w / 2, y + h / 2);
     ctx.rotate(rot);
@@ -423,12 +427,14 @@ async function renderFullDiaryCanvasToJpeg(log: DiaryLog): Promise<{
     const rotRad = (rotDeg * Math.PI) / 180;
 
     cursorY += 8;
+    const imgTop = cursorY - 4;
     ctx.save();
     ctx.translate(sidePadding + targetW / 2, cursorY + targetH / 2);
     ctx.rotate(rotRad);
     ctx.globalAlpha = alpha;
     ctx.drawImage(loaded, -targetW / 2, -targetH / 2, targetW, targetH);
     ctx.restore();
+    visualSpans.push({ top: imgTop, bottom: cursorY + targetH + 6 });
     cursorY += targetH + 22;
   };
 
@@ -475,6 +481,7 @@ async function renderFullDiaryCanvasToJpeg(log: DiaryLog): Promise<{
           ctx.moveTo(sidePadding, cursorY);
           ctx.lineTo(logicalWidth - sidePadding, cursorY);
           ctx.stroke();
+          visualSpans.push({ top: cursorY - 3, bottom: cursorY + 3 });
           cursorY += 18;
           continue;
         }
@@ -595,6 +602,27 @@ async function renderFullDiaryCanvasToJpeg(log: DiaryLog): Promise<{
     const lineHeight = Math.round(fontSize * 1.6);
     const paragraphs = text.split(/\r?\n/);
 
+    const commitLineAtBaseline = (lineStr: string) => {
+      // Record the exact vertical bounding box of this rendered text line (including ascenders & descenders)
+      // so the A4 page slicer NEVER cuts through the middle of a text line!
+      const lineTop = Math.floor(cursorY - fontSize * 1.15);
+      const lineBottom = Math.ceil(cursorY + fontSize * 0.42);
+      visualSpans.push({ top: lineTop, bottom: lineBottom });
+
+      if (highlightColor && highlightColor !== 'rgba(0, 0, 0, 0)') {
+        c.fillStyle = highlightColor;
+        c.fillRect(
+          startX,
+          cursorY - fontSize,
+          c.measureText(lineStr).width + 4,
+          fontSize + 4
+        );
+      }
+      c.fillStyle = textColor;
+      c.fillText(lineStr, startX, cursorY);
+      cursorY += lineHeight;
+    };
+
     for (const para of paragraphs) {
       const words = para.split(/\s+/);
       let line = '';
@@ -602,36 +630,14 @@ async function renderFullDiaryCanvasToJpeg(log: DiaryLog): Promise<{
         const testLine = line ? `${line} ${words[i]}` : words[i];
         const metrics = c.measureText(testLine);
         if (metrics.width > maxWidth && line) {
-          if (highlightColor && highlightColor !== 'rgba(0, 0, 0, 0)') {
-            c.fillStyle = highlightColor;
-            c.fillRect(
-              startX,
-              cursorY - fontSize,
-              c.measureText(line).width + 4,
-              fontSize + 4
-            );
-          }
-          c.fillStyle = textColor;
-          c.fillText(line, startX, cursorY);
+          commitLineAtBaseline(line);
           line = words[i];
-          cursorY += lineHeight;
         } else {
           line = testLine;
         }
       }
       if (line) {
-        if (highlightColor && highlightColor !== 'rgba(0, 0, 0, 0)') {
-          c.fillStyle = highlightColor;
-          c.fillRect(
-            startX,
-            cursorY - fontSize,
-            c.measureText(line).width + 4,
-            fontSize + 4
-          );
-        }
-        c.fillStyle = textColor;
-        c.fillText(line, startX, cursorY);
-        cursorY += lineHeight;
+        commitLineAtBaseline(line);
       }
     }
   };
@@ -667,13 +673,15 @@ async function renderFullDiaryCanvasToJpeg(log: DiaryLog): Promise<{
     pixelHeight,
     logicalWidth,
     logicalHeight,
+    visualSpans,
   };
 }
 
 /**
  * Renders the DiaryLog into required standard A4 pages (595.28 x 841.89 pt)
- * so external PDF readers can open and paginate the PDF naturally, and the edited
- * Canvas Background Image is properly rendered on every A4 page!
+ * so external PDF readers can open and paginate the PDF naturally, the edited
+ * Canvas Background Image is properly rendered on every A4 page, and NO text line
+ * is ever split/cut in half across two pages!
  */
 async function renderMultiPageA4DiaryPages(log: DiaryLog): Promise<
   {
@@ -693,31 +701,82 @@ async function renderMultiPageA4DiaryPages(log: DiaryLog): Promise<
   const pixelWidth = logicalPageWidth * scale;
   const pixelHeight = logicalPageHeight * scale;
 
-  // Slice the canvas content below the header into A4-sized vertical chunks
-  // Page 1 has Header (96px) + Content slice (logicalPageHeight - headerHeight = 990px)
-  // Subsequent pages have full A4 height (logicalPageHeight = 1086px) with the edited Canvas Background Image!
-  const firstPageContentH = logicalPageHeight - headerHeight;
-  const nextPageContentH = logicalPageHeight - 48; // 24px top/bottom breathing margin on continuation pages
-  const totalContentH = Math.max(1, fullRendered.logicalHeight - headerHeight);
+  const firstPageMaxH = logicalPageHeight - headerHeight - 20; // Bottom margin before footer
+  const nextPageMaxH = logicalPageHeight - 56; // 28px top & 28px bottom breathing margin on continuation pages
+  const totalContentBottom = Math.max(
+    headerHeight + 100,
+    ...fullRendered.visualSpans.map((s) => s.bottom + 24),
+    fullRendered.logicalHeight
+  );
+
+  // Helper that snaps a proposed page cut Y so it NEVER slices through the middle of any text line or inline box
+  const findSafePageCutY = (startY: number, maxSliceH: number): number => {
+    const rawCutY = startY + maxSliceH;
+    if (rawCutY >= totalContentBottom - 4) {
+      return totalContentBottom;
+    }
+
+    let safeCutY = rawCutY;
+    // Iteratively snap above any visual span (line of text / audio card / inline image) that straddles safeCutY
+    let adjusted = true;
+    let guard = 0;
+    while (adjusted && guard < 30) {
+      adjusted = false;
+      guard++;
+      for (const span of fullRendered.visualSpans) {
+        const spanHeight = span.bottom - span.top;
+        // Only snap for spans that fit on a page and aren't taller than 65% of page height
+        if (
+          spanHeight < maxSliceH * 0.65 &&
+          span.top > startY + 32 &&
+          span.top < safeCutY &&
+          span.bottom > safeCutY
+        ) {
+          safeCutY = span.top - 4;
+          adjusted = true;
+        }
+      }
+    }
+
+    // Fallback safety if snapping moved too close to startY
+    if (safeCutY <= startY + 80) {
+      return rawCutY;
+    }
+    return safeCutY;
+  };
 
   const pageSlices: { srcYLogical: number; sliceHLogical: number; isFirstPage: boolean }[] = [];
 
-  if (totalContentH <= firstPageContentH) {
+  if (totalContentBottom - headerHeight <= firstPageMaxH) {
     pageSlices.push({
       srcYLogical: headerHeight,
-      sliceHLogical: totalContentH,
+      sliceHLogical: Math.min(
+        logicalPageHeight - headerHeight,
+        fullRendered.logicalHeight - headerHeight
+      ),
       isFirstPage: true,
     });
   } else {
+    const firstCutY = findSafePageCutY(headerHeight, firstPageMaxH);
     pageSlices.push({
       srcYLogical: headerHeight,
-      sliceHLogical: firstPageContentH,
+      sliceHLogical: firstCutY - headerHeight,
       isFirstPage: true,
     });
-    let offset = headerHeight + firstPageContentH;
-    while (offset < fullRendered.logicalHeight - 4) {
+
+    let offset = firstCutY;
+    while (offset < fullRendered.logicalHeight - 12) {
       const rem = fullRendered.logicalHeight - offset;
-      const take = Math.min(nextPageContentH, rem);
+      if (rem <= nextPageMaxH) {
+        pageSlices.push({
+          srcYLogical: offset,
+          sliceHLogical: rem,
+          isFirstPage: false,
+        });
+        break;
+      }
+      const nextCutY = findSafePageCutY(offset, nextPageMaxH);
+      const take = Math.max(80, nextCutY - offset);
       pageSlices.push({
         srcYLogical: offset,
         sliceHLogical: take,

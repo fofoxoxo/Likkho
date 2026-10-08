@@ -41,6 +41,7 @@ import { WritingWorkspace } from './components/WritingWorkspace';
 import { SettingsPage } from './components/SettingsPage';
 import { BackupRestorePage } from './components/BackupRestorePage';
 import { PasscodeScreen } from './components/PasscodeScreen';
+import { buildWelcomeStarterLogs } from './utils/starterDiaryGuide';
 
 type PageRoute = 'home' | 'workspace' | 'settings' | 'backup';
 
@@ -68,41 +69,18 @@ const DEFAULT_MIC_SETTINGS: MicRecordingSettings = {
   bitRate: 128000,
 };
 
-const INITIAL_STARTER_LOGS: DiaryLog[] = [
-  {
-    id: 'log_starter_1',
-    heading: 'My First Entry',
-    contentHtml:
-      '<p>Welcome to <strong>Likkho</strong>. Start writing your daily thoughts and notes here.</p>',
-    plainPreview:
-      'Welcome to Likkho. Start writing your daily thoughts and notes here.',
-    pfpDataUrl: null,
-    createdAt: Date.now() - 3600 * 1000 * 2,
-    updatedAt: Date.now() - 3600 * 1000 * 2,
-    dateStamp: new Date(Date.now() - 3600 * 1000 * 2).toLocaleDateString('en-IN', {
-      day: '2-digit',
-      month: 'short',
-      year: 'numeric',
-    }),
-    timeStamp: new Date(Date.now() - 3600 * 1000 * 2).toLocaleTimeString('en-IN', {
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: true,
-    }),
-    updatedDateStamp: new Date(Date.now() - 3600 * 1000 * 2).toLocaleDateString('en-IN', {
-      day: '2-digit',
-      month: 'short',
-      year: 'numeric',
-    }),
-    updatedTimeStamp: new Date(Date.now() - 3600 * 1000 * 2).toLocaleTimeString('en-IN', {
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: true,
-    }),
-    reminderAt: null,
-    pinned: false,
-  },
-];
+const INITIAL_STARTER_LOGS: DiaryLog[] = buildWelcomeStarterLogs();
+
+function upgradeLegacyStarterLogsIfNeeded(list: DiaryLog[]): DiaryLog[] {
+  if (
+    list.length === 1 &&
+    list[0].id === 'log_starter_1' &&
+    list[0].heading === 'My First Entry'
+  ) {
+    return INITIAL_STARTER_LOGS;
+  }
+  return list;
+}
 
 function getFallbackMonographPfp(): string {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
@@ -151,7 +129,7 @@ export default function App() {
     try {
       const saved = localStorage.getItem(STORAGE_LOGS_KEY);
       if (saved) {
-        return JSON.parse(saved);
+        return upgradeLegacyStarterLogsIfNeeded(JSON.parse(saved));
       }
     } catch {
       // ignore
@@ -334,7 +312,10 @@ export default function App() {
       if (raw) {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed)) {
-          initialLocalLogs = parsed;
+          initialLocalLogs =
+            vaultMode === 'primary'
+              ? upgradeLegacyStarterLogsIfNeeded(parsed)
+              : parsed;
         }
       }
     } catch {
@@ -350,7 +331,11 @@ export default function App() {
       .then(([idbLogs, idbFonts]) => {
         if (idbLogs && Array.isArray(idbLogs)) {
           if (idbLogs.length > 0 || vaultMode === 'decoy') {
-            setLogs(idbLogs);
+            setLogs(
+              vaultMode === 'primary'
+                ? upgradeLegacyStarterLogsIfNeeded(idbLogs)
+                : idbLogs
+            );
           }
         }
         if (idbFonts && Array.isArray(idbFonts)) {
