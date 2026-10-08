@@ -1649,20 +1649,22 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     range.deleteContents();
     range.insertNode(span);
 
-    // Place a normal space before and after the uneditable spoiler span so Gboard / IME treats it as an isolated boundary
-    const beforeSpace = document.createTextNode(' ');
-    const afterSpace = document.createTextNode(' ');
-    if (span.parentNode) {
-      if (
-        !span.previousSibling ||
-        (span.previousSibling.nodeType === Node.TEXT_NODE &&
-          !/\s$/.test(span.previousSibling.textContent || ''))
-      ) {
-        span.parentNode.insertBefore(beforeSpace, span);
+    // Ensure plain text nodes exist immediately before and after the non-editable spoiler span
+    // without injecting unwanted extra spaces, and place the cursor outside the spoiler span
+    // so typing right at the start or right at the end of the spoiler word never extends the spoiler!
+    const parent = span.parentNode;
+    if (parent) {
+      if (!span.previousSibling || span.previousSibling.nodeType !== Node.TEXT_NODE) {
+        parent.insertBefore(document.createTextNode('\u200B'), span);
       }
-      span.parentNode.insertBefore(afterSpace, span.nextSibling);
+      let afterNode = span.nextSibling;
+      if (!afterNode || afterNode.nodeType !== Node.TEXT_NODE) {
+        afterNode = document.createTextNode('\u200B');
+        parent.insertBefore(afterNode, span.nextSibling);
+      }
       const newRange = document.createRange();
-      newRange.setStart(afterSpace, 1);
+      const offset = (afterNode.textContent || '').startsWith('\u200B') ? 1 : 0;
+      newRange.setStart(afterNode, offset);
       newRange.collapse(true);
       sel.removeAllRanges();
       sel.addRange(newRange);

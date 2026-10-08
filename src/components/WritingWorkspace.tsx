@@ -420,7 +420,78 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     }, 350);
   };
 
-  // Strictly protect Spoiler words from Backspace, Delete, Cut, or any DOM edit while spoiler is enabled!
+  // Strictly protect ONLY the Spoiler word itself (`span[data-wiki-spoiler="true"]`) from Backspace, Delete, Cut, or extension:
+  // - Other words in the exact same paragraph can be deleted with Backspace/Delete without any restriction!
+  // - Even if the cursor is right at the start or right at the end of the spoiler word, typing never extends the spoiler span!
+  const isNodeASpoilerSpan = (n: Node | null): n is HTMLElement => {
+    return (
+      Boolean(n) &&
+      n!.nodeType === Node.ELEMENT_NODE &&
+      (n as HTMLElement).getAttribute('data-wiki-spoiler') === 'true'
+    );
+  };
+
+  const findEnclosingSpoilerSpan = (n: Node | null): HTMLElement | null => {
+    let cur: Node | null = n;
+    while (cur && cur !== editorRef.current) {
+      if (isNodeASpoilerSpan(cur)) {
+        return cur;
+      }
+      cur = cur.parentNode;
+    }
+    return null;
+  };
+
+  /**
+   * If the cursor (or selection boundary) is inside a spoiler span or right on its edge,
+   * step the cursor cleanly outside into an adjacent plain text node in the paragraph
+   * so typing at the start or end of the spoiler word NEVER extends the spoiler!
+   */
+  const ensureCursorOutsideSpoilerSpan = (
+    sel: Selection,
+    range: Range
+  ): Range => {
+    if (!editorRef.current || !range.collapsed) return range;
+
+    const enclosingSpoiler = findEnclosingSpoilerSpan(range.startContainer);
+    if (!enclosingSpoiler || !enclosingSpoiler.parentNode) {
+      return range;
+    }
+
+    const parent = enclosingSpoiler.parentNode;
+    // Determine whether cursor is closer to the start or end of the spoiler span
+    const preRange = document.createRange();
+    preRange.selectNodeContents(enclosingSpoiler);
+    preRange.setEnd(range.startContainer, range.startOffset);
+    const isAtStart = preRange.toString().length === 0;
+
+    if (isAtStart) {
+      let prev = enclosingSpoiler.previousSibling;
+      if (!prev || prev.nodeType !== Node.TEXT_NODE) {
+        prev = document.createTextNode('');
+        parent.insertBefore(prev, enclosingSpoiler);
+      }
+      const nextRange = document.createRange();
+      nextRange.setStart(prev, (prev.textContent || '').length);
+      nextRange.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(nextRange);
+      return nextRange;
+    } else {
+      let next = enclosingSpoiler.nextSibling;
+      if (!next || next.nodeType !== Node.TEXT_NODE) {
+        next = document.createTextNode('');
+        parent.insertBefore(next, enclosingSpoiler.nextSibling);
+      }
+      const nextRange = document.createRange();
+      nextRange.setStart(next, 0);
+      nextRange.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(nextRange);
+      return nextRange;
+    }
+  };
+
   const selectionContainsSpoiler = (range: Range): boolean => {
     if (!editorRef.current) return false;
     const spoilers = editorRef.current.querySelectorAll('span[data-wiki-spoiler="true"]');
@@ -432,77 +503,161 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     return false;
   };
 
-  const isBackspaceOrDeleteTouchingSpoiler = (
+  /**
+   * Checks ONLY whether a single-character Backspace or Forward-Delete at a collapsed cursor
+   * would directly delete the `span[data-wiki-spoiler="true"]` element itself.
+   * Never checks ancestor/paragraph containers via `querySelector`, so all other words in the
+   * same paragraph can be freely edited and deleted with Backspace!
+   */
+  const isCollapsedCursorDirectlyTouchingSpoiler = (
     range: Range,
     isBackspace: boolean
   ): boolean => {
-    if (!range.collapsed) {
-      return selectionContainsSpoiler(range);
-    }
+    if (!range.collapsed) return false;
+
     const node = range.startContainer;
     const offset = range.startOffset;
 
-    const isSpoilerElement = (n: Node | null): boolean => {
-      if (!n || n.nodeType !== Node.ELEMENT_NODE) return false;
-      const el = n as HTMLElement;
-      return (
-        el.getAttribute('data-wiki-spoiler') === 'true' ||
-        Boolean(el.querySelector?.('span[data-wiki-spoiler="true"]'))
-      );
-    };
-
-    // Check if cursor is somehow inside a spoiler node
-    let cur: Node | null = node;
-    while (cur && cur !== editorRef.current) {
-      if (isSpoilerElement(cur)) return true;
-      cur = cur.parentNode;
+    if (findEnclosingSpoilerSpan(node)) {
+      return true;
     }
+
+    // Helper: walk previous/next inline sibling within the same block, skipping empty/zero-width text nodes
+    const getAdjacentMeaningfulInlineSibling = (
+      startNode: Node,
+      dir: 'prev' | 'next'
+    ): Node | null => {
+      let sib: Node | null =
+        dir === 'prev' ? startNode.previousSibling : startNode.nextSibling;
+      while (sib) {
+        if (sib.nodeType === Node.TEXT_NODE) {
+          const clean = (sib.textContent || '').replace(/\u200B/g, '');
+          if (clean.length === 0) {
+            sib = dir === 'prev' ? sib.previousSibling : sib.nextSibling;
+            continue;
+          }
+          return sib;
+        }
+        return sib;
+      }
+      return null;
+    };
 
     if (isBackspace) {
       if (node.nodeType === Node.TEXT_NODE) {
-        const textBefore = (node.textContent || '').slice(0, offset).replace(/\u200B/g, '');
-        if (textBefore.length === 0) {
-          let prev: Node | null = node.previousSibling;
-          while (
-            prev &&
-            prev.nodeType === Node.TEXT_NODE &&
-            (prev.textContent || '').replace(/[\u200B\u00A0]/g, '').length === 0
-          ) {
-            if ((prev.textContent || '').length > 1) break;
-            prev = prev.previousSibling;
-          }
-          if (isSpoilerElement(prev)) return true;
+        const textBefore = (node.textContent || '')
+          .slice(0, offset)
+          .replace(/\u200B/g, '');
+        if (textBefore.length > 0) {
+          // There are normal characters before the cursor in this text node — Backspace deletes those characters normally!
+          return false;
         }
-      } else if (node.nodeType === Node.ELEMENT_NODE && offset > 0) {
-        const childBefore = node.childNodes[offset - 1];
-        if (isSpoilerElement(childBefore)) return true;
+        // Cursor is at offset 0 of this text node: check what is immediately before this node
+        let cur: Node | null = node;
+        while (cur && cur !== editorRef.current) {
+          const prevSib = getAdjacentMeaningfulInlineSibling(cur, 'prev');
+          if (prevSib) {
+            return isNodeASpoilerSpan(prevSib);
+          }
+          const parentEl = cur.parentElement;
+          if (
+            !parentEl ||
+            parentEl === editorRef.current ||
+            ['P', 'DIV', 'LI', 'H1', 'H2', 'H3', 'BLOCKQUOTE'].includes(
+              parentEl.tagName.toUpperCase()
+            )
+          ) {
+            break;
+          }
+          cur = parentEl;
+        }
+        return false;
+      } else if (node.nodeType === Node.ELEMENT_NODE) {
+        for (let idx = offset - 1; idx >= 0; idx--) {
+          const child = node.childNodes[idx];
+          if (
+            child.nodeType === Node.TEXT_NODE &&
+            (child.textContent || '').replace(/\u200B/g, '').length === 0
+          ) {
+            continue;
+          }
+          return isNodeASpoilerSpan(child);
+        }
       }
     } else {
-      // Forward Delete key
+      // Forward Delete
       if (node.nodeType === Node.TEXT_NODE) {
-        const textAfter = (node.textContent || '').slice(offset).replace(/\u200B/g, '');
-        if (textAfter.length === 0) {
-          let next: Node | null = node.nextSibling;
-          while (
-            next &&
-            next.nodeType === Node.TEXT_NODE &&
-            (next.textContent || '').replace(/[\u200B\u00A0]/g, '').length === 0
-          ) {
-            if ((next.textContent || '').length > 1) break;
-            next = next.nextSibling;
-          }
-          if (isSpoilerElement(next)) return true;
+        const textAfter = (node.textContent || '')
+          .slice(offset)
+          .replace(/\u200B/g, '');
+        if (textAfter.length > 0) {
+          return false;
         }
-      } else if (
-        node.nodeType === Node.ELEMENT_NODE &&
-        offset < node.childNodes.length
-      ) {
-        const childAfter = node.childNodes[offset];
-        if (isSpoilerElement(childAfter)) return true;
+        let cur: Node | null = node;
+        while (cur && cur !== editorRef.current) {
+          const nextSib = getAdjacentMeaningfulInlineSibling(cur, 'next');
+          if (nextSib) {
+            return isNodeASpoilerSpan(nextSib);
+          }
+          const parentEl = cur.parentElement;
+          if (
+            !parentEl ||
+            parentEl === editorRef.current ||
+            ['P', 'DIV', 'LI', 'H1', 'H2', 'H3', 'BLOCKQUOTE'].includes(
+              parentEl.tagName.toUpperCase()
+            )
+          ) {
+            break;
+          }
+          cur = parentEl;
+        }
+        return false;
+      } else if (node.nodeType === Node.ELEMENT_NODE) {
+        for (let idx = offset; idx < node.childNodes.length; idx++) {
+          const child = node.childNodes[idx];
+          if (
+            child.nodeType === Node.TEXT_NODE &&
+            (child.textContent || '').replace(/\u200B/g, '').length === 0
+          ) {
+            continue;
+          }
+          return isNodeASpoilerSpan(child);
+        }
       }
     }
 
     return false;
+  };
+
+  /**
+   * Deletes all non-spoiler text inside `range` while keeping every `span[data-wiki-spoiler="true"]` intact.
+   * Used when user selects multiple words (or when Android Gboard replaces a composing range) that happens to touch a spoiler.
+   */
+  const deleteNonSpoilerTextInRange = (range: Range) => {
+    if (!editorRef.current || range.collapsed) return;
+    const textNodesToModify: Text[] = [];
+    const walker = document.createTreeWalker(
+      editorRef.current,
+      NodeFilter.SHOW_TEXT
+    );
+    let currentNode: Node | null = walker.nextNode();
+    while (currentNode) {
+      if (
+        currentNode.nodeType === Node.TEXT_NODE &&
+        range.intersectsNode(currentNode) &&
+        !findEnclosingSpoilerSpan(currentNode)
+      ) {
+        textNodesToModify.push(currentNode as Text);
+      }
+      currentNode = walker.nextNode();
+    }
+
+    textNodesToModify.forEach((tNode) => {
+      const full = tNode.textContent || '';
+      const startOff = tNode === range.startContainer ? range.startOffset : 0;
+      const endOff = tNode === range.endContainer ? range.endOffset : full.length;
+      tNode.textContent = full.slice(0, startOff) + full.slice(endOff);
+    });
   };
 
   /**
@@ -589,23 +744,49 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
 
     const sel = window.getSelection();
     if (!sel || sel.rangeCount === 0) return;
-    const range = sel.getRangeAt(0);
+    let range = sel.getRangeAt(0);
+
+    // If the collapsed cursor ever landed inside a spoiler span (at its start or end edge),
+    // immediately step it outside so typing or deleting acts on normal surrounding text
+    if (range.collapsed) {
+      range = ensureCursorOutsideSpoilerSpan(sel, range);
+    }
 
     if (inputType.startsWith('delete')) {
       const isBack = inputType.includes('Backward');
-      if (isBackspaceOrDeleteTouchingSpoiler(range, isBack)) {
+      if (!range.collapsed) {
+        if (selectionContainsSpoiler(range)) {
+          e.preventDefault();
+          // Delete all non-spoiler text in the selected range while leaving the spoiler word untouched!
+          deleteNonSpoilerTextInRange(range);
+          lastValidHtmlWithSpoilersRef.current = editorRef.current.innerHTML;
+          scheduleTextHistorySnapshot();
+        }
+        return;
+      }
+
+      if (isCollapsedCursorDirectlyTouchingSpoiler(range, isBack)) {
         e.preventDefault();
-        // Reset Android Gboard / IME composition buffer by collapsing selection at current safe cursor spot
-        // so the keyboard's internal composing text doesn't desynchronize and delete paragraph words in Gboard!
-        const cloned = range.cloneRange();
-        cloned.collapse(true);
-        sel.removeAllRanges();
-        sel.addRange(cloned);
         return;
       }
     } else if (!range.collapsed && selectionContainsSpoiler(range)) {
-      // Prevent overwriting a selection that contains a spoiler span
+      // If user or Android Gboard replaces a range that overlaps a spoiler, only replace the non-spoiler text!
       e.preventDefault();
+      deleteNonSpoilerTextInRange(range);
+      const insertedData = nativeEv.data;
+      if (insertedData) {
+        const currentRange = sel.rangeCount > 0 ? sel.getRangeAt(0) : range;
+        const safeRange = ensureCursorOutsideSpoilerSpan(sel, currentRange);
+        const textNode = document.createTextNode(insertedData);
+        safeRange.insertNode(textNode);
+        const nextRange = document.createRange();
+        nextRange.setStartAfter(textNode);
+        nextRange.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(nextRange);
+      }
+      lastValidHtmlWithSpoilersRef.current = editorRef.current.innerHTML;
+      scheduleTextHistorySnapshot();
       return;
     } else if (range.collapsed && inputType.startsWith('insert')) {
       escapeColorOrHighlightEdgeIfAtBoundary(sel, range);
@@ -614,19 +795,39 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
 
   const handleEditorKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (isReadingMode) return;
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return;
+    let range = sel.getRangeAt(0);
+
+    if (range.collapsed) {
+      range = ensureCursorOutsideSpoilerSpan(sel, range);
+    }
+
     if (e.key === 'Backspace' || e.key === 'Delete') {
-      const sel = window.getSelection();
-      if (sel && sel.rangeCount > 0) {
-        const range = sel.getRangeAt(0);
-        if (isBackspaceOrDeleteTouchingSpoiler(range, e.key === 'Backspace')) {
+      const isBack = e.key === 'Backspace';
+      if (!range.collapsed) {
+        if (selectionContainsSpoiler(range)) {
           e.preventDefault();
           e.stopPropagation();
+          deleteNonSpoilerTextInRange(range);
+          if (editorRef.current) {
+            lastValidHtmlWithSpoilersRef.current = editorRef.current.innerHTML;
+          }
+          scheduleTextHistorySnapshot();
         }
+        return;
+      }
+
+      if (isCollapsedCursorDirectlyTouchingSpoiler(range, isBack)) {
+        e.preventDefault();
+        e.stopPropagation();
       }
     }
   };
 
-  // Fallback guard on input: if an IME bypassed beforeinput and deleted a spoiler span, restore it immediately!
+  // Fallback guard on input:
+  // 1. If a browser/IME accidentally typed characters inside a spoiler span, extract those extra characters outside the spoiler span so the spoiler NEVER extends!
+  // 2. If an IME bypassed beforeinput and deleted a spoiler span, restore it.
   const handleEditorInput = () => {
     if (!editorRef.current) return;
     const prevTemp = document.createElement('div');
@@ -641,6 +842,44 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
       editorRef.current.innerHTML = lastValidHtmlWithSpoilersRef.current;
       return;
     }
+
+    // Ensure no locked spoiler span ever gets extended with typed characters at its start or end
+    curSpoilers.forEach((spNode) => {
+      const sp = spNode as HTMLElement;
+      if (sp.classList.contains('wiki-spoiler-unlocked')) return;
+      const expectedLen = parseInt(sp.getAttribute('data-spoiler-len') || '0', 10);
+      if (expectedLen > 0) {
+        const expectedMask = buildSpoilerMaskString(expectedLen);
+        const currentText = sp.textContent || '';
+        if (currentText !== expectedMask) {
+          // If the browser inserted characters at the start or end inside the spoiler span, move them outside!
+          const idx = currentText.indexOf(expectedMask);
+          const parent = sp.parentNode;
+          if (idx >= 0 && parent) {
+            const prefix = currentText.slice(0, idx);
+            const suffix = currentText.slice(idx + expectedMask.length);
+            sp.textContent = expectedMask;
+            if (prefix) {
+              parent.insertBefore(document.createTextNode(prefix), sp);
+            }
+            if (suffix) {
+              const afterNode = document.createTextNode(suffix);
+              parent.insertBefore(afterNode, sp.nextSibling);
+              const sel = window.getSelection();
+              if (sel) {
+                const r = document.createRange();
+                r.setStart(afterNode, suffix.length);
+                r.collapse(true);
+                sel.removeAllRanges();
+                sel.addRange(r);
+              }
+            }
+          } else {
+            sp.textContent = expectedMask;
+          }
+        }
+      }
+    });
 
     scheduleTextHistorySnapshot();
   };
