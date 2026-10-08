@@ -39,6 +39,8 @@ import {
   Lock,
   Unlock,
   FileUp,
+  Search,
+  Loader2,
 } from 'lucide-react';
 import {
   CanvasAudioAttachment,
@@ -54,6 +56,7 @@ import {
   buildSpoilerMaskString,
   encryptSpoilerSecretText,
 } from '../utils/spoilerCipher';
+import { fetchWikipediaStructuredTopic } from '../utils/wikipediaFetcher';
 
 interface RichTextToolbarProps {
   editorRef: React.RefObject<HTMLDivElement | null>;
@@ -182,6 +185,10 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
   const [spoilerPin, setSpoilerPin] = useState<string>('');
   const [showDiaryLockPopover, setShowDiaryLockPopover] = useState<boolean>(false);
   const [diaryPinInput, setDiaryPinInput] = useState<string>('');
+  const [showWikipediaPopover, setShowWikipediaPopover] = useState<boolean>(false);
+  const [wikiSearchQuery, setWikiSearchQuery] = useState<string>('');
+  const [wikiIncludeImages, setWikiIncludeImages] = useState<boolean>(true);
+  const [isWikiLoading, setIsWikiLoading] = useState<boolean>(false);
 
   const [linkUrl, setLinkUrl] = useState<string>('https://');
   const [selectedTextPreview, setSelectedTextPreview] = useState<string>('');
@@ -248,6 +255,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     setShowMediaPickerMenu(false);
     setShowSpoilerPopover(false);
     setShowDiaryLockPopover(false);
+    setShowWikipediaPopover(false);
   };
 
   const findAncestorTag = (node: Node | null, tags: string[]): HTMLElement | null => {
@@ -1688,6 +1696,43 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     e.target.value = '';
   };
 
+  // Wikipedia Search & Structured Content Import onto Canvas
+  const handleSearchWikipedia = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const query = wikiSearchQuery.trim();
+    if (!query || isWikiLoading) return;
+
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      showBriefHint('Internet connection required to search Wikipedia.');
+      return;
+    }
+
+    setIsWikiLoading(true);
+    try {
+      const result = await fetchWikipediaStructuredTopic(query, wikiIncludeImages);
+      if (onImportDocument) {
+        onImportDocument(result.title, result.html);
+      } else if (editorRef.current) {
+        const current = editorRef.current.innerHTML.trim();
+        editorRef.current.innerHTML = current
+          ? `${current}<hr>${result.html}`
+          : result.html;
+        onContentChange();
+      }
+      setShowWikipediaPopover(false);
+      setWikiSearchQuery('');
+      showBriefHint(`Added "${result.title}" to canvas`);
+    } catch (err) {
+      const msg =
+        err instanceof Error && err.message
+          ? err.message
+          : 'Could not fetch topic. Check internet connection.';
+      showBriefHint(msg);
+    } finally {
+      setIsWikiLoading(false);
+    }
+  };
+
   const getBtnClass = (isActive: boolean = false) =>
     `flex h-9 min-w-[36px] shrink-0 items-center justify-center rounded-xs border px-2 text-xs font-medium transition-colors ${
       isActive
@@ -2607,6 +2652,22 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
           <FileUp className="h-4 w-4" />
         </button>
 
+        {/* Wikipedia Tool */}
+        <button
+          type="button"
+          onMouseDown={preventFocusLoss}
+          onClick={() => {
+            saveCurrentSelection();
+            const next = !showWikipediaPopover;
+            closeAllPopovers();
+            setShowWikipediaPopover(next);
+          }}
+          className={getBtnClass(showWikipediaPopover)}
+          title="Wikipedia"
+        >
+          <span className="font-wiki-serif text-sm font-bold leading-none">W</span>
+        </button>
+
         <button
           type="button"
           onMouseDown={preventFocusLoss}
@@ -2617,6 +2678,84 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
           <CalendarClock className="h-4 w-4" />
         </button>
       </div>
+
+      {/* Wikipedia Search Bar & With/Without Images Toggle Panel (Opens Below Toolbar) */}
+      {showWikipediaPopover && (
+        <form
+          onSubmit={handleSearchWikipedia}
+          className="flex w-full flex-col gap-2 border-t border-[var(--wiki-hairline)] bg-[var(--wiki-bg)] px-3 py-2.5"
+        >
+          <div className="flex w-full items-center gap-1.5">
+            <div className="relative flex flex-1 items-center min-w-0">
+              <Search className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-[var(--wiki-muted)]" />
+              <input
+                type="search"
+                value={wikiSearchQuery}
+                disabled={isWikiLoading}
+                onChange={(e) => setWikiSearchQuery(e.target.value)}
+                placeholder="Search Wikipedia topic or word..."
+                className="h-9 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] pl-8 pr-2.5 text-xs text-[var(--wiki-text)] outline-none focus:border-[#3366cc] disabled:opacity-60"
+                autoFocus
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={isWikiLoading || !wikiSearchQuery.trim()}
+              className="flex h-9 shrink-0 items-center gap-1.5 bg-[#3366cc] px-3.5 text-xs font-semibold text-white disabled:opacity-50"
+            >
+              {isWikiLoading ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  <span>Searching...</span>
+                </>
+              ) : (
+                <span>Search</span>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowWikipediaPopover(false)}
+              className="flex h-9 w-8 shrink-0 items-center justify-center text-xs text-[var(--wiki-muted)] hover:text-[var(--wiki-text)]"
+              aria-label="Close Wikipedia search"
+            >
+              ✕
+            </button>
+          </div>
+
+          {/* With / Without Images Toggle Row Below Search Bar */}
+          <div className="flex items-center justify-between pt-0.5">
+            <span className="text-xs font-medium text-[var(--wiki-muted)]">
+              Images
+            </span>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onMouseDown={preventFocusLoss}
+                onClick={() => setWikiIncludeImages(true)}
+                className={`h-7 border px-2.5 text-xs font-semibold transition-colors ${
+                  wikiIncludeImages
+                    ? 'border-[#3366cc] bg-[#3366cc] text-white'
+                    : 'border-[var(--wiki-border)] bg-[var(--wiki-surface)] text-[var(--wiki-text)]'
+                }`}
+              >
+                With Images
+              </button>
+              <button
+                type="button"
+                onMouseDown={preventFocusLoss}
+                onClick={() => setWikiIncludeImages(false)}
+                className={`h-7 border px-2.5 text-xs font-semibold transition-colors ${
+                  !wikiIncludeImages
+                    ? 'border-[#3366cc] bg-[#3366cc] text-white'
+                    : 'border-[var(--wiki-border)] bg-[var(--wiki-surface)] text-[var(--wiki-text)]'
+                }`}
+              >
+                Without Images
+              </button>
+            </div>
+          </div>
+        </form>
+      )}
     </div>
   );
 };
