@@ -41,11 +41,13 @@ import {
   FileUp,
   Search,
   Loader2,
+  BookOpenCheck,
 } from 'lucide-react';
 import {
   CanvasAudioAttachment,
   CustomFontItem,
   MicRecordingSettings,
+  VaultMode,
 } from '../utils/cryptoVault';
 import {
   finalizeRecordedAudioToDataUrl,
@@ -56,7 +58,18 @@ import {
   buildSpoilerMaskString,
   encryptSpoilerSecretText,
 } from '../utils/spoilerCipher';
-import { fetchWikipediaStructuredTopic } from '../utils/wikipediaFetcher';
+import {
+  fetchWikipediaStructuredTopic,
+  fetchWikipediaSuggestions,
+  WikipediaLanguage,
+  WikipediaSuggestionItem,
+} from '../utils/wikipediaFetcher';
+import {
+  analyzeWordOnline,
+  saveWordAnalysisToStore,
+  WordAnalysisRecord,
+} from '../utils/wordAnalysisEngine';
+import { WordAnalysisModal } from './WordAnalysisModal';
 
 interface RichTextToolbarProps {
   editorRef: React.RefObject<HTMLDivElement | null>;
@@ -77,9 +90,10 @@ interface RichTextToolbarProps {
   customFonts: CustomFontItem[];
   onAddCustomFont: (font: CustomFontItem) => void;
   micSettings: MicRecordingSettings;
+  vaultMode?: VaultMode;
   diaryLockPin?: string | null;
   onChangeDiaryLockPin?: (pin: string | null) => void;
-  onImportDocument?: (title: string, html: string) => void;
+  onImportDocument?: (title: string, html: string, editableImages?: string[]) => void;
 }
 
 interface ActiveFormats {
@@ -171,6 +185,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
   customFonts,
   onAddCustomFont,
   micSettings,
+  vaultMode = 'primary',
   diaryLockPin,
   onChangeDiaryLockPin,
   onImportDocument,
@@ -188,7 +203,17 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
   const [showWikipediaPopover, setShowWikipediaPopover] = useState<boolean>(false);
   const [wikiSearchQuery, setWikiSearchQuery] = useState<string>('');
   const [wikiIncludeImages, setWikiIncludeImages] = useState<boolean>(true);
+  const [wikiLang, setWikiLang] = useState<WikipediaLanguage>('en');
+  const [wikiSuggestions, setWikiSuggestions] = useState<WikipediaSuggestionItem[]>([]);
+  const [isWikiSuggestionsLoading, setIsWikiSuggestionsLoading] = useState<boolean>(false);
   const [isWikiLoading, setIsWikiLoading] = useState<boolean>(false);
+
+  // Word Analysis Toolbar Popover & Result Modal State
+  const [showWordAnalysisPopover, setShowWordAnalysisPopover] = useState<boolean>(false);
+  const [wordAnalysisQuery, setWordAnalysisQuery] = useState<string>('');
+  const [isWordAnalysisLoading, setIsWordAnalysisLoading] = useState<boolean>(false);
+  const [activeWordAnalysisRecord, setActiveWordAnalysisRecord] =
+    useState<WordAnalysisRecord | null>(null);
 
   const [linkUrl, setLinkUrl] = useState<string>('https://');
   const [selectedTextPreview, setSelectedTextPreview] = useState<string>('');
@@ -256,6 +281,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     setShowSpoilerPopover(false);
     setShowDiaryLockPopover(false);
     setShowWikipediaPopover(false);
+    setShowWordAnalysisPopover(false);
   };
 
   const findAncestorTag = (node: Node | null, tags: string[]): HTMLElement | null => {
@@ -1697,9 +1723,47 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
   };
 
   // Wikipedia Search & Structured Content Import onto Canvas
-  const handleSearchWikipedia = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const query = wikiSearchQuery.trim();
+  // Live Search Suggestions Dropdown effect for Wikipedia tool (English & Hindi)
+  useEffect(() => {
+    if (!showWikipediaPopover) {
+      setWikiSuggestions([]);
+      return;
+    }
+    const q = wikiSearchQuery.trim();
+    if (!q || isWikiLoading) {
+      setWikiSuggestions([]);
+      setIsWikiSuggestionsLoading(false);
+      return;
+    }
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      setWikiSuggestions([]);
+      return;
+    }
+
+    const controller = new AbortController();
+    setIsWikiSuggestionsLoading(true);
+    const timer = window.setTimeout(async () => {
+      try {
+        const list = await fetchWikipediaSuggestions(q, wikiLang, controller.signal);
+        setWikiSuggestions(list);
+      } catch {
+        // ignore abort / network error
+      } finally {
+        setIsWikiSuggestionsLoading(false);
+      }
+    }, 220);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [wikiSearchQuery, wikiLang, showWikipediaPopover, isWikiLoading]);
+
+  const executeWikipediaImport = async (
+    targetQueryOrKey: string,
+    isExactKey: boolean = false
+  ) => {
+    const query = targetQueryOrKey.trim();
     if (!query || isWikiLoading) return;
 
     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
@@ -1708,10 +1772,16 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     }
 
     setIsWikiLoading(true);
+    setWikiSuggestions([]);
     try {
-      const result = await fetchWikipediaStructuredTopic(query, wikiIncludeImages);
+      const result = await fetchWikipediaStructuredTopic(
+        query,
+        wikiIncludeImages,
+        wikiLang,
+        isExactKey
+      );
       if (onImportDocument) {
-        onImportDocument(result.title, result.html);
+        onImportDocument(result.title, result.html, result.images);
       } else if (editorRef.current) {
         const current = editorRef.current.innerHTML.trim();
         editorRef.current.innerHTML = current
@@ -1731,6 +1801,44 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     } finally {
       setIsWikiLoading(false);
     }
+  };
+
+  const handleSearchWikipedia = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await executeWikipediaImport(wikiSearchQuery, false);
+  };
+
+  const runWordAnalysis = async (rawWord: string) => {
+    const cleaned = rawWord.trim();
+    if (!cleaned || isWordAnalysisLoading) return;
+
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      showBriefHint('Internet connection required for Word Analysis.');
+      return;
+    }
+
+    setIsWordAnalysisLoading(true);
+    try {
+      const contextText = editorRef.current?.innerText?.slice(0, 400) || cleaned;
+      const analysis = await analyzeWordOnline(cleaned, contextText);
+      saveWordAnalysisToStore(analysis, vaultMode);
+      setActiveWordAnalysisRecord(analysis);
+      setShowWordAnalysisPopover(false);
+      setWordAnalysisQuery('');
+    } catch (err) {
+      const msg =
+        err instanceof Error && err.message
+          ? err.message
+          : 'Could not analyze word. Check internet connection.';
+      showBriefHint(msg);
+    } finally {
+      setIsWordAnalysisLoading(false);
+    }
+  };
+
+  const handleWordAnalysisSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await runWordAnalysis(wordAnalysisQuery);
   };
 
   const getBtnClass = (isActive: boolean = false) =>
@@ -2652,7 +2760,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
           <FileUp className="h-4 w-4" />
         </button>
 
-        {/* Wikipedia Tool */}
+        {/* Wikipedia Tool (English & Hindi with Live Suggestions & Editable Images) */}
         <button
           type="button"
           onMouseDown={preventFocusLoss}
@@ -2663,9 +2771,33 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
             setShowWikipediaPopover(next);
           }}
           className={getBtnClass(showWikipediaPopover)}
-          title="Wikipedia"
+          title="Wikipedia (English & Hindi)"
         >
           <span className="font-wiki-serif text-sm font-bold leading-none">W</span>
+        </button>
+
+        {/* Word Analysis Tool (Select Word or Search Word) */}
+        <button
+          type="button"
+          onMouseDown={preventFocusLoss}
+          onClick={() => {
+            saveCurrentSelection();
+            const sel = window.getSelection();
+            const selectedStr = sel ? sel.toString().trim() : '';
+            const firstSelectedWord = selectedStr
+              ? selectedStr.split(/\s+/)[0].replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '')
+              : '';
+            const next = !showWordAnalysisPopover;
+            closeAllPopovers();
+            if (next && firstSelectedWord) {
+              setWordAnalysisQuery(firstSelectedWord);
+            }
+            setShowWordAnalysisPopover(next);
+          }}
+          className={getBtnClass(showWordAnalysisPopover)}
+          title="Word Analysis"
+        >
+          <BookOpenCheck className="h-4 w-4" />
         </button>
 
         <button
@@ -2679,7 +2811,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
         </button>
       </div>
 
-      {/* Wikipedia Search Bar & With/Without Images Toggle Panel (Opens Below Toolbar) */}
+      {/* Wikipedia Search Bar, Live Suggestions Dropdown, English/Hindi Switcher & With/Without Images Toggle Panel */}
       {showWikipediaPopover && (
         <form
           onSubmit={handleSearchWikipedia}
@@ -2693,7 +2825,11 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
                 value={wikiSearchQuery}
                 disabled={isWikiLoading}
                 onChange={(e) => setWikiSearchQuery(e.target.value)}
-                placeholder="Search Wikipedia topic or word..."
+                placeholder={
+                  wikiLang === 'hi'
+                    ? 'विकिपीडिया पर विषय या शब्द खोजें...'
+                    : 'Search Wikipedia topic or word...'
+                }
                 className="h-9 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] pl-8 pr-2.5 text-xs text-[var(--wiki-text)] outline-none focus:border-[#3366cc] disabled:opacity-60"
                 autoFocus
               />
@@ -2722,11 +2858,79 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
             </button>
           </div>
 
-          {/* With / Without Images Toggle Row Below Search Bar */}
-          <div className="flex items-center justify-between pt-0.5">
-            <span className="text-xs font-medium text-[var(--wiki-muted)]">
-              Images
-            </span>
+          {/* Live Search Suggestions Dropdown Below Search Box */}
+          {(isWikiSuggestionsLoading || wikiSuggestions.length > 0) && (
+            <div className="max-h-48 w-full overflow-y-auto border border-[var(--wiki-border)] bg-[var(--wiki-surface)] divide-y divide-[var(--wiki-hairline)] shadow-md">
+              {isWikiSuggestionsLoading && wikiSuggestions.length === 0 ? (
+                <div className="flex items-center gap-2 px-3 py-2 text-xs text-[var(--wiki-muted)]">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-[#3366cc]" />
+                  <span>Loading suggestions...</span>
+                </div>
+              ) : (
+                wikiSuggestions.map((sug) => (
+                  <button
+                    key={sug.id}
+                    type="button"
+                    onMouseDown={preventFocusLoss}
+                    onClick={() => {
+                      setWikiSearchQuery(sug.title);
+                      executeWikipediaImport(sug.key, true);
+                    }}
+                    className="flex w-full items-center gap-2.5 px-3 py-2 text-left hover:bg-[var(--wiki-bg)] transition-colors"
+                  >
+                    {sug.thumbnailUrl && (
+                      <img
+                        src={sug.thumbnailUrl}
+                        alt={sug.title}
+                        referrerPolicy="no-referrer"
+                        className="h-8 w-8 shrink-0 border border-[var(--wiki-border)] object-cover"
+                      />
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <div className="font-wiki-serif text-xs font-bold text-[var(--wiki-text)] truncate">
+                        {sug.title}
+                      </div>
+                      {sug.description && (
+                        <div className="text-[11px] text-[var(--wiki-muted)] truncate">
+                          {sug.description}
+                        </div>
+                      )}
+                    </div>
+                  </button>
+                ))
+              )}
+            </div>
+          )}
+
+          {/* Language Toggle (English / हिन्दी) + With / Without Images Toggle Row */}
+          <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5">
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onMouseDown={preventFocusLoss}
+                onClick={() => setWikiLang('en')}
+                className={`h-7 border px-2.5 text-xs font-semibold transition-colors ${
+                  wikiLang === 'en'
+                    ? 'border-[#3366cc] bg-[#3366cc] text-white'
+                    : 'border-[var(--wiki-border)] bg-[var(--wiki-surface)] text-[var(--wiki-text)]'
+                }`}
+              >
+                English
+              </button>
+              <button
+                type="button"
+                onMouseDown={preventFocusLoss}
+                onClick={() => setWikiLang('hi')}
+                className={`h-7 border px-2.5 text-xs font-semibold transition-colors ${
+                  wikiLang === 'hi'
+                    ? 'border-[#3366cc] bg-[#3366cc] text-white'
+                    : 'border-[var(--wiki-border)] bg-[var(--wiki-surface)] text-[var(--wiki-text)]'
+                }`}
+              >
+                हिन्दी
+              </button>
+            </div>
+
             <div className="flex items-center gap-1.5">
               <button
                 type="button"
@@ -2755,6 +2959,59 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
             </div>
           </div>
         </form>
+      )}
+
+      {/* Word Analysis Search Bar Panel (Opens Below Toolbar) */}
+      {showWordAnalysisPopover && (
+        <form
+          onSubmit={handleWordAnalysisSubmit}
+          className="flex w-full flex-col gap-2 border-t border-[var(--wiki-hairline)] bg-[var(--wiki-bg)] px-3 py-2.5"
+        >
+          <div className="flex w-full items-center gap-1.5">
+            <div className="relative flex flex-1 items-center min-w-0">
+              <BookOpenCheck className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-[#3366cc]" />
+              <input
+                type="search"
+                value={wordAnalysisQuery}
+                disabled={isWordAnalysisLoading}
+                onChange={(e) => setWordAnalysisQuery(e.target.value)}
+                placeholder="Enter or select a word to analyze..."
+                className="h-9 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] pl-8 pr-2.5 text-xs text-[var(--wiki-text)] outline-none focus:border-[#3366cc] disabled:opacity-60"
+                autoFocus
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={isWordAnalysisLoading || !wordAnalysisQuery.trim()}
+              className="flex h-9 shrink-0 items-center gap-1.5 bg-[#3366cc] px-3.5 text-xs font-semibold text-white disabled:opacity-50"
+            >
+              {isWordAnalysisLoading ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  <span>Analyzing...</span>
+                </>
+              ) : (
+                <span>Analyze</span>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowWordAnalysisPopover(false)}
+              className="flex h-9 w-8 shrink-0 items-center justify-center text-xs text-[var(--wiki-muted)] hover:text-[var(--wiki-text)]"
+              aria-label="Close Word Analysis"
+            >
+              ✕
+            </button>
+          </div>
+        </form>
+      )}
+
+      {/* Word Analysis Full 6-Category Pop-Up Modal on Canvas */}
+      {activeWordAnalysisRecord && (
+        <WordAnalysisModal
+          record={activeWordAnalysisRecord}
+          onClose={() => setActiveWordAnalysisRecord(null)}
+        />
       )}
     </div>
   );

@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ArrowLeft,
   Moon,
@@ -10,12 +10,20 @@ import {
   Trash2,
   Mic,
   Fingerprint,
+  BookOpenCheck,
+  Search,
 } from 'lucide-react';
 import {
   AudioFormatOption,
   MicRecordingSettings,
   VaultMode,
 } from '../utils/cryptoVault';
+import {
+  deleteSavedWordAnalysis,
+  getSavedWordAnalyses,
+  WordAnalysisRecord,
+} from '../utils/wordAnalysisEngine';
+import { WordAnalysisModal } from './WordAnalysisModal';
 
 interface SettingsPageProps {
   vaultMode: VaultMode;
@@ -81,6 +89,18 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const [pinInput, setPinInput] = useState<string>(savedPasscode || '');
   const [pinError, setPinError] = useState<string>('');
   const [toastMsg, setToastMsg] = useState<string | null>(null);
+
+  // Saved Word Analyses (Offline Alphabetical Dictionary in Settings)
+  const [savedWords, setSavedWords] = useState<WordAnalysisRecord[]>(() =>
+    getSavedWordAnalyses(vaultMode)
+  );
+  const [wordFilterQuery, setWordFilterQuery] = useState<string>('');
+  const [selectedWordRecord, setSelectedWordRecord] =
+    useState<WordAnalysisRecord | null>(null);
+
+  useEffect(() => {
+    setSavedWords(getSavedWordAnalyses(vaultMode));
+  }, [vaultMode]);
 
   // 10-second long press on "Set Passcode" button (only in Primary Vault when Primary Passcode is already active)
   const holdTimerRef = useRef<number | null>(null);
@@ -463,7 +483,111 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             </div>
           </div>
         </section>
+
+        {/* 6. Saved Word Analysis (Offline Alphabetical A–Z Reference) */}
+        <section className="border border-[var(--wiki-border)] bg-[var(--wiki-bg)] p-4 space-y-3">
+          <div className="flex items-center justify-between border-b border-[var(--wiki-hairline)] pb-3">
+            <div className="flex items-center gap-2.5">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center border border-[var(--wiki-border)] bg-[var(--wiki-surface)]">
+                <BookOpenCheck className="h-4 w-4 text-[#3366cc]" />
+              </div>
+              <div>
+                <h2 className="font-wiki-serif text-base font-bold">
+                  Saved Word Analysis
+                </h2>
+                <p className="text-xs text-[var(--wiki-muted)]">
+                  Available offline · Alphabetical order (A–Z)
+                </p>
+              </div>
+            </div>
+            <span className="border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-2 py-0.5 font-wiki-mono text-xs font-bold text-[#3366cc]">
+              {savedWords.length}
+            </span>
+          </div>
+
+          {savedWords.length > 0 && (
+            <div className="relative flex items-center">
+              <Search className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-[var(--wiki-muted)]" />
+              <input
+                type="search"
+                value={wordFilterQuery}
+                onChange={(e) => setWordFilterQuery(e.target.value)}
+                placeholder="Filter saved words..."
+                className="h-9 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] pl-8 pr-2.5 text-xs text-[var(--wiki-text)] outline-none focus:border-[#3366cc]"
+              />
+            </div>
+          )}
+
+          {savedWords.length === 0 ? (
+            <p className="py-4 text-center text-xs text-[var(--wiki-muted)]">
+              Words analyzed on the canvas will automatically save here in alphabetical order for offline viewing.
+            </p>
+          ) : (
+            <div className="max-h-72 overflow-y-auto border border-[var(--wiki-hairline)] divide-y divide-[var(--wiki-hairline)]">
+              {savedWords
+                .filter((item) =>
+                  item.word
+                    .toLowerCase()
+                    .includes(wordFilterQuery.trim().toLowerCase())
+                )
+                .map((item) => (
+                  <div
+                    key={item.word.toLowerCase()}
+                    className="flex items-center justify-between gap-2 bg-[var(--wiki-bg)] px-3 py-2.5 hover:bg-[var(--wiki-surface)] transition-colors"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setSelectedWordRecord(item)}
+                      className="flex-1 min-w-0 text-left"
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="font-wiki-serif text-sm font-bold text-[var(--wiki-text)]">
+                          {item.word}
+                        </span>
+                        <span className="font-wiki-mono text-[11px] text-[#3366cc]">
+                          {item.phonetics.phoneticTranscription}
+                        </span>
+                      </div>
+                      <div className="truncate text-[11px] text-[var(--wiki-muted)]">
+                        {item.lexical.definitions[0]?.definition ||
+                          item.morphology.partOfSpeech.join(', ')}
+                      </div>
+                    </button>
+
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedWordRecord(item)}
+                        className="border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-2.5 py-1 text-xs font-semibold text-[#3366cc] hover:border-[#3366cc]"
+                      >
+                        View
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = deleteSavedWordAnalysis(item.word, vaultMode);
+                          setSavedWords(next);
+                        }}
+                        className="flex h-7 w-7 items-center justify-center text-[var(--wiki-muted)] hover:text-[#b32424]"
+                        title="Delete saved word"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+            </div>
+          )}
+        </section>
       </div>
+
+      {/* Offline Word Analysis Detail Modal */}
+      {selectedWordRecord && (
+        <WordAnalysisModal
+          record={selectedWordRecord}
+          onClose={() => setSelectedWordRecord(null)}
+        />
+      )}
 
       {/* Set Passcode Modal (Identical UI for Primary Passcode and Secondary Passcode via 10s hold) */}
       {showPasscodeModal && (

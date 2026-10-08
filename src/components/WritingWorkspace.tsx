@@ -31,6 +31,7 @@ import {
   CustomFontItem,
   DiaryLog,
   MicRecordingSettings,
+  VaultMode,
   getRemainingPasscodeCooldownSeconds,
   recordPasscodeFailure,
   resetPasscodeFailures,
@@ -49,6 +50,7 @@ import {
 } from '../utils/spoilerCipher';
 
 interface WritingWorkspaceProps {
+  vaultMode?: VaultMode;
   initialLog: DiaryLog | null;
   onSaveLog: (log: DiaryLog, exitAfterSave: boolean) => void;
   onDeleteLog?: (id: string) => void;
@@ -119,6 +121,7 @@ function formatTimeStamp(ms: number): string {
 }
 
 export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
+  vaultMode = 'primary',
   initialLog,
   onSaveLog,
   onDeleteLog,
@@ -180,8 +183,9 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
   // Header 1:1 PFP Cropper state
   const [rawSelectedImage, setRawSelectedImage] = useState<string | null>(null);
 
-  // Media Picker Image Studio state
+  // Media Picker Image Studio state (for adding new image OR editing an existing canvas image)
   const [rawMediaStudioImage, setRawMediaStudioImage] = useState<string | null>(null);
+  const [editingCanvasImageId, setEditingCanvasImageId] = useState<string | null>(null);
 
   // Canvas Background Image Studio state (Compression Format, Resolution, Quality, Bit Depth, Color Space, EXIF, Crop, Adjust & 22+ Filters)
   const [rawBgStudioImage, setRawBgStudioImage] = useState<string | null>(null);
@@ -1327,6 +1331,19 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
 
             <button
               type="button"
+              onClick={() => {
+                setEditingCanvasImageId(selectedCanvasImage.id);
+                setRawMediaStudioImage(selectedCanvasImage.dataUrl);
+              }}
+              className="flex h-7 items-center gap-1 border border-[#3366cc] bg-[#3366cc]/10 px-2.5 font-semibold text-[#3366cc] hover:bg-[#3366cc] hover:text-white transition-colors"
+              title="Open full Image Studio (Crop, Compress, Opacity, Adjust & 22+ Filters)"
+            >
+              <Pencil className="h-3.5 w-3.5" />
+              <span>Edit / Filters</span>
+            </button>
+
+            <button
+              type="button"
               onClick={() =>
                 updateCanvasImagesWithHistory((prev) =>
                   prev.map((c) =>
@@ -1703,6 +1720,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
                   left: `${img.x}px`,
                   top: `${img.y}px`,
                   width: `${img.width}px`,
+                  opacity: img.opacity ?? 1,
                   transform: `rotate(${img.rotation || 0}deg)`,
                   transformOrigin: 'center center',
                   zIndex: computedZIndex,
@@ -1826,7 +1844,10 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
             });
           }}
           onOpenBgImageStudio={(rawBgDataUrl) => setRawBgStudioImage(rawBgDataUrl)}
-          onOpenMediaImageStudio={(rawDataUrl) => setRawMediaStudioImage(rawDataUrl)}
+          onOpenMediaImageStudio={(rawDataUrl) => {
+            setEditingCanvasImageId(null);
+            setRawMediaStudioImage(rawDataUrl);
+          }}
           onOpenMediaAudioStudio={(rawAudioDataUrl, fileName, ext) => {
             const validExts: AudioFormatOption[] = [
               'wav',
@@ -1869,15 +1890,39 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
           customFonts={customFonts}
           onAddCustomFont={onAddCustomFont}
           micSettings={micSettings}
+          vaultMode={vaultMode}
           diaryLockPin={diaryLockPin}
           onChangeDiaryLockPin={(pin) => {
             setDiaryLockPin(pin);
             pushCanvasSnapshot({ diaryLockPin: pin });
           }}
-          onImportDocument={(importedTitle, importedHtml) => {
+          onImportDocument={(importedTitle, importedHtml, editableImages) => {
             const nextHeading = heading.trim() ? heading : importedTitle;
             if (!heading.trim() && importedTitle) {
               setHeading(importedTitle);
+            }
+            let nextCanvasImages = canvasImages;
+            if (editableImages && editableImages.length > 0) {
+              const nowBase = Date.now();
+              const addedItems: CanvasDraggableImage[] = editableImages.map(
+                (dataUrl, idx) => ({
+                  id: `wiki_img_${nowBase}_${idx}`,
+                  dataUrl,
+                  x: 24 + ((canvasImages.length + idx) * 24) % 120,
+                  y: 64 + ((canvasImages.length + idx) * 140) % 420,
+                  width: 240,
+                  height: 180,
+                  opacity: 1,
+                  rotation: 0,
+                  layer: 'foreground',
+                })
+              );
+              nextCanvasImages = [...canvasImages, ...addedItems];
+              setCanvasImages(nextCanvasImages);
+              if (addedItems.length > 0) {
+                setSelectedCanvasImgId(addedItems[0].id);
+                setSelectedCanvasAudioId(null);
+              }
             }
             if (editorRef.current) {
               const current = editorRef.current.innerHTML.trim();
@@ -1886,6 +1931,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
               pushCanvasSnapshot({
                 heading: nextHeading,
                 contentHtml: combined,
+                canvasImages: nextCanvasImages,
               });
             }
           }}
@@ -2014,12 +2060,37 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
         />
       )}
 
-      {/* Media Picker Image Studio Modal (Format, Crop, Transparency, Adjust & 22+ Filters) */}
+      {/* Media Picker & Canvas Image Studio Modal (Format, Crop, Transparency, Adjust & 22+ Filters) */}
       {rawMediaStudioImage && (
         <MediaImageStudioModal
           imageSrc={rawMediaStudioImage}
-          onCancel={() => setRawMediaStudioImage(null)}
+          onCancel={() => {
+            setRawMediaStudioImage(null);
+            setEditingCanvasImageId(null);
+          }}
           onConfirm={(processedDataUrl, opacity, width, height) => {
+            if (editingCanvasImageId) {
+              setCanvasImages((prev) => {
+                const next = prev.map((item) =>
+                  item.id === editingCanvasImageId
+                    ? {
+                        ...item,
+                        dataUrl: processedDataUrl,
+                        opacity,
+                        width: width || item.width,
+                        height: height || item.height,
+                      }
+                    : item
+                );
+                pushCanvasSnapshot({ canvasImages: next });
+                return next;
+              });
+              setSelectedCanvasImgId(editingCanvasImageId);
+              setEditingCanvasImageId(null);
+              setRawMediaStudioImage(null);
+              return;
+            }
+
             const newId = `img_${Date.now()}`;
             setCanvasImages((prev) => {
               const next: CanvasDraggableImage[] = [

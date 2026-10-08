@@ -1,23 +1,91 @@
 /**
- * Wikipedia Structured Article Importer
- * Uses the hardcoded free Wikipedia MediaWiki REST API to search and import structured,
- * clean, fully-editable HTML content (with optional images) directly onto the Canvas.
+ * Wikipedia Structured Article Importer (English & Hindi) + Live Search Suggestions
+ * Uses the hardcoded free Wikipedia MediaWiki REST API (`en.wikipedia.org` & `hi.wikipedia.org`)
+ * to provide live search disambiguation suggestions and import structured,
+ * clean, fully-editable HTML content plus editable canvas images directly onto the Canvas.
  */
 
-const WIKIPEDIA_REST_V1_BASE = 'https://en.wikipedia.org/api/rest_v1';
-const WIKIPEDIA_CORE_REST_SEARCH = 'https://en.wikipedia.org/w/rest.php/v1/search/title';
+export type WikipediaLanguage = 'en' | 'hi';
+
+const WIKIPEDIA_ENDPOINTS: Record<
+  WikipediaLanguage,
+  {
+    restV1Base: string;
+    coreRestSearch: string;
+    originBase: string;
+  }
+> = {
+  en: {
+    restV1Base: 'https://en.wikipedia.org/api/rest_v1',
+    coreRestSearch: 'https://en.wikipedia.org/w/rest.php/v1/search/title',
+    originBase: 'https://en.wikipedia.org',
+  },
+  hi: {
+    restV1Base: 'https://hi.wikipedia.org/api/rest_v1',
+    coreRestSearch: 'https://hi.wikipedia.org/w/rest.php/v1/search/title',
+    originBase: 'https://hi.wikipedia.org',
+  },
+};
+
+export interface WikipediaSuggestionItem {
+  id: number | string;
+  key: string;
+  title: string;
+  description: string;
+  thumbnailUrl?: string;
+}
 
 export interface WikipediaStructuredResult {
   title: string;
   html: string;
+  images: string[];
 }
 
 /**
- * Resolves the best-matching canonical Wikipedia page title for a user query.
+ * Fetches live disambiguation/search suggestions as the user types (e.g., "apple" -> Apple Inc. company vs Apple fruit).
  */
-async function resolveWikipediaTitle(query: string): Promise<string> {
+export async function fetchWikipediaSuggestions(
+  query: string,
+  lang: WikipediaLanguage = 'en',
+  signal?: AbortSignal
+): Promise<WikipediaSuggestionItem[]> {
   const trimmed = query.trim();
-  const searchUrl = `${WIKIPEDIA_CORE_REST_SEARCH}?q=${encodeURIComponent(trimmed)}&limit=1`;
+  if (!trimmed) return [];
+
+  const endpoints = WIKIPEDIA_ENDPOINTS[lang];
+  const searchUrl = `${endpoints.coreRestSearch}?q=${encodeURIComponent(trimmed)}&limit=8`;
+
+  const res = await fetch(searchUrl, {
+    headers: { Accept: 'application/json' },
+    signal,
+  });
+
+  if (!res.ok) return [];
+  const data = await res.json();
+  if (!data || !Array.isArray(data.pages)) return [];
+
+  return data.pages.map((page: Record<string, any>, idx: number) => {
+    const thumbRaw = page.thumbnail?.url || '';
+    return {
+      id: page.id ?? `${page.key || idx}`,
+      key: String(page.key || page.title || trimmed),
+      title: String(page.title || page.key || trimmed),
+      description: String(page.description || page.excerpt?.replace(/<[^>]+>/g, '') || ''),
+      thumbnailUrl: thumbRaw ? normalizeWikiUrl(thumbRaw, lang) : undefined,
+    };
+  });
+}
+
+/**
+ * Resolves the best-matching canonical Wikipedia page key for a user query.
+ */
+async function resolveWikipediaTitle(
+  query: string,
+  lang: WikipediaLanguage
+): Promise<string> {
+  const trimmed = query.trim();
+  const endpoints = WIKIPEDIA_ENDPOINTS[lang];
+  const searchUrl = `${endpoints.coreRestSearch}?q=${encodeURIComponent(trimmed)}&limit=1`;
   const res = await fetch(searchUrl, {
     headers: {
       Accept: 'application/json',
@@ -35,15 +103,17 @@ async function resolveWikipediaTitle(query: string): Promise<string> {
 
 /**
  * Cleans and transforms raw MediaWiki REST API HTML into clean, structured,
- * natively editable canvas HTML (headings, paragraphs, lists, blockquotes, tables, and optional images).
+ * natively editable canvas HTML (headings, paragraphs, lists, blockquotes, infobox facts)
+ * and extracts full-resolution article images so they can be added as editable Canvas images.
  */
 function transformWikipediaDomToEditableHtml(
   rawHtml: string,
   articleTitle: string,
   description: string | undefined,
   leadThumbnailUrl: string | undefined,
-  includeImages: boolean
-): string {
+  includeImages: boolean,
+  lang: WikipediaLanguage
+): { html: string; images: string[] } {
   const parser = new DOMParser();
   const doc = parser.parseFromString(rawHtml, 'text/html');
 
@@ -84,24 +154,32 @@ function transformWikipediaDomToEditableHtml(
 
   doc.querySelectorAll(unwantedSelectors.join(',')).forEach((el) => el.remove());
 
-  // Remove reference/external/see-also trailing sections if marked by section headers
+  // Remove reference/external/see-also trailing sections if marked by section headers (English & Hindi)
+  const ignoredHeadings = new Set([
+    'references',
+    'external links',
+    'further reading',
+    'notes',
+    'citations',
+    'सन्दर्भ',
+    'संदर्भ',
+    'बाहरी कड़ियाँ',
+    'इन्हें भी देखें',
+    'टिप्पणियाँ',
+  ]);
+
   doc.querySelectorAll('section').forEach((sec) => {
     const heading = sec.querySelector('h2, h3');
     if (heading) {
       const hText = (heading.textContent || '').trim().toLowerCase();
-      if (
-        hText === 'references' ||
-        hText === 'external links' ||
-        hText === 'further reading' ||
-        hText === 'notes' ||
-        hText === 'citations'
-      ) {
+      if (ignoredHeadings.has(hText)) {
         sec.remove();
       }
     }
   });
 
   const outputBlocks: string[] = [];
+  const extractedImages: string[] = [];
 
   // 1. Main Article Title & Short Description Header
   const safeTitle = escapeHtml(articleTitle);
@@ -110,15 +188,13 @@ function transformWikipediaDomToEditableHtml(
     outputBlocks.push(`<blockquote>${escapeHtml(description.trim())}</blockquote>`);
   }
 
-  // Track added image URLs so we don't duplicate the lead image
+  // Track added image URLs so we don't duplicate images
   const addedImageUrls = new Set<string>();
 
   if (includeImages && leadThumbnailUrl) {
-    const normalizedLead = normalizeWikiUrl(leadThumbnailUrl);
+    const normalizedLead = normalizeWikiUrl(leadThumbnailUrl, lang);
     addedImageUrls.add(normalizedLead);
-    outputBlocks.push(
-      `<p><img src="${escapeHtml(normalizedLead)}" alt="${safeTitle}" style="max-width:100%;height:auto;display:block;margin:10px 0;border-radius:2px;" /></p>`
-    );
+    extractedImages.push(normalizedLead);
   }
 
   // Helper to convert an inline node to clean HTML string (preserving bold, italic, code, sub, sup, br)
@@ -132,7 +208,7 @@ function transformWikipediaDomToEditableHtml(
     const el = node as HTMLElement;
     const tag = el.tagName.toLowerCase();
 
-    // Skip bracketed citation numbers like [1], [citation needed]
+    // Skip bracketed citation numbers like [1], [सन्दर्भ आवश्यक]
     if (tag === 'sup' && /^\s*\[.*\]\s*$/.test(el.textContent || '')) {
       return '';
     }
@@ -148,14 +224,16 @@ function transformWikipediaDomToEditableHtml(
     if (tag === 'sup') return `<sup>${inner}</sup>`;
     if (tag === 'code') return `<code>${inner}</code>`;
     if (tag === 'br') return '<br>';
-    // Convert links to normal editable text so tapping inside canvas edits text instead of navigating away
     return inner;
   };
 
-  // Helper to extract an image from figure/thumb/img element when includeImages is true
-  const extractImageBlock = (el: HTMLElement): string | null => {
+  // Helper to collect an image from figure/thumb/img element when includeImages is true
+  const collectEditableImage = (el: HTMLElement): string | null => {
     if (!includeImages) return null;
-    const img = el.tagName.toLowerCase() === 'img' ? (el as HTMLImageElement) : el.querySelector('img');
+    const img =
+      el.tagName.toLowerCase() === 'img'
+        ? (el as HTMLImageElement)
+        : el.querySelector('img');
     if (!img) return null;
 
     const rawSrc = img.getAttribute('src') || img.getAttribute('data-src') || '';
@@ -164,27 +242,32 @@ function transformWikipediaDomToEditableHtml(
     // Ignore tiny icons, math formulas, or UI sprites
     const widthAttr = parseInt(img.getAttribute('width') || '0', 10);
     const heightAttr = parseInt(img.getAttribute('height') || '0', 10);
-    if ((widthAttr > 0 && widthAttr < 45) || (heightAttr > 0 && heightAttr < 45)) {
+    if ((widthAttr > 0 && widthAttr < 55) || (heightAttr > 0 && heightAttr < 55)) {
       return null;
     }
-    if (rawSrc.includes('Special:FilePath') || rawSrc.includes('/math/')) {
+    if (
+      rawSrc.includes('Special:FilePath') ||
+      rawSrc.includes('/math/') ||
+      rawSrc.includes('Ambox_') ||
+      rawSrc.includes('Question_book') ||
+      rawSrc.includes('Wiki_letter')
+    ) {
       return null;
     }
 
-    const fullSrc = normalizeWikiUrl(rawSrc);
+    const fullSrc = normalizeWikiUrl(rawSrc, lang);
     if (addedImageUrls.has(fullSrc)) return null;
     addedImageUrls.add(fullSrc);
+    if (extractedImages.length < 10) {
+      extractedImages.push(fullSrc);
+    }
 
     const captionEl = el.querySelector('figcaption, .thumbcaption');
     const captionText = captionEl ? (captionEl.textContent || '').trim() : '';
-    const altText = escapeHtml(img.getAttribute('alt') || articleTitle);
-
-    let html = `<p><img src="${escapeHtml(fullSrc)}" alt="${altText}" style="max-width:100%;height:auto;display:block;margin:10px 0;border-radius:2px;" />`;
     if (captionText) {
-      html += `<em>${escapeHtml(captionText)}</em>`;
+      return `<p><em>${escapeHtml(captionText)}</em></p>`;
     }
-    html += `</p>`;
-    return html;
+    return null;
   };
 
   // Walk the document body in reading order and build clean structured blocks
@@ -192,8 +275,8 @@ function transformWikipediaDomToEditableHtml(
     const tag = el.tagName.toLowerCase();
 
     if (tag === 'figure' || el.classList.contains('thumb')) {
-      const imgHtml = extractImageBlock(el);
-      if (imgHtml) outputBlocks.push(imgHtml);
+      const captionHtml = collectEditableImage(el);
+      if (captionHtml) outputBlocks.push(captionHtml);
       return;
     }
 
@@ -216,10 +299,11 @@ function transformWikipediaDomToEditableHtml(
     if (tag === 'p') {
       if (includeImages) {
         el.querySelectorAll('img').forEach((inlineImg) => {
-          const imgHtml = extractImageBlock(inlineImg);
-          if (imgHtml) outputBlocks.push(imgHtml);
+          collectEditableImage(inlineImg);
           inlineImg.remove();
         });
+      } else {
+        el.querySelectorAll('img').forEach((inlineImg) => inlineImg.remove());
       }
       const inner = serializeInlineNodes(el).trim();
       if (inner) {
@@ -271,15 +355,12 @@ function transformWikipediaDomToEditableHtml(
     }
 
     if (tag === 'table' && el.classList.contains('infobox')) {
-      // Extract infobox lead image if images are enabled
       if (includeImages) {
         const infoboxImg = el.querySelector('img');
         if (infoboxImg) {
-          const imgHtml = extractImageBlock(infoboxImg);
-          if (imgHtml) outputBlocks.push(imgHtml);
+          collectEditableImage(infoboxImg);
         }
       }
-      // Extract key facts from infobox rows as a structured list
       const facts: string[] = [];
       el.querySelectorAll('tr').forEach((row) => {
         const th = row.querySelector('th');
@@ -298,7 +379,6 @@ function transformWikipediaDomToEditableHtml(
       return;
     }
 
-    // Recurse into containers (body, section, div, article, main)
     Array.from(el.children).forEach((child) => {
       processElement(child as HTMLElement);
     });
@@ -306,16 +386,19 @@ function transformWikipediaDomToEditableHtml(
 
   processElement(doc.body);
 
-  return outputBlocks.join('\n');
+  return {
+    html: outputBlocks.join('\n'),
+    images: extractedImages,
+  };
 }
 
-function normalizeWikiUrl(url: string): string {
+function normalizeWikiUrl(url: string, lang: WikipediaLanguage): string {
   const trimmed = url.trim();
   if (trimmed.startsWith('//')) {
     return `https:${trimmed}`;
   }
   if (trimmed.startsWith('/')) {
-    return `https://en.wikipedia.org${trimmed}`;
+    return `${WIKIPEDIA_ENDPOINTS[lang].originBase}${trimmed}`;
   }
   return trimmed;
 }
@@ -329,26 +412,56 @@ function escapeHtml(str: string): string {
 }
 
 /**
- * Searches Wikipedia for the given topic/word and returns structured, editable HTML
- * for the Canvas, with or without images.
+ * Converts a remote Wikimedia image URL to a self-contained Data URL if CORS allows,
+ * falling back to the direct HTTPS URL so it works both online and in the Image Studio.
+ */
+export async function resolveEditableImageDataUrl(imageUrl: string): Promise<string> {
+  try {
+    const res = await fetch(imageUrl, { mode: 'cors' });
+    if (res.ok) {
+      const blob = await res.blob();
+      return await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          resolve(typeof reader.result === 'string' ? reader.result : imageUrl);
+        };
+        reader.onerror = () => resolve(imageUrl);
+        reader.readAsDataURL(blob);
+      });
+    }
+  } catch {
+    // Fallback to direct URL
+  }
+  return imageUrl;
+}
+
+/**
+ * Searches Wikipedia (in English or Hindi) for the given topic/word (or exact canonical key)
+ * and returns structured, editable HTML + editable canvas images.
  */
 export async function fetchWikipediaStructuredTopic(
-  topicQuery: string,
-  includeImages: boolean
+  topicQueryOrKey: string,
+  includeImages: boolean,
+  lang: WikipediaLanguage = 'en',
+  isExactKey: boolean = false
 ): Promise<WikipediaStructuredResult> {
   if (typeof navigator !== 'undefined' && navigator.onLine === false) {
     throw new Error('No internet connection.');
   }
 
-  const canonicalKey = await resolveWikipediaTitle(topicQuery);
+  const endpoints = WIKIPEDIA_ENDPOINTS[lang];
+  const canonicalKey = isExactKey
+    ? topicQueryOrKey.trim()
+    : await resolveWikipediaTitle(topicQueryOrKey, lang);
   const encodedTitle = encodeURIComponent(canonicalKey.replace(/ /g, '_'));
 
-  // Fetch summary + full structured HTML in parallel from Wikipedia MediaWiki REST API
-  const summaryPromise = fetch(`${WIKIPEDIA_REST_V1_BASE}/page/summary/${encodedTitle}`, {
+  const summaryPromise = fetch(`${endpoints.restV1Base}/page/summary/${encodedTitle}`, {
     headers: { Accept: 'application/json' },
-  }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  })
+    .then((r) => (r.ok ? r.json() : null))
+    .catch(() => null);
 
-  const htmlResponse = await fetch(`${WIKIPEDIA_REST_V1_BASE}/page/html/${encodedTitle}`, {
+  const htmlResponse = await fetch(`${endpoints.restV1Base}/page/html/${encodedTitle}`, {
     headers: { Accept: 'text/html; charset=utf-8' },
   });
 
@@ -363,21 +476,28 @@ export async function fetchWikipediaStructuredTopic(
     canonicalKey.replace(/_/g, ' ');
   const description: string | undefined = summaryData?.description;
   const leadThumb: string | undefined =
-    summaryData?.originalimage?.source || summaryData?.thumbnail?.source;
+    summaryData?.thumbnail?.source || summaryData?.originalimage?.source;
 
   if (htmlResponse.ok) {
     const rawHtml = await htmlResponse.text();
-    const structuredHtml = transformWikipediaDomToEditableHtml(
+    const { html: structuredHtml, images: rawImages } = transformWikipediaDomToEditableHtml(
       rawHtml,
       displayTitle,
       description,
       leadThumb,
-      includeImages
+      includeImages,
+      lang
     );
+
+    const resolvedImages = includeImages
+      ? await Promise.all(rawImages.slice(0, 6).map((u) => resolveEditableImageDataUrl(u)))
+      : [];
+
     if (structuredHtml.trim().length > 0) {
       return {
         title: displayTitle,
         html: structuredHtml,
+        images: resolvedImages,
       };
     }
   }
@@ -388,15 +508,20 @@ export async function fetchWikipediaStructuredTopic(
     if (description) {
       blocks.push(`<blockquote>${escapeHtml(description)}</blockquote>`);
     }
-    if (includeImages && leadThumb) {
-      blocks.push(
-        `<p><img src="${escapeHtml(normalizeWikiUrl(leadThumb))}" alt="${escapeHtml(displayTitle)}" style="max-width:100%;height:auto;display:block;margin:10px 0;border-radius:2px;" /></p>`
-      );
-    }
     blocks.push(summaryData.extract_html);
+
+    const fallbackImages: string[] = [];
+    if (includeImages && leadThumb) {
+      const resolvedLead = await resolveEditableImageDataUrl(
+        normalizeWikiUrl(leadThumb, lang)
+      );
+      fallbackImages.push(resolvedLead);
+    }
+
     return {
       title: displayTitle,
       html: blocks.join('\n'),
+      images: fallbackImages,
     };
   }
 

@@ -701,6 +701,7 @@ export default function App() {
         />
       ) : route === 'workspace' ? (
         <WritingWorkspace
+          vaultMode={vaultMode}
           initialLog={editingLog}
           onSaveLog={handleUpsertLog}
           onDeleteLog={requestDeleteLogConfirmation}
