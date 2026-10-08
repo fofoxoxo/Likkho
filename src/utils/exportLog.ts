@@ -397,11 +397,42 @@ async function renderFullDiaryCanvasToJpeg(log: DiaryLog): Promise<{
     }
   });
 
-  // 5. Render Rich Text Content from the DOM onto the Canvas
+  // 5. Render Rich Text Content from the DOM onto the Canvas (including inline <img> elements)
   let cursorY = headerHeight + topCanvasPad + 18;
   const maxTextWidth = logicalWidth - sidePadding * 2;
 
-  const renderDomBlockList = (parent: HTMLElement) => {
+  const drawInlineEditorImage = async (imgEl: HTMLImageElement) => {
+    const src = imgEl.getAttribute('src') || '';
+    if (!src) return;
+    const loaded = await loadImageElement(src);
+    if (!loaded) return;
+
+    const styleWidth = parseFloat(imgEl.style.width || '') || parseFloat(imgEl.getAttribute('width') || '');
+    const targetW = Math.min(
+      maxTextWidth,
+      Math.max(60, styleWidth > 0 ? styleWidth : Math.min(340, loaded.width || 280))
+    );
+    const aspect = loaded.height / Math.max(1, loaded.width);
+    const targetH = Math.round(targetW * aspect);
+
+    const opacityVal = parseFloat(imgEl.style.opacity || '');
+    const alpha = !isNaN(opacityVal) && opacityVal >= 0 && opacityVal <= 1 ? opacityVal : 1;
+
+    const rotMatch = (imgEl.style.transform || '').match(/rotate\(([-\d.]+)deg\)/i);
+    const rotDeg = rotMatch ? parseFloat(rotMatch[1]) || 0 : 0;
+    const rotRad = (rotDeg * Math.PI) / 180;
+
+    cursorY += 8;
+    ctx.save();
+    ctx.translate(sidePadding + targetW / 2, cursorY + targetH / 2);
+    ctx.rotate(rotRad);
+    ctx.globalAlpha = alpha;
+    ctx.drawImage(loaded, -targetW / 2, -targetH / 2, targetW, targetH);
+    ctx.restore();
+    cursorY += targetH + 22;
+  };
+
+  const renderDomBlockList = async (parent: HTMLElement) => {
     const children = Array.from(parent.childNodes);
     if (children.length === 0) return;
 
@@ -415,6 +446,27 @@ async function renderFullDiaryCanvasToJpeg(log: DiaryLog): Promise<{
         const el = node as HTMLElement;
         const tag = el.tagName.toUpperCase();
 
+        if (tag === 'IMG') {
+          await drawInlineEditorImage(el as HTMLImageElement);
+          continue;
+        }
+
+        if (tag === 'FIGURE') {
+          const innerImg = el.querySelector('img');
+          if (innerImg) {
+            await drawInlineEditorImage(innerImg);
+          }
+          const cap = el.querySelector('figcaption');
+          if (cap) {
+            const capTxt = (cap.textContent || '').replace(/\u200B/g, '').trim();
+            if (capTxt) {
+              drawWrappedText(ctx, capTxt, sidePadding, maxTextWidth, 13, 'normal', 'italic', '#54595d', null);
+              cursorY += 6;
+            }
+          }
+          continue;
+        }
+
         if (tag === 'HR') {
           cursorY += 8;
           ctx.strokeStyle = '#a2a9b1';
@@ -425,6 +477,11 @@ async function renderFullDiaryCanvasToJpeg(log: DiaryLog): Promise<{
           ctx.stroke();
           cursorY += 18;
           continue;
+        }
+
+        const nestedImages = Array.from(el.querySelectorAll('img'));
+        for (const nImg of nestedImages) {
+          await drawInlineEditorImage(nImg);
         }
 
         const computed = window.getComputedStyle(el);
@@ -579,7 +636,7 @@ async function renderFullDiaryCanvasToJpeg(log: DiaryLog): Promise<{
     }
   };
 
-  renderDomBlockList(host);
+  await renderDomBlockList(host);
   document.body.removeChild(host);
 
   // 6. Draw Foreground-Layer Canvas Images & Foreground-Layer Audio Cards (in front of text)
@@ -614,16 +671,198 @@ async function renderFullDiaryCanvasToJpeg(log: DiaryLog): Promise<{
 }
 
 /**
- * Builds a valid PDF 1.4 binary containing the full rendered Diary Canvas (background, positioned images, audio cards, and text)
+ * Renders the DiaryLog into required standard A4 pages (595.28 x 841.89 pt)
+ * so external PDF readers can open and paginate the PDF naturally, and the edited
+ * Canvas Background Image is properly rendered on every A4 page!
+ */
+async function renderMultiPageA4DiaryPages(log: DiaryLog): Promise<
+  {
+    jpegBytes: Uint8Array;
+    pixelWidth: number;
+    pixelHeight: number;
+  }[]
+> {
+  const fullRendered = await renderFullDiaryCanvasToJpeg(log);
+  const fullImg = await loadImageElement(fullRendered.jpegDataUrl);
+  const bgImg = log.canvasBgDataUrl ? await loadImageElement(log.canvasBgDataUrl) : null;
+
+  const logicalPageWidth = 768;
+  const logicalPageHeight = Math.round(logicalPageWidth * (841.89 / 595.28)); // 1086 logical px (exact A4 ratio)
+  const headerHeight = 96;
+  const scale = 2; // High-DPI A4 pages (1536 x 2172 px)
+  const pixelWidth = logicalPageWidth * scale;
+  const pixelHeight = logicalPageHeight * scale;
+
+  // Slice the canvas content below the header into A4-sized vertical chunks
+  // Page 1 has Header (96px) + Content slice (logicalPageHeight - headerHeight = 990px)
+  // Subsequent pages have full A4 height (logicalPageHeight = 1086px) with the edited Canvas Background Image!
+  const firstPageContentH = logicalPageHeight - headerHeight;
+  const nextPageContentH = logicalPageHeight - 48; // 24px top/bottom breathing margin on continuation pages
+  const totalContentH = Math.max(1, fullRendered.logicalHeight - headerHeight);
+
+  const pageSlices: { srcYLogical: number; sliceHLogical: number; isFirstPage: boolean }[] = [];
+
+  if (totalContentH <= firstPageContentH) {
+    pageSlices.push({
+      srcYLogical: headerHeight,
+      sliceHLogical: totalContentH,
+      isFirstPage: true,
+    });
+  } else {
+    pageSlices.push({
+      srcYLogical: headerHeight,
+      sliceHLogical: firstPageContentH,
+      isFirstPage: true,
+    });
+    let offset = headerHeight + firstPageContentH;
+    while (offset < fullRendered.logicalHeight - 4) {
+      const rem = fullRendered.logicalHeight - offset;
+      const take = Math.min(nextPageContentH, rem);
+      pageSlices.push({
+        srcYLogical: offset,
+        sliceHLogical: take,
+        isFirstPage: false,
+      });
+      offset += take;
+    }
+  }
+
+  const drawEditedBgCover = (
+    c: CanvasRenderingContext2D,
+    targetY: number,
+    targetH: number
+  ) => {
+    if (!bgImg) return;
+    c.save();
+    c.beginPath();
+    c.rect(0, targetY, logicalPageWidth, targetH);
+    c.clip();
+    c.globalAlpha = Math.max(0.05, Math.min(1, log.canvasBgOpacity ?? 0.25));
+
+    const imgRatio = bgImg.width / Math.max(1, bgImg.height);
+    const areaRatio = logicalPageWidth / targetH;
+    let drawW = logicalPageWidth;
+    let drawH = targetH;
+    let drawX = 0;
+    let drawY = targetY;
+    if (imgRatio > areaRatio) {
+      drawH = targetH;
+      drawW = drawH * imgRatio;
+      drawX = (logicalPageWidth - drawW) / 2;
+    } else {
+      drawW = logicalPageWidth;
+      drawH = drawW / imgRatio;
+      drawY = targetY + (targetH - drawH) / 2;
+    }
+    c.drawImage(bgImg, drawX, drawY, drawW, drawH);
+    c.restore();
+  };
+
+  const outputPages: {
+    jpegBytes: Uint8Array;
+    pixelWidth: number;
+    pixelHeight: number;
+  }[] = [];
+
+  for (let pIdx = 0; pIdx < pageSlices.length; pIdx++) {
+    const slice = pageSlices[pIdx];
+    const pageCanvas = document.createElement('canvas');
+    pageCanvas.width = pixelWidth;
+    pageCanvas.height = pixelHeight;
+    const pCtx = pageCanvas.getContext('2d')!;
+    pCtx.scale(scale, scale);
+
+    // Base white A4 sheet
+    pCtx.fillStyle = '#ffffff';
+    pCtx.fillRect(0, 0, logicalPageWidth, logicalPageHeight);
+
+    if (slice.isFirstPage) {
+      // Draw edited background on the lower portion if content is shorter than full A4 page
+      drawEditedBgCover(pCtx, headerHeight, logicalPageHeight - headerHeight);
+
+      if (fullImg) {
+        // Draw Header from fullRendered
+        pCtx.drawImage(
+          fullImg,
+          0,
+          0,
+          logicalPageWidth * scale,
+          headerHeight * scale,
+          0,
+          0,
+          logicalPageWidth,
+          headerHeight
+        );
+        // Draw First Page Content Slice
+        pCtx.drawImage(
+          fullImg,
+          0,
+          slice.srcYLogical * scale,
+          logicalPageWidth * scale,
+          slice.sliceHLogical * scale,
+          0,
+          headerHeight,
+          logicalPageWidth,
+          slice.sliceHLogical
+        );
+      }
+    } else {
+      // Continuation A4 Page: first paint the edited Canvas Background across the A4 page so any unused bottom area also matches
+      drawEditedBgCover(pCtx, 0, logicalPageHeight);
+
+      if (fullImg) {
+        pCtx.drawImage(
+          fullImg,
+          0,
+          slice.srcYLogical * scale,
+          logicalPageWidth * scale,
+          slice.sliceHLogical * scale,
+          0,
+          24,
+          logicalPageWidth,
+          slice.sliceHLogical
+        );
+      }
+    }
+
+    // Subtle page number footer when there are multiple A4 pages
+    if (pageSlices.length > 1) {
+      pCtx.save();
+      pCtx.fillStyle = '#54595d';
+      pCtx.font = '10px monospace';
+      const footerTxt = `Page ${pIdx + 1} of ${pageSlices.length}`;
+      const fw = pCtx.measureText(footerTxt).width;
+      pCtx.fillText(footerTxt, logicalPageWidth - 32 - fw, logicalPageHeight - 12);
+      pCtx.restore();
+    }
+
+    const pageJpegUrl = pageCanvas.toDataURL('image/jpeg', 0.92);
+    const commaIdx = pageJpegUrl.indexOf(',');
+    const b64 = commaIdx >= 0 ? pageJpegUrl.slice(commaIdx + 1) : pageJpegUrl;
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) {
+      bytes[i] = bin.charCodeAt(i);
+    }
+
+    outputPages.push({
+      jpegBytes: bytes,
+      pixelWidth,
+      pixelHeight,
+    });
+  }
+
+  return outputPages;
+}
+
+/**
+ * Builds a multi-page standard A4 PDF 1.4 binary (595.28 x 841.89 pt per page)
+ * so all external PDF viewers & apps read every page cleanly and the edited canvas background is preserved.
  */
 async function buildVisualCanvasPdfBlob(log: DiaryLog): Promise<Blob> {
-  const rendered = await renderFullDiaryCanvasToJpeg(log);
-  const pageWidthPt = 595.28; // A4 width in pt
-  const scaleFactor = pageWidthPt / rendered.logicalWidth;
-  const pageHeightPt = Math.max(841.89, Math.round(rendered.logicalHeight * scaleFactor));
-  const drawWidthPt = pageWidthPt;
-  const drawHeightPt = Math.round(rendered.logicalHeight * scaleFactor);
-  const drawYPt = pageHeightPt - drawHeightPt;
+  const a4Pages = await renderMultiPageA4DiaryPages(log);
+  const pageWidthPt = 595.28; // Standard A4 width in pt
+  const pageHeightPt = 841.89; // Standard A4 height in pt
 
   const encoder = new TextEncoder();
   const chunks: Uint8Array[] = [];
@@ -647,36 +886,51 @@ async function buildVisualCanvasPdfBlob(log: DiaryLog): Promise<Blob> {
   objectOffsets.push(byteOffset);
   pushStr('1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n');
 
-  // Object 2: Pages
-  objectOffsets.push(byteOffset);
-  pushStr('2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n');
-
-  // Object 3: Page
+  // Object 2: Pages Root
+  // Each page i (0-indexed) uses 3 PDF objects:
+  // - Page object ID = 3 + i * 3
+  // - Image XObject ID = 4 + i * 3
+  // - Content Stream ID = 5 + i * 3
+  const kidsRefs = a4Pages.map((_, i) => `${3 + i * 3} 0 R`).join(' ');
   objectOffsets.push(byteOffset);
   pushStr(
-    `3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageWidthPt.toFixed(
+    `2 0 obj\n<< /Type /Pages /Kids [${kidsRefs}] /Count ${a4Pages.length} >>\nendobj\n`
+  );
+
+  for (let i = 0; i < a4Pages.length; i++) {
+    const pageData = a4Pages[i];
+    const pageObjId = 3 + i * 3;
+    const imgObjId = 4 + i * 3;
+    const contentObjId = 5 + i * 3;
+    const imName = `/Im${i + 1}`;
+
+    // Page Object
+    objectOffsets.push(byteOffset);
+    pushStr(
+      `${pageObjId} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageWidthPt.toFixed(
+        2
+      )} ${pageHeightPt.toFixed(
+        2
+      )}] /Resources << /XObject << ${imName} ${imgObjId} 0 R >> >> /Contents ${contentObjId} 0 R >>\nendobj\n`
+    );
+
+    // Image XObject (DCTDecode JPEG of this A4 Page)
+    objectOffsets.push(byteOffset);
+    pushStr(
+      `${imgObjId} 0 obj\n<< /Type /XObject /Subtype /Image /Width ${pageData.pixelWidth} /Height ${pageData.pixelHeight} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${pageData.jpegBytes.length} >>\nstream\n`
+    );
+    pushBytes(pageData.jpegBytes);
+    pushStr('\nendstream\nendobj\n');
+
+    // Page Content Stream drawing /Im{i+1} across the A4 page
+    const contentStream = `q\n${pageWidthPt.toFixed(2)} 0 0 ${pageHeightPt.toFixed(
       2
-    )} ${pageHeightPt.toFixed(
-      2
-    )}] /Resources << /XObject << /Im1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n`
-  );
-
-  // Object 4: Image XObject (DCTDecode JPEG of the full Diary Canvas)
-  objectOffsets.push(byteOffset);
-  pushStr(
-    `4 0 obj\n<< /Type /XObject /Subtype /Image /Width ${rendered.pixelWidth} /Height ${rendered.pixelHeight} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${rendered.jpegBytes.length} >>\nstream\n`
-  );
-  pushBytes(rendered.jpegBytes);
-  pushStr('\nendstream\nendobj\n');
-
-  // Object 5: Page Content Stream drawing /Im1 across the page
-  const contentStream = `q\n${drawWidthPt.toFixed(2)} 0 0 ${drawHeightPt.toFixed(
-    2
-  )} 0 ${drawYPt.toFixed(2)} cm\n/Im1 Do\nQ\n`;
-  objectOffsets.push(byteOffset);
-  pushStr(
-    `5 0 obj\n<< /Length ${contentStream.length} >>\nstream\n${contentStream}endstream\nendobj\n`
-  );
+    )} 0 0 cm\n${imName} Do\nQ\n`;
+    objectOffsets.push(byteOffset);
+    pushStr(
+      `${contentObjId} 0 obj\n<< /Length ${contentStream.length} >>\nstream\n${contentStream}endstream\nendobj\n`
+    );
+  }
 
   // XRef table
   const xrefStart = byteOffset;

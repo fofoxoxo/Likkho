@@ -183,9 +183,12 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
   // Header 1:1 PFP Cropper state
   const [rawSelectedImage, setRawSelectedImage] = useState<string | null>(null);
 
-  // Media Picker Image Studio state (for adding new image OR editing an existing canvas image)
+  // Media Picker Image Studio state (for adding new image OR editing an existing canvas image or inline Wikipedia image)
   const [rawMediaStudioImage, setRawMediaStudioImage] = useState<string | null>(null);
   const [editingCanvasImageId, setEditingCanvasImageId] = useState<string | null>(null);
+  const [selectedInlineImgId, setSelectedInlineImgId] = useState<string | null>(null);
+  const [editingInlineImgId, setEditingInlineImgId] = useState<string | null>(null);
+  const [, setInlineImgTick] = useState<number>(0);
 
   // Canvas Background Image Studio state (Compression Format, Resolution, Quality, Bit Depth, Color Space, EXIF, Crop, Adjust & 22+ Filters)
   const [rawBgStudioImage, setRawBgStudioImage] = useState<string | null>(null);
@@ -279,15 +282,27 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     historyIndexRef.current = 0;
   }, [initialLog]);
 
+  const normalizeSpoilersAndSelectionForSave = (rawHtml: string): string => {
+    const cleaned = normalizeSpoilersToLockedForSave(rawHtml);
+    const temp = document.createElement('div');
+    temp.innerHTML = cleaned;
+    temp.querySelectorAll('img').forEach((img) => {
+      img.style.outline = '';
+      img.style.outlineOffset = '';
+    });
+    return temp.innerHTML;
+  };
   // Check whether the user actually modified any diary content compared to initialLog
   const hasContentChangedFromInitial = (): boolean => {
     if (!initialLog) return true;
     const initialSnap = historyStackRef.current[0];
     if (!initialSnap) return false;
     const currentHtml = editorRef.current
-      ? normalizeSpoilersToLockedForSave(editorRef.current.innerHTML)
+      ? normalizeSpoilersAndSelectionForSave(editorRef.current.innerHTML)
       : '';
-    const initialNormalizedHtml = normalizeSpoilersToLockedForSave(initialSnap.contentHtml);
+    const initialNormalizedHtml = normalizeSpoilersAndSelectionForSave(
+      initialSnap.contentHtml
+    );
 
     if (heading.trim() !== initialSnap.heading.trim()) return true;
     if (pfpDataUrl !== initialSnap.pfpDataUrl) return true;
@@ -732,7 +747,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     hasAnyEntry: boolean;
   } => {
     const rawHtml = editorRef.current
-      ? normalizeSpoilersToLockedForSave(editorRef.current.innerHTML)
+      ? normalizeSpoilersAndSelectionForSave(editorRef.current.innerHTML)
       : '';
     const plainPreview = stripHtmlToSingleLine(rawHtml);
     const trimmedHeading = heading.trim();
@@ -842,6 +857,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     );
     onSaveLog(log, false);
     setSelectedCanvasImgId(null);
+    setSelectedInlineImgId(null);
     setSelectedCanvasAudioId(null);
     setIsReadingMode(true);
     setSavedIndicator(true);
@@ -863,8 +879,9 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
 
   // Handle clicks inside Editor:
   // 1. Ignore synthetic ghost clicks that fire within 420ms of double-tapping an Audio Player Card!
-  // 2. Check if user clicked a Passcode-Protected Spoiler span (`data-wiki-spoiler="true"`)
-  // 3. Otherwise check if user clicked a hyperlink `<a>`
+  // 2. Check if user clicked an inline Wikipedia / document image (`<img>`) in Edit Mode so they can edit it right in place!
+  // 3. Check if user clicked a Passcode-Protected Spoiler span (`data-wiki-spoiler="true"`)
+  // 4. Otherwise check if user clicked a hyperlink `<a>`
   const handleEditorClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (Date.now() - lastAudioSelectTimestampRef.current < 420) {
       return;
@@ -872,6 +889,30 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     setSelectedCanvasImgId(null);
     setSelectedCanvasAudioId(null);
     const target = e.target as HTMLElement;
+
+    const clickedImg = target.closest('img') as HTMLImageElement | null;
+    if (clickedImg && !isReadingMode && editorRef.current?.contains(clickedImg)) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!clickedImg.id) {
+        clickedImg.id = `inline_img_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      }
+      // Highlight selected inline image
+      editorRef.current.querySelectorAll('img').forEach((im) => {
+        im.style.outline = im.id === clickedImg.id ? '2px solid #3366cc' : '';
+        im.style.outlineOffset = im.id === clickedImg.id ? '2px' : '';
+      });
+      setSelectedInlineImgId(clickedImg.id);
+      return;
+    }
+
+    if (selectedInlineImgId && editorRef.current) {
+      editorRef.current.querySelectorAll('img').forEach((im) => {
+        im.style.outline = '';
+        im.style.outlineOffset = '';
+      });
+      setSelectedInlineImgId(null);
+    }
 
     const spoilerEl = target.closest('span[data-wiki-spoiler="true"]') as HTMLElement | null;
     if (spoilerEl) {
@@ -1091,6 +1132,30 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     !isReadingMode
       ? canvasImages.find((c) => c.id === selectedCanvasImgId) || null
       : null;
+
+  const selectedInlineImgElement: HTMLImageElement | null =
+    !isReadingMode && selectedInlineImgId && editorRef.current
+      ? (editorRef.current.querySelector(
+          `#${CSS.escape(selectedInlineImgId)}`
+        ) as HTMLImageElement | null)
+      : null;
+
+  const clearInlineImageSelection = () => {
+    if (editorRef.current) {
+      editorRef.current.querySelectorAll('img').forEach((im) => {
+        im.style.outline = '';
+        im.style.outlineOffset = '';
+      });
+    }
+    setSelectedInlineImgId(null);
+  };
+
+  const mutateSelectedInlineImage = (fn: (el: HTMLImageElement) => void) => {
+    if (!selectedInlineImgElement || !editorRef.current) return;
+    fn(selectedInlineImgElement);
+    setInlineImgTick((t) => t + 1);
+    pushCanvasSnapshot({ contentHtml: editorRef.current.innerHTML });
+  };
 
   const selectedCanvasAudio =
     !isReadingMode
@@ -1398,6 +1463,123 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
         </div>
       )}
 
+      {/* Selected Inline Wikipedia / Document Image Control Bar (Edits image right in its exact article place!) */}
+      {selectedInlineImgElement && (
+        <div className="relative z-30 flex flex-wrap items-center justify-between gap-2 border-b border-[#3366cc] bg-[var(--wiki-surface)] px-3 py-1.5 text-xs">
+          <div className="flex items-center gap-1.5 overflow-x-auto">
+            <button
+              type="button"
+              onClick={() =>
+                mutateSelectedInlineImage((el) => {
+                  const curW =
+                    parseFloat(el.style.width || '') || el.clientWidth || 280;
+                  el.style.width = `${Math.max(60, Math.round(curW - 24))}px`;
+                })
+              }
+              className="flex h-7 items-center gap-1 border border-[var(--wiki-border)] bg-[var(--wiki-bg)] px-2 font-semibold hover:border-[#3366cc]"
+              title="Smaller Size"
+            >
+              <ZoomOut className="h-3.5 w-3.5 text-[#3366cc]" />
+              <span>Size -</span>
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                mutateSelectedInlineImage((el) => {
+                  const curW =
+                    parseFloat(el.style.width || '') || el.clientWidth || 280;
+                  el.style.width = `${Math.min(640, Math.round(curW + 24))}px`;
+                })
+              }
+              className="flex h-7 items-center gap-1 border border-[var(--wiki-border)] bg-[var(--wiki-bg)] px-2 font-semibold hover:border-[#3366cc]"
+              title="Larger Size"
+            >
+              <ZoomIn className="h-3.5 w-3.5 text-[#3366cc]" />
+              <span>Size +</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() =>
+                mutateSelectedInlineImage((el) => {
+                  const m = (el.style.transform || '').match(
+                    /rotate\(([-\d.]+)deg\)/i
+                  );
+                  const curRot = m ? parseFloat(m[1]) || 0 : 0;
+                  const nextRot = (curRot - 15) % 360;
+                  el.style.transform = `rotate(${nextRot}deg)`;
+                })
+              }
+              className="flex h-7 items-center gap-1 border border-[var(--wiki-border)] bg-[var(--wiki-bg)] px-2 font-semibold hover:border-[#3366cc]"
+              title="Rotate Left 15°"
+            >
+              <RotateCcw className="h-3.5 w-3.5 text-[#3366cc]" />
+              <span>-15°</span>
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                mutateSelectedInlineImage((el) => {
+                  const m = (el.style.transform || '').match(
+                    /rotate\(([-\d.]+)deg\)/i
+                  );
+                  const curRot = m ? parseFloat(m[1]) || 0 : 0;
+                  const nextRot = (curRot + 15) % 360;
+                  el.style.transform = `rotate(${nextRot}deg)`;
+                })
+              }
+              className="flex h-7 items-center gap-1 border border-[var(--wiki-border)] bg-[var(--wiki-bg)] px-2 font-semibold hover:border-[#3366cc]"
+              title="Rotate Right 15°"
+            >
+              <RotateCw className="h-3.5 w-3.5 text-[#3366cc]" />
+              <span>+15°</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setEditingInlineImgId(selectedInlineImgElement.id);
+                setEditingCanvasImageId(null);
+                setRawMediaStudioImage(selectedInlineImgElement.src);
+              }}
+              className="flex h-7 items-center gap-1 border border-[#3366cc] bg-[#3366cc]/10 px-2.5 font-semibold text-[#3366cc] hover:bg-[#3366cc] hover:text-white transition-colors"
+              title="Open full Image Studio (Crop, Compress, Opacity, Adjust & 22+ Filters) right in place"
+            >
+              <Pencil className="h-3.5 w-3.5" />
+              <span>Edit / Filters</span>
+            </button>
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => {
+                if (!editorRef.current) return;
+                const fig = selectedInlineImgElement.closest('figure');
+                if (fig && editorRef.current.contains(fig)) {
+                  fig.remove();
+                } else {
+                  selectedInlineImgElement.remove();
+                }
+                setSelectedInlineImgId(null);
+                pushCanvasSnapshot({ contentHtml: editorRef.current.innerHTML });
+              }}
+              className="flex h-7 items-center gap-1 border border-[#b32424]/40 bg-[#b32424]/10 px-2 font-semibold text-[#b32424]"
+              title="Remove image"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={clearInlineImageSelection}
+              className="flex h-7 items-center px-1.5 text-[var(--wiki-muted)]"
+            >
+              Done
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Selected Canvas Audio Player Toolbar (Activated ONLY via Double-Tap):
           - Directional Resize Buttons (Width -/+ & Height -/+) + Position Move Buttons (Left/Right/Up/Down)
           - 360° Rotation Slider (0° to 360°)
@@ -1688,6 +1870,9 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
             const target = e.target as HTMLElement;
             if (target.closest('[data-canvas-audio-card="true"]')) {
               return;
+            }
+            if (!target.closest('img')) {
+              clearInlineImageSelection();
             }
             setSelectedCanvasImgId(null);
             setSelectedCanvasAudioId(null);
@@ -2067,8 +2252,28 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
           onCancel={() => {
             setRawMediaStudioImage(null);
             setEditingCanvasImageId(null);
+            setEditingInlineImgId(null);
           }}
           onConfirm={(processedDataUrl, opacity, width, height) => {
+            if (editingInlineImgId && editorRef.current) {
+              const inlineEl = editorRef.current.querySelector(
+                `#${CSS.escape(editingInlineImgId)}`
+              ) as HTMLImageElement | null;
+              if (inlineEl) {
+                inlineEl.src = processedDataUrl;
+                inlineEl.style.opacity = String(opacity ?? 1);
+                if (width && width > 0) {
+                  inlineEl.style.width = `${width}px`;
+                }
+              }
+              setSelectedInlineImgId(editingInlineImgId);
+              setEditingInlineImgId(null);
+              setRawMediaStudioImage(null);
+              setInlineImgTick((t) => t + 1);
+              pushCanvasSnapshot({ contentHtml: editorRef.current.innerHTML });
+              return;
+            }
+
             if (editingCanvasImageId) {
               setCanvasImages((prev) => {
                 const next = prev.map((item) =>

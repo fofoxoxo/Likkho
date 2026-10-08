@@ -12,6 +12,7 @@ import {
   Fingerprint,
   BookOpenCheck,
   Search,
+  X,
 } from 'lucide-react';
 import {
   AudioFormatOption,
@@ -90,7 +91,9 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const [pinError, setPinError] = useState<string>('');
   const [toastMsg, setToastMsg] = useState<string | null>(null);
 
-  // Saved Word Analyses (Offline Alphabetical Dictionary in Settings)
+  // Saved Word Analyses (Offline Alphabetical Dictionary Page in Settings)
+  const [showSavedWordsPage, setShowSavedWordsPage] = useState<boolean>(false);
+  const [isWordSearchOpen, setIsWordSearchOpen] = useState<boolean>(false);
   const [savedWords, setSavedWords] = useState<WordAnalysisRecord[]>(() =>
     getSavedWordAnalyses(vaultMode)
   );
@@ -100,7 +103,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
   useEffect(() => {
     setSavedWords(getSavedWordAnalyses(vaultMode));
-  }, [vaultMode]);
+  }, [vaultMode, showSavedWordsPage]);
 
   // 10-second long press on "Set Passcode" button (only in Primary Vault when Primary Passcode is already active)
   const holdTimerRef = useRef<number | null>(null);
@@ -241,6 +244,169 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const currentModalHasExistingPasscode = isConfiguringSecondaryViaHold
     ? Boolean(secondaryPasscode)
     : Boolean(savedPasscode);
+
+  const filteredSavedWords = savedWords.filter((item) =>
+    item.word.toLowerCase().includes(wordFilterQuery.trim().toLowerCase())
+  );
+
+  // Dedicated "Saved Word Analysis" Sub-Page when user clicks the "Saved Word Analysis" button in Settings
+  if (showSavedWordsPage) {
+    return (
+      <div className="flex h-full w-full flex-col bg-[var(--wiki-bg)] text-[var(--wiki-text)]">
+        {/* Header with Back Button, Title, and Top Search Button */}
+        <header className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-4">
+          {isWordSearchOpen ? (
+            <div className="flex flex-1 items-center gap-2 min-w-0">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsWordSearchOpen(false);
+                  setWordFilterQuery('');
+                }}
+                className="flex h-9 w-9 shrink-0 items-center justify-center border border-transparent hover:border-[var(--wiki-border)] hover:bg-[var(--wiki-bg)]"
+                aria-label="Close Search"
+              >
+                <ArrowLeft className="h-5 w-5" />
+              </button>
+              <Search className="h-4 w-4 shrink-0 text-[#3366cc]" />
+              <input
+                type="search"
+                value={wordFilterQuery}
+                onChange={(e) => setWordFilterQuery(e.target.value)}
+                placeholder="Search saved words..."
+                className="h-9 min-w-0 flex-1 border border-[var(--wiki-border)] bg-[var(--wiki-bg)] px-2.5 text-xs text-[var(--wiki-text)] outline-none focus:border-[#3366cc]"
+                autoFocus
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  setIsWordSearchOpen(false);
+                  setWordFilterQuery('');
+                }}
+                className="flex h-9 w-9 shrink-0 items-center justify-center border border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-muted)] hover:text-[var(--wiki-text)]"
+                title="Close search"
+                aria-label="Close search"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center gap-3 min-w-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowSavedWordsPage(false);
+                    setIsWordSearchOpen(false);
+                    setWordFilterQuery('');
+                  }}
+                  className="flex h-10 w-10 shrink-0 items-center justify-center border border-transparent hover:border-[var(--wiki-border)] hover:bg-[var(--wiki-bg)]"
+                  aria-label="Back to Settings"
+                >
+                  <ArrowLeft className="h-5 w-5" />
+                </button>
+                <div className="min-w-0">
+                  <h1 className="font-wiki-serif text-xl font-bold leading-tight truncate">
+                    Saved Word Analysis
+                  </h1>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setIsWordSearchOpen(true)}
+                className="flex h-10 w-10 shrink-0 items-center justify-center border border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-text)] hover:border-[#3366cc] active:scale-[0.98] transition-all"
+                title="Search saved words"
+                aria-label="Search saved words"
+              >
+                <Search className="h-4 w-4 text-[#3366cc]" />
+              </button>
+            </>
+          )}
+        </header>
+
+        {/* Alphabetical (A–Z) Saved Words List */}
+        <div className="flex-1 overflow-y-auto px-4 py-4">
+          {savedWords.length === 0 ? (
+            <div className="flex flex-col items-center justify-center border border-[var(--wiki-border)] bg-[var(--wiki-bg)] px-6 py-16 text-center">
+              <div className="flex h-12 w-12 items-center justify-center border border-[var(--wiki-border)] bg-[var(--wiki-surface)]">
+                <BookOpenCheck className="h-6 w-6 text-[#3366cc]" />
+              </div>
+              <h2 className="mt-3 font-wiki-serif text-lg font-bold">
+                No Saved Words Yet
+              </h2>
+              <p className="mt-1 max-w-xs text-xs leading-relaxed text-[var(--wiki-muted)]">
+                Words analyzed on the canvas will automatically save here in alphabetical order (A–Z) for offline viewing.
+              </p>
+            </div>
+          ) : filteredSavedWords.length === 0 ? (
+            <div className="border border-[var(--wiki-border)] bg-[var(--wiki-bg)] px-6 py-12 text-center">
+              <p className="text-xs text-[var(--wiki-muted)]">
+                No saved word matches <strong>"{wordFilterQuery}"</strong>.
+              </p>
+            </div>
+          ) : (
+            <div className="border border-[var(--wiki-border)] bg-[var(--wiki-bg)] divide-y divide-[var(--wiki-hairline)]">
+              {filteredSavedWords.map((item) => (
+                <div
+                  key={item.word.toLowerCase()}
+                  className="flex items-center justify-between gap-3 px-4 py-3.5 hover:bg-[var(--wiki-surface)] transition-colors"
+                >
+                  <button
+                    type="button"
+                    onClick={() => setSelectedWordRecord(item)}
+                    className="flex-1 min-w-0 text-left"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="font-wiki-serif text-base font-bold text-[var(--wiki-text)]">
+                        {item.word}
+                      </span>
+                      <span className="font-wiki-mono text-xs text-[#3366cc]">
+                        {item.phonetics.phoneticTranscription}
+                      </span>
+                    </div>
+                    <div className="mt-0.5 truncate text-xs text-[var(--wiki-muted)]">
+                      {item.lexical.definitions[0]?.definition ||
+                        item.morphology.partOfSpeech.join(', ')}
+                    </div>
+                  </button>
+
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedWordRecord(item)}
+                      className="border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3 py-1.5 text-xs font-semibold text-[#3366cc] hover:border-[#3366cc]"
+                    >
+                      View
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = deleteSavedWordAnalysis(item.word, vaultMode);
+                        setSavedWords(next);
+                      }}
+                      className="flex h-8 w-8 items-center justify-center text-[var(--wiki-muted)] hover:text-[#b32424]"
+                      title="Delete saved word"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Offline Word Analysis Detail Modal */}
+        {selectedWordRecord && (
+          <WordAnalysisModal
+            record={selectedWordRecord}
+            onClose={() => setSelectedWordRecord(null)}
+          />
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full w-full flex-col bg-[var(--wiki-bg)] text-[var(--wiki-text)]">
@@ -389,9 +555,36 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             </div>
             <ChevronRight className="h-5 w-5 text-[var(--wiki-muted)]" />
           </button>
+
+          {/* 5. Saved Word Analysis Button (Opens dedicated Alphabetical A–Z Saved Words page with Search button) */}
+          <button
+            type="button"
+            onClick={() => {
+              setSavedWords(getSavedWordAnalyses(vaultMode));
+              setIsWordSearchOpen(false);
+              setWordFilterQuery('');
+              setShowSavedWordsPage(true);
+            }}
+            className="flex w-full items-center justify-between px-4 py-4 text-left hover:bg-[var(--wiki-surface)] transition-colors"
+          >
+            <div className="flex items-center gap-3.5">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center border border-[var(--wiki-border)] bg-[var(--wiki-surface)]">
+                <BookOpenCheck className="h-5 w-5 text-[#3366cc]" />
+              </div>
+              <div>
+                <div className="font-wiki-serif text-base font-bold">
+                  Saved Word Analysis
+                </div>
+                <div className="text-xs text-[var(--wiki-muted)]">
+                  View saved words in alphabetical order (A–Z)
+                </div>
+              </div>
+            </div>
+            <ChevronRight className="h-5 w-5 text-[var(--wiki-muted)]" />
+          </button>
         </section>
 
-        {/* 5. Microphone Recording Settings (Format, Sample Rate, Bitrate) */}
+        {/* 6. Microphone Recording Settings (Format, Sample Rate, Bitrate) */}
         <section className="border border-[var(--wiki-border)] bg-[var(--wiki-bg)] p-4 space-y-4">
           <div className="flex items-center gap-2.5 border-b border-[var(--wiki-hairline)] pb-3">
             <div className="flex h-9 w-9 shrink-0 items-center justify-center border border-[var(--wiki-border)] bg-[var(--wiki-surface)]">
@@ -482,102 +675,6 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               </select>
             </div>
           </div>
-        </section>
-
-        {/* 6. Saved Word Analysis (Offline Alphabetical A–Z Reference) */}
-        <section className="border border-[var(--wiki-border)] bg-[var(--wiki-bg)] p-4 space-y-3">
-          <div className="flex items-center justify-between border-b border-[var(--wiki-hairline)] pb-3">
-            <div className="flex items-center gap-2.5">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center border border-[var(--wiki-border)] bg-[var(--wiki-surface)]">
-                <BookOpenCheck className="h-4 w-4 text-[#3366cc]" />
-              </div>
-              <div>
-                <h2 className="font-wiki-serif text-base font-bold">
-                  Saved Word Analysis
-                </h2>
-                <p className="text-xs text-[var(--wiki-muted)]">
-                  Available offline · Alphabetical order (A–Z)
-                </p>
-              </div>
-            </div>
-            <span className="border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-2 py-0.5 font-wiki-mono text-xs font-bold text-[#3366cc]">
-              {savedWords.length}
-            </span>
-          </div>
-
-          {savedWords.length > 0 && (
-            <div className="relative flex items-center">
-              <Search className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-[var(--wiki-muted)]" />
-              <input
-                type="search"
-                value={wordFilterQuery}
-                onChange={(e) => setWordFilterQuery(e.target.value)}
-                placeholder="Filter saved words..."
-                className="h-9 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] pl-8 pr-2.5 text-xs text-[var(--wiki-text)] outline-none focus:border-[#3366cc]"
-              />
-            </div>
-          )}
-
-          {savedWords.length === 0 ? (
-            <p className="py-4 text-center text-xs text-[var(--wiki-muted)]">
-              Words analyzed on the canvas will automatically save here in alphabetical order for offline viewing.
-            </p>
-          ) : (
-            <div className="max-h-72 overflow-y-auto border border-[var(--wiki-hairline)] divide-y divide-[var(--wiki-hairline)]">
-              {savedWords
-                .filter((item) =>
-                  item.word
-                    .toLowerCase()
-                    .includes(wordFilterQuery.trim().toLowerCase())
-                )
-                .map((item) => (
-                  <div
-                    key={item.word.toLowerCase()}
-                    className="flex items-center justify-between gap-2 bg-[var(--wiki-bg)] px-3 py-2.5 hover:bg-[var(--wiki-surface)] transition-colors"
-                  >
-                    <button
-                      type="button"
-                      onClick={() => setSelectedWordRecord(item)}
-                      className="flex-1 min-w-0 text-left"
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className="font-wiki-serif text-sm font-bold text-[var(--wiki-text)]">
-                          {item.word}
-                        </span>
-                        <span className="font-wiki-mono text-[11px] text-[#3366cc]">
-                          {item.phonetics.phoneticTranscription}
-                        </span>
-                      </div>
-                      <div className="truncate text-[11px] text-[var(--wiki-muted)]">
-                        {item.lexical.definitions[0]?.definition ||
-                          item.morphology.partOfSpeech.join(', ')}
-                      </div>
-                    </button>
-
-                    <div className="flex items-center gap-1 shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => setSelectedWordRecord(item)}
-                        className="border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-2.5 py-1 text-xs font-semibold text-[#3366cc] hover:border-[#3366cc]"
-                      >
-                        View
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const next = deleteSavedWordAnalysis(item.word, vaultMode);
-                          setSavedWords(next);
-                        }}
-                        className="flex h-7 w-7 items-center justify-center text-[var(--wiki-muted)] hover:text-[#b32424]"
-                        title="Delete saved word"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                ))}
-            </div>
-          )}
         </section>
       </div>
 

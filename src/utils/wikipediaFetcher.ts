@@ -190,12 +190,28 @@ function transformWikipediaDomToEditableHtml(
 
   // Track added image URLs so we don't duplicate images
   const addedImageUrls = new Set<string>();
+  const inlineImagePlaceholders: { token: string; rawUrl: string }[] = [];
 
-  if (includeImages && leadThumbnailUrl) {
-    const normalizedLead = normalizeWikiUrl(leadThumbnailUrl, lang);
-    addedImageUrls.add(normalizedLead);
-    extractedImages.push(normalizedLead);
-  }
+  const registerInlineImagePlaceholder = (
+    rawUrl: string,
+    captionText?: string
+  ): string | null => {
+    const fullSrc = normalizeWikiUrl(rawUrl, lang);
+    if (addedImageUrls.has(fullSrc)) return null;
+    addedImageUrls.add(fullSrc);
+
+    const idx = inlineImagePlaceholders.length;
+    if (idx >= 12) return null; // Keep up to 12 article images in place
+    const token = `__WIKI_INLINE_IMG_${idx}__`;
+    inlineImagePlaceholders.push({ token, rawUrl: fullSrc });
+    extractedImages.push(token);
+
+    const imgId = `wiki_inline_img_${Date.now()}_${idx}`;
+    const safeCaption = captionText ? escapeHtml(captionText) : '';
+    return `<figure class="my-3"><img id="${imgId}" data-wiki-editable-img="true" src="${token}" alt="${safeCaption}" style="width: 280px; max-width: 100%; height: auto; display: block; opacity: 1; transform: rotate(0deg); margin: 8px 0; cursor: pointer;" />${
+      safeCaption ? `<figcaption><em>${safeCaption}</em></figcaption>` : ''
+    }</figure>`;
+  };
 
   // Helper to convert an inline node to clean HTML string (preserving bold, italic, code, sub, sup, br)
   const serializeInlineNodes = (node: Node): string => {
@@ -227,7 +243,7 @@ function transformWikipediaDomToEditableHtml(
     return inner;
   };
 
-  // Helper to collect an image from figure/thumb/img element when includeImages is true
+  // Helper to build an inline editable image figure right where it appears in the Wikipedia DOM
   const collectEditableImage = (el: HTMLElement): string | null => {
     if (!includeImages) return null;
     const img =
@@ -255,28 +271,18 @@ function transformWikipediaDomToEditableHtml(
       return null;
     }
 
-    const fullSrc = normalizeWikiUrl(rawSrc, lang);
-    if (addedImageUrls.has(fullSrc)) return null;
-    addedImageUrls.add(fullSrc);
-    if (extractedImages.length < 10) {
-      extractedImages.push(fullSrc);
-    }
-
     const captionEl = el.querySelector('figcaption, .thumbcaption');
     const captionText = captionEl ? (captionEl.textContent || '').trim() : '';
-    if (captionText) {
-      return `<p><em>${escapeHtml(captionText)}</em></p>`;
-    }
-    return null;
+    return registerInlineImagePlaceholder(rawSrc, captionText);
   };
 
-  // Walk the document body in reading order and build clean structured blocks
+  // Walk the document body in reading order and build clean structured blocks with images in their exact places
   const processElement = (el: HTMLElement) => {
     const tag = el.tagName.toLowerCase();
 
     if (tag === 'figure' || el.classList.contains('thumb')) {
-      const captionHtml = collectEditableImage(el);
-      if (captionHtml) outputBlocks.push(captionHtml);
+      const figHtml = collectEditableImage(el);
+      if (figHtml) outputBlocks.push(figHtml);
       return;
     }
 
@@ -297,9 +303,11 @@ function transformWikipediaDomToEditableHtml(
     }
 
     if (tag === 'p') {
+      const inlineFigures: string[] = [];
       if (includeImages) {
         el.querySelectorAll('img').forEach((inlineImg) => {
-          collectEditableImage(inlineImg);
+          const fig = collectEditableImage(inlineImg);
+          if (fig) inlineFigures.push(fig);
           inlineImg.remove();
         });
       } else {
@@ -309,6 +317,7 @@ function transformWikipediaDomToEditableHtml(
       if (inner) {
         outputBlocks.push(`<p>${inner}</p>`);
       }
+      inlineFigures.forEach((f) => outputBlocks.push(f));
       return;
     }
 
@@ -358,7 +367,8 @@ function transformWikipediaDomToEditableHtml(
       if (includeImages) {
         const infoboxImg = el.querySelector('img');
         if (infoboxImg) {
-          collectEditableImage(infoboxImg);
+          const figHtml = collectEditableImage(infoboxImg);
+          if (figHtml) outputBlocks.push(figHtml);
         }
       }
       const facts: string[] = [];
@@ -386,9 +396,17 @@ function transformWikipediaDomToEditableHtml(
 
   processElement(doc.body);
 
+  // If the article had a lead thumbnail that wasn't already inside the infobox/body, place it right after the lead description
+  if (includeImages && leadThumbnailUrl && inlineImagePlaceholders.length === 0) {
+    const leadFig = registerInlineImagePlaceholder(leadThumbnailUrl);
+    if (leadFig) {
+      outputBlocks.splice(Math.min(2, outputBlocks.length), 0, leadFig);
+    }
+  }
+
   return {
     html: outputBlocks.join('\n'),
-    images: extractedImages,
+    images: inlineImagePlaceholders.map((p) => p.rawUrl),
   };
 }
 
@@ -489,15 +507,25 @@ export async function fetchWikipediaStructuredTopic(
       lang
     );
 
-    const resolvedImages = includeImages
-      ? await Promise.all(rawImages.slice(0, 6).map((u) => resolveEditableImageDataUrl(u)))
-      : [];
+    let finalHtml = structuredHtml;
+    const resolvedImages: string[] = [];
 
-    if (structuredHtml.trim().length > 0) {
+    if (includeImages && rawImages.length > 0) {
+      const resolvedList = await Promise.all(
+        rawImages.map((u) => resolveEditableImageDataUrl(u))
+      );
+      resolvedList.forEach((dataUrl, idx) => {
+        const token = `__WIKI_INLINE_IMG_${idx}__`;
+        finalHtml = finalHtml.split(token).join(dataUrl);
+        resolvedImages.push(dataUrl);
+      });
+    }
+
+    if (finalHtml.trim().length > 0) {
       return {
         title: displayTitle,
-        html: structuredHtml,
-        images: resolvedImages,
+        html: finalHtml,
+        images: [],
       };
     }
   }
@@ -508,20 +536,23 @@ export async function fetchWikipediaStructuredTopic(
     if (description) {
       blocks.push(`<blockquote>${escapeHtml(description)}</blockquote>`);
     }
-    blocks.push(summaryData.extract_html);
-
-    const fallbackImages: string[] = [];
     if (includeImages && leadThumb) {
       const resolvedLead = await resolveEditableImageDataUrl(
         normalizeWikiUrl(leadThumb, lang)
       );
-      fallbackImages.push(resolvedLead);
+      const imgId = `wiki_inline_img_${Date.now()}_0`;
+      blocks.push(
+        `<figure class="my-3"><img id="${imgId}" data-wiki-editable-img="true" src="${resolvedLead}" alt="${escapeHtml(
+          displayTitle
+        )}" style="width: 280px; max-width: 100%; height: auto; display: block; opacity: 1; transform: rotate(0deg); margin: 8px 0; cursor: pointer;" /></figure>`
+      );
     }
+    blocks.push(summaryData.extract_html);
 
     return {
       title: displayTitle,
       html: blocks.join('\n'),
-      images: fallbackImages,
+      images: [],
     };
   }
 
