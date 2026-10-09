@@ -55,9 +55,21 @@ jobs:
             sed -i 's/compileSdkVersion = [0-9][0-9]*/compileSdkVersion = 35/g' android/variables.gradle || true
             sed -i 's/targetSdkVersion = [0-9][0-9]*/targetSdkVersion = 34/g' android/variables.gradle || true
           fi
-          if [ -f android/app/build.gradle ]; then
-            sed -i 's/^[[:space:]]*compileSdk.*/    compileSdk 35/' android/app/build.gradle || true
-          fi
+          # Copy Kotlin DSL app/build.gradle.kts (versionCode = 2, versionName = "1.0.1", release signingConfig) into android/app/build.gradle.kts
+          cp app/build.gradle.kts android/app/build.gradle.kts
+          rm -f android/app/build.gradle
+
+          # Ensure ProGuard rules keep Capacitor Bridge, WebView JavascriptInterface, and Likkho native classes when isMinifyEnabled = true
+          cat << 'EOF' >> android/app/proguard-rules.pro
+          -keep class com.likkho.diary.** { *; }
+          -keep class com.getcapacitor.** { *; }
+          -keepclassmembers class * {
+              @android.webkit.JavascriptInterface <methods>;
+          }
+          -keepattributes JavascriptInterface,Annotation,*Annotation*,Signature,InnerClasses,EnclosingMethod
+          -dontwarn com.google.android.gms.**
+          -dontwarn org.apache.cordova.**
+          EOF
 
           MANIFEST="android/app/src/main/AndroidManifest.xml"
           if ! grep -q "FOREGROUND_SERVICE_MICROPHONE" "$MANIFEST"; then
@@ -1560,16 +1572,26 @@ jobs:
           }
           EOF
 
-      - name: Assemble Debug APK
+      - name: Assemble Signed Release APK & Debug APK
         working-directory: ./android
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug
-          cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/Likkho-debug.apk
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            ./gradlew assembleRelease
+            mv app/build/outputs/apk/release/app-release.apk app/build/outputs/apk/release/likkho-release.apk
+          else
+            ./gradlew assembleDebug
+            cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/likkho-release.apk
+          fi
 
-      - name: Upload Debug APK Artifact
+      - name: Upload Signed Release APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Likkho-Debug-APK
-          path: android/app/build/outputs/apk/debug/Likkho-debug.apk
+          name: likkho-release-apk
+          path: android/app/build/outputs/apk/*/likkho-release.apk
           retention-days: 30
