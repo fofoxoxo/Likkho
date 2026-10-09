@@ -48,6 +48,7 @@ import {
   decryptSpoilerSecretText,
   lockAndMaskSpoilerElement,
 } from '../utils/spoilerCipher';
+import { renderLatexExpressionToHtml } from '../utils/latexMathEngine';
 
 interface WritingWorkspaceProps {
   vaultMode?: VaultMode;
@@ -180,8 +181,13 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
   // Guard copy of HTML prior to user input so accidental deletion of spoiler spans is immediately reverted
   const lastValidHtmlWithSpoilersRef = useRef<string>(initialLog?.contentHtml || '');
 
-  // Header 1:1 PFP Cropper state
+  // Header 1:1 PFP Cropper & Emoji/Text Studio state
   const [rawSelectedImage, setRawSelectedImage] = useState<string | null>(null);
+  const [showPfpStudioModal, setShowPfpStudioModal] = useState<boolean>(false);
+
+  // Active inline LaTeX Formula edit state when user taps an existing formula in Edit Mode
+  const [activeLatexSpan, setActiveLatexSpan] = useState<HTMLElement | null>(null);
+  const [editLatexInput, setEditLatexInput] = useState<string>('');
 
   // Media Picker Image Studio state (for adding new image OR editing an existing canvas image or inline Wikipedia image)
   const [rawMediaStudioImage, setRawMediaStudioImage] = useState<string | null>(null);
@@ -1110,6 +1116,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     reader.onload = () => {
       if (typeof reader.result === 'string') {
         setRawSelectedImage(reader.result);
+        setShowPfpStudioModal(true);
       }
     };
     reader.readAsDataURL(file);
@@ -1151,6 +1158,15 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
         im.style.outlineOffset = '';
       });
       setSelectedInlineImgId(null);
+    }
+
+    const latexEl = target.closest('span[data-wiki-latex="true"]') as HTMLElement | null;
+    if (latexEl && !isReadingMode && editorRef.current?.contains(latexEl)) {
+      e.preventDefault();
+      e.stopPropagation();
+      setActiveLatexSpan(latexEl);
+      setEditLatexInput(latexEl.getAttribute('data-latex-src') || '');
+      return;
     }
 
     const spoilerEl = target.closest('span[data-wiki-spoiler="true"]') as HTMLElement | null;
@@ -1431,15 +1447,17 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
             disabled={isReadingMode}
             onClick={() => {
               if (isReadingMode) return;
-              if (window.LikkhoNative?.requestFilesAndMediaPermission) {
-                window.LikkhoNative.requestFilesAndMediaPermission();
-              }
-              fileInputRef.current?.click();
+              setRawSelectedImage(null);
+              setShowPfpStudioModal(true);
             }}
             className={`group relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden border border-[var(--wiki-border)] bg-[var(--wiki-bg)] ${
               isReadingMode ? 'cursor-default' : 'hover:border-[#3366cc]'
             }`}
-            title={isReadingMode ? 'Diary PFP' : 'Select & crop 1:1 image from storage'}
+            title={
+              isReadingMode
+                ? 'Diary PFP'
+                : 'Set Diary PFP (Photo, Emoji/Text & Background Color)'
+            }
           >
             {pfpDataUrl ? (
               <img
@@ -2450,14 +2468,122 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
         </div>
       )}
 
-      {/* 1:1 Mandatory Image Cropper Modal before setting Header PFP */}
-      {rawSelectedImage && (
+      {/* Edit Existing Inline LaTeX Formula Modal */}
+      {activeLatexSpan && !isReadingMode && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs"
+          onClick={() => setActiveLatexSpan(null)}
+        >
+          <div
+            className="w-full max-w-sm border border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-text)] shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-[var(--wiki-hairline)] bg-[var(--wiki-surface)] px-4 py-3">
+              <h3 className="font-wiki-serif text-base font-bold">
+                Edit LaTeX Formula
+              </h3>
+              <button
+                type="button"
+                onClick={() => setActiveLatexSpan(null)}
+                className="flex h-7 w-7 items-center justify-center text-[var(--wiki-muted)] hover:text-[var(--wiki-text)]"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!activeLatexSpan || !editorRef.current) return;
+                const cleaned = editLatexInput.trim();
+                if (!cleaned) {
+                  activeLatexSpan.parentNode?.removeChild(activeLatexSpan);
+                } else {
+                  activeLatexSpan.setAttribute('data-latex-src', cleaned);
+                  activeLatexSpan.innerHTML = renderLatexExpressionToHtml(cleaned);
+                }
+                pushCanvasSnapshot({ contentHtml: editorRef.current.innerHTML });
+                setActiveLatexSpan(null);
+              }}
+              className="p-4 space-y-3"
+            >
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-[var(--wiki-text)]">
+                  LaTeX Expression
+                </label>
+                <input
+                  type="text"
+                  value={editLatexInput}
+                  onChange={(e) => setEditLatexInput(e.target.value)}
+                  placeholder="e.g. \frac{a}{b}, \sum_{i=1}^{n} x_i"
+                  className="h-9 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3 font-wiki-mono text-xs text-[var(--wiki-text)] outline-none focus:border-[#3366cc]"
+                  autoFocus
+                />
+              </div>
+
+              {editLatexInput.trim().length > 0 && (
+                <div className="flex items-center gap-2 border border-[var(--wiki-hairline)] bg-[var(--wiki-surface)] px-3 py-2 text-xs">
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--wiki-muted)]">
+                    Preview:
+                  </span>
+                  <span
+                    className="wiki-latex-formula text-sm text-[var(--wiki-text)]"
+                    dangerouslySetInnerHTML={{
+                      __html: renderLatexExpressionToHtml(editLatexInput),
+                    }}
+                  />
+                </div>
+              )}
+
+              <div className="flex items-center justify-between gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (activeLatexSpan && editorRef.current) {
+                      activeLatexSpan.parentNode?.removeChild(activeLatexSpan);
+                      pushCanvasSnapshot({ contentHtml: editorRef.current.innerHTML });
+                    }
+                    setActiveLatexSpan(null);
+                  }}
+                  className="flex h-9 items-center gap-1 border border-[#b32424]/40 bg-[#b32424]/10 px-2.5 text-xs font-semibold text-[#b32424]"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  <span>Delete</span>
+                </button>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setActiveLatexSpan(null)}
+                    className="h-9 border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3 text-xs font-medium text-[var(--wiki-text)]"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="h-9 bg-[#3366cc] px-3.5 text-xs font-semibold text-white"
+                  >
+                    Update Formula
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 1:1 Header PFP Studio Modal (Image Cropper + Emoji/Text & Background Color) */}
+      {(showPfpStudioModal || rawSelectedImage) && (
         <ImageCropperModal
           imageSrc={rawSelectedImage}
-          onCancel={() => setRawSelectedImage(null)}
+          currentPfpDataUrl={pfpDataUrl}
+          onCancel={() => {
+            setRawSelectedImage(null);
+            setShowPfpStudioModal(false);
+          }}
           onCropComplete={(croppedUrl) => {
             setPfpDataUrl(croppedUrl);
             setRawSelectedImage(null);
+            setShowPfpStudioModal(false);
             pushCanvasSnapshot({ pfpDataUrl: croppedUrl });
           }}
         />

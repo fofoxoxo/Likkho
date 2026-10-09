@@ -42,7 +42,13 @@ import {
   Search,
   Loader2,
   BookOpenCheck,
+  Sigma,
 } from 'lucide-react';
+import {
+  MATH_SYMBOL_CATEGORIES,
+  MathSymbolItem,
+  renderLatexExpressionToHtml,
+} from '../utils/latexMathEngine';
 import {
   CanvasAudioAttachment,
   CustomFontItem,
@@ -215,6 +221,14 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
   const [activeWordAnalysisRecord, setActiveWordAnalysisRecord] =
     useState<WordAnalysisRecord | null>(null);
 
+  // LaTeX & Mathematical Symbols Toolbar Popover State
+  const [showMathPopover, setShowMathPopover] = useState<boolean>(false);
+  const [activeMathCategoryId, setActiveMathCategoryId] = useState<string>(
+    MATH_SYMBOL_CATEGORIES[0].id
+  );
+  const [latexInput, setLatexInput] = useState<string>('');
+  const latexInputRef = useRef<HTMLInputElement | null>(null);
+
   const [linkUrl, setLinkUrl] = useState<string>('https://');
   const [selectedTextPreview, setSelectedTextPreview] = useState<string>('');
   const [hintToast, setHintToast] = useState<string | null>(null);
@@ -282,6 +296,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     setShowDiaryLockPopover(false);
     setShowWikipediaPopover(false);
     setShowWordAnalysisPopover(false);
+    setShowMathPopover(false);
   };
 
   const findAncestorTag = (node: Node | null, tags: string[]): HTMLElement | null => {
@@ -1843,6 +1858,92 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     await runWordAnalysis(wordAnalysisQuery);
   };
 
+  /**
+   * Append a symbol's LaTeX snippet into the LaTeX formula builder input,
+   * or insert an inline-safe LaTeX formula chip directly into the Canvas without disturbing surrounding words/sentences!
+   */
+  const handleSelectMathSymbol = (sym: MathSymbolItem) => {
+    const inputEl = latexInputRef.current;
+    if (inputEl) {
+      const start = inputEl.selectionStart ?? latexInput.length;
+      const end = inputEl.selectionEnd ?? latexInput.length;
+      const nextVal = latexInput.slice(0, start) + sym.latex + latexInput.slice(end);
+      setLatexInput(nextVal);
+      window.setTimeout(() => {
+        inputEl.focus();
+        const nextCursor = start + sym.latex.length;
+        inputEl.setSelectionRange(nextCursor, nextCursor);
+      }, 0);
+    } else {
+      setLatexInput((prev) => prev + sym.latex);
+    }
+  };
+
+  const insertLatexFormulaIntoCanvas = (rawFormula: string) => {
+    const cleaned = rawFormula.trim();
+    if (!cleaned) {
+      showBriefHint('Select a math symbol or type a LaTeX formula first.');
+      return;
+    }
+
+    const range = restoreSavedSelection();
+    const sel = window.getSelection();
+    if (!sel || !range || !editorRef.current) return;
+
+    const renderedInnerHtml = renderLatexExpressionToHtml(cleaned);
+    if (!renderedInnerHtml) return;
+
+    const formulaSpan = document.createElement('span');
+    formulaSpan.className = 'wiki-latex-formula';
+    formulaSpan.contentEditable = 'false';
+    formulaSpan.setAttribute('contenteditable', 'false');
+    formulaSpan.setAttribute('spellcheck', 'false');
+    formulaSpan.setAttribute('data-wiki-latex', 'true');
+    formulaSpan.setAttribute('data-latex-src', cleaned);
+    formulaSpan.innerHTML = renderedInnerHtml;
+
+    range.deleteContents();
+    range.insertNode(formulaSpan);
+
+    // Ensure clean plain text boundaries before & after the inline formula span
+    // so surrounding words/sentences are NEVER disturbed and typing continues in normal text
+    const parent = formulaSpan.parentNode;
+    if (parent) {
+      if (
+        !formulaSpan.previousSibling ||
+        formulaSpan.previousSibling.nodeType !== Node.TEXT_NODE
+      ) {
+        parent.insertBefore(document.createTextNode('\u200B'), formulaSpan);
+      }
+      let afterNode = formulaSpan.nextSibling;
+      if (!afterNode || afterNode.nodeType !== Node.TEXT_NODE) {
+        afterNode = document.createTextNode('\u00A0');
+        parent.insertBefore(afterNode, formulaSpan.nextSibling);
+      }
+      const nextRange = document.createRange();
+      const offset =
+        (afterNode.textContent || '').startsWith('\u00A0') ||
+        (afterNode.textContent || '').startsWith('\u200B')
+          ? 1
+          : 0;
+      nextRange.setStart(afterNode, offset);
+      nextRange.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(nextRange);
+      savedRangeRef.current = nextRange.cloneRange();
+    }
+
+    setLatexInput('');
+    checkActiveFormats();
+    onContentChange();
+    showBriefHint('Inserted LaTeX formula on canvas.');
+  };
+
+  const handleInsertLatexSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    insertLatexFormulaIntoCanvas(latexInput);
+  };
+
   const getBtnClass = (isActive: boolean = false) =>
     `flex h-9 min-w-[36px] shrink-0 items-center justify-center rounded-xs border px-2 text-xs font-medium transition-colors ${
       isActive
@@ -2694,7 +2795,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
 
         <span className="mx-0.5 h-5 w-[1px] shrink-0 bg-[var(--wiki-border)] opacity-50" />
 
-        {/* Subscript, Superscript, Spoiler, Diary Lock, Import Document, Timestamp */}
+        {/* Subscript, Superscript, LaTeX Math Formulas, Spoiler, Diary Lock, Import Document, Timestamp */}
         <button
           type="button"
           onMouseDown={preventFocusLoss}
@@ -2712,6 +2813,27 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
           title="Subscript"
         >
           <Subscript className="h-4 w-4" />
+        </button>
+
+        {/* LaTeX Formulas & Mathematical Symbols Tool */}
+        <button
+          type="button"
+          onMouseDown={preventFocusLoss}
+          onClick={() => {
+            saveCurrentSelection();
+            const sel = window.getSelection();
+            const selectedStr = sel ? sel.toString().trim() : '';
+            const next = !showMathPopover;
+            closeAllPopovers();
+            if (next && selectedStr && !latexInput.trim()) {
+              setLatexInput(selectedStr);
+            }
+            setShowMathPopover(next);
+          }}
+          className={getBtnClass(showMathPopover)}
+          title="LaTeX Formulas & Mathematical Symbols"
+        >
+          <Sigma className="h-4 w-4" />
         </button>
 
         <span className="mx-0.5 h-5 w-[1px] shrink-0 bg-[var(--wiki-border)] opacity-50" />
@@ -2961,6 +3083,142 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
             </div>
           </div>
         </form>
+      )}
+
+      {/* LaTeX Formulas & Mathematical Symbols Categories Panel (Opens Below Toolbar) */}
+      {showMathPopover && (
+        <div className="flex w-full flex-col gap-2 border-t border-[var(--wiki-hairline)] bg-[var(--wiki-bg)] px-3 py-2.5">
+          {/* LaTeX Formula Input + Live Inline Preview + Insert Button */}
+          <form onSubmit={handleInsertLatexSubmit} className="flex w-full flex-col gap-1.5">
+            <div className="flex w-full items-center gap-1.5">
+              <div className="relative flex flex-1 items-center min-w-0">
+                <Sigma className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-[#3366cc]" />
+                <input
+                  ref={latexInputRef}
+                  type="text"
+                  value={latexInput}
+                  onChange={(e) => setLatexInput(e.target.value)}
+                  placeholder="Tap symbols below or type LaTeX (e.g. \frac{a}{b}, \int_{a}^{b} f(x)\,dx)..."
+                  className="h-9 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] pl-8 pr-2.5 font-wiki-mono text-xs text-[var(--wiki-text)] outline-none focus:border-[#3366cc]"
+                />
+              </div>
+              {latexInput.trim().length > 0 && (
+                <button
+                  type="button"
+                  onMouseDown={preventFocusLoss}
+                  onClick={() => setLatexInput('')}
+                  className="flex h-9 shrink-0 items-center border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-2.5 text-xs font-medium text-[var(--wiki-muted)] hover:text-[var(--wiki-text)]"
+                  title="Clear formula input"
+                >
+                  Clear
+                </button>
+              )}
+              <button
+                type="submit"
+                disabled={!latexInput.trim()}
+                className="flex h-9 shrink-0 items-center gap-1 bg-[#3366cc] px-3.5 text-xs font-semibold text-white disabled:opacity-50"
+              >
+                <span>Insert Formula</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowMathPopover(false)}
+                className="flex h-9 w-8 shrink-0 items-center justify-center text-xs text-[var(--wiki-muted)] hover:text-[var(--wiki-text)]"
+                aria-label="Close LaTeX Math tool"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Live Rendered LaTeX Preview Bar */}
+            {latexInput.trim().length > 0 && (
+              <div className="flex items-center justify-between gap-2 border border-[var(--wiki-hairline)] bg-[var(--wiki-surface)] px-2.5 py-1.5 text-xs">
+                <div className="flex items-center gap-2 overflow-x-auto">
+                  <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wider text-[var(--wiki-muted)]">
+                    Preview:
+                  </span>
+                  <span
+                    className="wiki-latex-formula text-sm text-[var(--wiki-text)]"
+                    dangerouslySetInnerHTML={{
+                      __html: renderLatexExpressionToHtml(latexInput),
+                    }}
+                  />
+                </div>
+              </div>
+            )}
+          </form>
+
+          {/* 6 Mathematical Categories Selector Tabs */}
+          <div
+            onMouseDown={preventFocusLoss}
+            className="flex items-center gap-1 overflow-x-auto pb-0.5 whitespace-nowrap"
+          >
+            {MATH_SYMBOL_CATEGORIES.map((cat) => {
+              const isSelected = cat.id === activeMathCategoryId;
+              return (
+                <button
+                  key={cat.id}
+                  type="button"
+                  onMouseDown={preventFocusLoss}
+                  onClick={() => setActiveMathCategoryId(cat.id)}
+                  className={`shrink-0 border px-2.5 py-1 text-[11px] font-semibold transition-colors ${
+                    isSelected
+                      ? 'border-[#3366cc] bg-[#3366cc] text-white'
+                      : 'border-[var(--wiki-border)] bg-[var(--wiki-surface)] text-[var(--wiki-text)] hover:border-[#3366cc]'
+                  }`}
+                  title={cat.title}
+                >
+                  {cat.title}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Symbols Grid for Active Mathematical Category */}
+          {(() => {
+            const activeCategory =
+              MATH_SYMBOL_CATEGORIES.find((c) => c.id === activeMathCategoryId) ||
+              MATH_SYMBOL_CATEGORIES[0];
+            return (
+              <div
+                onMouseDown={preventFocusLoss}
+                className="max-h-44 overflow-y-auto border border-[var(--wiki-border)] bg-[var(--wiki-surface)] p-2"
+              >
+                <div className="mb-1.5 flex items-center justify-between">
+                  <span className="text-[11px] font-bold text-[#3366cc]">
+                    {activeCategory.title}
+                  </span>
+                  <span className="text-[10px] text-[var(--wiki-muted)]">
+                    Tap symbol to add to formula · Double-tap to insert directly
+                  </span>
+                </div>
+                <div className="grid grid-cols-4 sm:grid-cols-6 gap-1.5">
+                  {activeCategory.symbols.map((sym) => (
+                    <button
+                      key={sym.id}
+                      type="button"
+                      onMouseDown={preventFocusLoss}
+                      onClick={() => handleSelectMathSymbol(sym)}
+                      onDoubleClick={() => insertLatexFormulaIntoCanvas(sym.latex)}
+                      title={`${sym.label} (${sym.latex.trim()})`}
+                      className="flex flex-col items-center justify-center gap-0.5 border border-[var(--wiki-hairline)] bg-[var(--wiki-bg)] px-1.5 py-1.5 text-center hover:border-[#3366cc] hover:bg-[#3366cc]/5 active:bg-[#3366cc]/15 transition-colors"
+                    >
+                      <span
+                        className="wiki-latex-formula text-sm font-semibold text-[var(--wiki-text)]"
+                        dangerouslySetInnerHTML={{
+                          __html: renderLatexExpressionToHtml(sym.latex),
+                        }}
+                      />
+                      <span className="w-full truncate text-[9px] leading-tight text-[var(--wiki-muted)]">
+                        {sym.label}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+        </div>
       )}
 
       {/* Word Analysis Search Bar Panel (Opens Below Toolbar) */}

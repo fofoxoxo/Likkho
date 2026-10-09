@@ -246,3 +246,116 @@
   border-radius: 9999px;
 }
 
+/* Inline-Safe LaTeX Mathematical Formula Display on Canvas */
+.wiki-editor-content span[data-wiki-latex="true"],
+.wiki-latex-formula {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+  font-family: 'Cambria Math', 'Latin Modern Math', 'Times New Roman', var(--font-serif-wiki);
+  font-size: 0.98em;
+  line-height: 1.15;
+  margin: 0 2px;
+  padding: 0 2px;
+  border-radius: 2px;
+  white-space: nowrap;
+  user-select: all;
+  cursor: pointer;
+}
+
+.wiki-editor-content span[data-wiki-latex="true"]:hover {
+  background-color: rgba(51, 102, 204, 0.08);
+}
+
+.wiki-latex-var {
+  font-style: italic;
+  font-family: 'Times New Roman', Georgia, serif;
+}
+
+.wiki-latex-op {
+  font-style: normal;
+  font-weight: 500;
+  margin: 0 1px;
+}
+
+.wiki-latex-bigop {
+  font-style: normal;
+  font-size: 1.12em;
+  line-height: 1;
+  vertical-align: -0.05em;
+  margin: 0 1px;
+}
+
+.wiki-latex-delim {
+  font-style: normal;
+  font-weight: 500;
+}
+
+.wiki-latex-frac {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  vertical-align: middle;
+  font-size: 0.78em;
+  line-height: 1.05;
+  margin: 0 2px;
+}
+
+.wiki-latex-frac-num {
+  border-bottom: 1px solid currentColor;
+  padding: 0 2px 1px 2px;
+  text-align: center;
+  width: 100%;
+}
+
+.wiki-latex-frac-den {
+  padding: 1px 2px 0 2px;
+  text-align: center;
+  width: 100%;
+}
+
+.wiki-latex-sqrt {
+  display: inline-flex;
+  align-items: baseline;
+  vertical-align: middle;
+  margin: 0 1px;
+}
+
+.wiki-latex-root-idx {
+  font-size: 0.62em;
+  line-height: 1;
+  margin-right: -2px;
+  transform: translateY(-0.35em);
+}
+
+.wiki-latex-radical {
+  font-size: 1.05em;
+  line-height: 1;
+  margin-right: 0.5px;
+}
+
+.wiki-latex-radicand {
+  border-top: 1px solid currentColor;
+  padding: 0 2px;
+  line-height: 1.05;
+}
+
+.wiki-latex-supsub {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  vertical-align: middle;
+  font-size: 0.68em;
+  line-height: 1;
+  margin-left: 1px;
+}
+
+.wiki-latex-sup,
+.wiki-latex-sub {
+  font-size: 0.74em;
+  line-height: 1;
+}
+
+
