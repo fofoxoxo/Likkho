@@ -76,6 +76,10 @@ import {
   WordAnalysisRecord,
 } from '../utils/wordAnalysisEngine';
 import { WordAnalysisModal } from './WordAnalysisModal';
+import {
+  estimateDataUrlByteSize,
+  formatByteSizeLabel,
+} from './MediaImageStudioModal';
 
 interface RichTextToolbarProps {
   editorRef: React.RefObject<HTMLDivElement | null>;
@@ -87,6 +91,7 @@ interface RichTextToolbarProps {
   onChangeCanvasBg: (dataUrl: string | null, opacity: number) => void;
   onOpenBgImageStudio?: (rawBgImageDataUrl: string) => void;
   onOpenMediaImageStudio: (rawImageDataUrl: string) => void;
+  onInsertRawCanvasImage?: (rawImageDataUrl: string) => void;
   onOpenMediaAudioStudio?: (
     rawAudioDataUrl: string,
     fileName: string,
@@ -186,6 +191,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
   onChangeCanvasBg,
   onOpenBgImageStudio,
   onOpenMediaImageStudio,
+  onInsertRawCanvasImage,
   onOpenMediaAudioStudio,
   onAddAudioAttachment,
   customFonts,
@@ -501,6 +507,16 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     return endRange;
   };
 
+  // Unwrap a specific HTML element in-place without mutating global selection
+  const unwrapElementDomOnly = (el: HTMLElement) => {
+    const parent = el.parentNode;
+    if (!parent) return;
+    while (el.firstChild) {
+      parent.insertBefore(el.firstChild, el);
+    }
+    parent.removeChild(el);
+  };
+
   // Unwrap a specific HTML element in-place while keeping its inner contents selected
   const unwrapElement = (el: HTMLElement) => {
     const parent = el.parentNode;
@@ -523,6 +539,101 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
         sel.addRange(range);
         savedRangeRef.current = range.cloneRange();
       }
+    }
+  };
+
+  /**
+   * Collects all non-empty text node slices within `range` BEFORE any DOM mutations happen,
+   * so mutating Paragraph 1 never shifts or invalidates the selection range for Paragraph 2, 3, etc.
+   */
+  const getSelectedTextNodeSlices = (
+    range: Range
+  ): { tNode: Text; startOff: number; endOff: number }[] => {
+    if (!editorRef.current || range.collapsed) return [];
+    const slices: { tNode: Text; startOff: number; endOff: number }[] = [];
+    const walker = document.createTreeWalker(
+      editorRef.current,
+      NodeFilter.SHOW_TEXT
+    );
+    let curNode: Node | null = walker.nextNode();
+    while (curNode) {
+      if (
+        curNode.nodeType === Node.TEXT_NODE &&
+        range.intersectsNode(curNode) &&
+        !findAncestorByAttr(curNode, 'data-wiki-spoiler') &&
+        !findAncestorByAttr(curNode, 'data-wiki-latex')
+      ) {
+        const tNode = curNode as Text;
+        const fullText = tNode.textContent || '';
+        const startOff = tNode === range.startContainer ? range.startOffset : 0;
+        const endOff =
+          tNode === range.endContainer ? range.endOffset : fullText.length;
+
+        if (endOff > startOff) {
+          let insideRange = true;
+          try {
+            if (
+              range.comparePoint(tNode, endOff) < 0 ||
+              range.comparePoint(tNode, startOff) > 0
+            ) {
+              insideRange = false;
+            }
+          } catch {
+            insideRange = true;
+          }
+          const cleanSlice = fullText.slice(startOff, endOff).replace(/\u200B/g, '');
+          if (insideRange && cleanSlice.length > 0) {
+            slices.push({ tNode, startOff, endOff });
+          }
+        }
+      }
+      curNode = walker.nextNode();
+    }
+    return slices;
+  };
+
+  /**
+   * Splits an inline ancestor `ancestorEl` around `targetNode` so `targetNode` is no longer enclosed by `ancestorEl`,
+   * while any text before `targetNode` or after `targetNode` inside `ancestorEl` keeps its original `ancestorEl` wrapper.
+   */
+  const splitAncestorAroundNode = (ancestorEl: HTMLElement, targetNode: Node) => {
+    const parent = ancestorEl.parentNode;
+    if (!parent || !ancestorEl.contains(targetNode)) return;
+
+    const cleanAncestorText = (ancestorEl.textContent || '').replace(/\u200B/g, '');
+    const cleanTargetText = (targetNode.textContent || '').replace(/\u200B/g, '');
+
+    if (cleanAncestorText === cleanTargetText) {
+      unwrapElementDomOnly(ancestorEl);
+      return;
+    }
+
+    const afterRange = document.createRange();
+    afterRange.setStartAfter(targetNode);
+    afterRange.setEndAfter(ancestorEl.lastChild || targetNode);
+    const afterFrag = afterRange.extractContents();
+
+    // Move targetNode right after ancestorEl
+    if (ancestorEl.nextSibling) {
+      parent.insertBefore(targetNode, ancestorEl.nextSibling);
+    } else {
+      parent.appendChild(targetNode);
+    }
+
+    // If there was meaningful text after targetNode, wrap it in a clone of ancestorEl
+    if ((afterFrag.textContent || '').replace(/\u200B/g, '').length > 0) {
+      const cloneAfter = ancestorEl.cloneNode(false) as HTMLElement;
+      cloneAfter.appendChild(afterFrag);
+      if (targetNode.nextSibling) {
+        parent.insertBefore(cloneAfter, targetNode.nextSibling);
+      } else {
+        parent.appendChild(cloneAfter);
+      }
+    }
+
+    // If ancestorEl before targetNode is now empty, remove it
+    if ((ancestorEl.textContent || '').replace(/\u200B/g, '').length === 0) {
+      parent.removeChild(ancestorEl);
     }
   };
 
@@ -671,8 +782,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
 
   /**
    * Selection-Scoped Text Color:
-   * - Wraps ONLY the selected text in `<span data-wiki-color="...">`.
-   * - Ensures unstyled boundary text nodes exist immediately before and after the colored span and places the cursor OUTSIDE the span after applying, so typing at the start or end of the word never bleeds the text color!
+   * - Applies or removes (`default`) text color across ALL selected text (whether a single word, a single paragraph, or multiple paragraphs on a canvas with a background image).
    */
   const applySelectionTextColor = (color: string) => {
     const range = restoreSavedSelection();
@@ -685,20 +795,79 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
       findAncestorByAttr(range.endContainer, 'data-wiki-color');
 
     if (color === 'default') {
-      if (existingColorSpan) {
-        if (range.collapsed) {
+      if (range.collapsed) {
+        if (existingColorSpan) {
           splitElementAtCursorToDefault(existingColorSpan, 'data-wiki-color');
-        } else {
-          unwrapElement(existingColorSpan);
         }
-      } else if (!range.collapsed) {
-        // Also unwrap any `data-wiki-color` spans contained inside the selected range
-        editorRef.current.querySelectorAll('[data-wiki-color]').forEach((node) => {
-          if (range.intersectsNode(node)) {
-            unwrapElement(node as HTMLElement);
-          }
-        });
+        setShowColorPicker(null);
+        checkActiveFormats();
+        onContentChange();
+        return;
       }
+
+      // Non-collapsed selection: uncolor ALL selected text across all selected paragraphs!
+      const slices = getSelectedTextNodeSlices(range);
+      let firstUncolored: Node | null = null;
+      let lastUncolored: Node | null = null;
+
+      slices.forEach(({ tNode, startOff, endOff }) => {
+        const fullLen = (tNode.textContent || '').length;
+        let midNode: Text = tNode;
+        if (endOff < fullLen) {
+          midNode.splitText(endOff);
+        }
+        if (startOff > 0) {
+          midNode = midNode.splitText(startOff);
+        }
+
+        // Strip or split any ancestor with `data-wiki-color`, `style.color`, or `<font color>` up to editorRef
+        let cur: Node | null = midNode.parentNode;
+        while (cur && cur !== editorRef.current) {
+          const el = cur as HTMLElement;
+          const nextParent = el.parentNode;
+          const hasWikiColor = el.hasAttribute && el.hasAttribute('data-wiki-color');
+          const hasInlineColor = Boolean(el.style && el.style.color);
+          const isFontColor = el.tagName === 'FONT' && el.hasAttribute('color');
+
+          if (hasWikiColor || hasInlineColor || isFontColor) {
+            const cleanElText = (el.textContent || '').replace(/\u200B/g, '');
+            const cleanMidText = (midNode.textContent || '').replace(/\u200B/g, '');
+            if (cleanElText === cleanMidText) {
+              if (el.style) el.style.color = '';
+              el.removeAttribute('data-wiki-color');
+              el.removeAttribute('color');
+              if (
+                (el.tagName === 'SPAN' || el.tagName === 'FONT') &&
+                !el.getAttribute('style')?.trim() &&
+                !el.hasAttribute('data-wiki-px') &&
+                !el.hasAttribute('data-wiki-font') &&
+                !el.className
+              ) {
+                unwrapElementDomOnly(el);
+              }
+            } else if (hasWikiColor || isFontColor) {
+              splitAncestorAroundNode(el, midNode);
+            } else if (hasInlineColor) {
+              // Block element (e.g. <p style="color:...">) with partial selection: clear block color or override on slice
+              el.style.color = '';
+            }
+          }
+          cur = nextParent;
+        }
+
+        if (!firstUncolored) firstUncolored = midNode;
+        lastUncolored = midNode;
+      });
+
+      if (firstUncolored && lastUncolored) {
+        const nextRange = document.createRange();
+        nextRange.setStartBefore(firstUncolored);
+        nextRange.setEndAfter(lastUncolored);
+        sel.removeAllRanges();
+        sel.addRange(nextRange);
+        savedRangeRef.current = nextRange.cloneRange();
+      }
+
       setShowColorPicker(null);
       checkActiveFormats();
       onContentChange();
@@ -719,125 +888,94 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
       return;
     }
 
-    let targetSpan: HTMLElement;
-    const extracted = range.cloneContents();
-    const containsBlockElements = Boolean(
-      extracted.querySelector('p, div, h1, h2, h3, li, blockquote, pre')
-    );
+    // Apply or change color across ALL selected text node slices (single word, single paragraph, or multiple paragraphs)
+    const slices = getSelectedTextNodeSlices(range);
+    let firstColored: HTMLElement | null = null;
+    let lastColored: HTMLElement | null = null;
 
-    if (
-      existingColorSpan &&
-      !containsBlockElements &&
-      existingColorSpan.textContent?.replace(/\u200B/g, '') ===
-        sel.toString().replace(/\u200B/g, '')
-    ) {
-      existingColorSpan.style.color = color;
-      existingColorSpan.setAttribute('data-wiki-color', color);
-      targetSpan = existingColorSpan;
-    } else if (containsBlockElements) {
-      // Multi-paragraph or block selection: wrap each text node inside the selection range cleanly in its own inline `data-wiki-color` span so paragraph boundaries never break!
-      const textNodesInSelection: Text[] = [];
-      const walker = document.createTreeWalker(
-        editorRef.current,
-        NodeFilter.SHOW_TEXT
-      );
-      let curNode: Node | null = walker.nextNode();
-      while (curNode) {
-        if (
-          curNode.nodeType === Node.TEXT_NODE &&
-          range.intersectsNode(curNode) &&
-          (curNode.textContent || '').replace(/\u200B/g, '').length > 0 &&
-          !findAncestorByAttr(curNode, 'data-wiki-spoiler') &&
-          !findAncestorByAttr(curNode, 'data-wiki-latex')
-        ) {
-          textNodesInSelection.push(curNode as Text);
-        }
-        curNode = walker.nextNode();
+    slices.forEach(({ tNode, startOff, endOff }) => {
+      const fullLen = (tNode.textContent || '').length;
+      let midNode: Text = tNode;
+      if (endOff < fullLen) {
+        midNode.splitText(endOff);
+      }
+      if (startOff > 0) {
+        midNode = midNode.splitText(startOff);
       }
 
-      let firstWrapped: HTMLElement | null = null;
-      let lastWrapped: HTMLElement | null = null;
+      const cleanMidText = (midNode.textContent || '').replace(/\u200B/g, '');
 
-      textNodesInSelection.forEach((tNode) => {
-        const fullText = tNode.textContent || '';
-        const startOff = tNode === range.startContainer ? range.startOffset : 0;
-        const endOff = tNode === range.endContainer ? range.endOffset : fullText.length;
-        if (endOff <= startOff) return;
-
-        let midNode: Text = tNode;
-        if (endOff < fullText.length) {
-          midNode.splitText(endOff);
-        }
-        if (startOff > 0) {
-          midNode = midNode.splitText(startOff);
-        }
-
-        const parentEl = midNode.parentElement;
+      // Check if midNode already has an ancestor `data-wiki-color` span with the exact same text
+      let matchingColorAncestor: HTMLElement | null = null;
+      let cur: Node | null = midNode.parentNode;
+      while (cur && cur !== editorRef.current) {
+        const el = cur as HTMLElement;
         if (
-          parentEl &&
-          parentEl.hasAttribute('data-wiki-color') &&
-          parentEl.childNodes.length === 1
+          el.nodeType === Node.ELEMENT_NODE &&
+          el.hasAttribute('data-wiki-color') &&
+          (el.textContent || '').replace(/\u200B/g, '') === cleanMidText
         ) {
-          parentEl.style.color = color;
-          parentEl.setAttribute('data-wiki-color', color);
-          if (!firstWrapped) firstWrapped = parentEl;
-          lastWrapped = parentEl;
-        } else if (midNode.parentNode) {
-          const sp = document.createElement('span');
-          sp.style.color = color;
-          sp.setAttribute('data-wiki-color', color);
+          matchingColorAncestor = el;
+        }
+        cur = cur.parentNode;
+      }
+
+      let targetSpan: HTMLElement;
+      if (matchingColorAncestor) {
+        matchingColorAncestor.style.color = color;
+        matchingColorAncestor.setAttribute('data-wiki-color', color);
+        // Clear any inner conflicting `data-wiki-color` or inline `style.color` inside matchingColorAncestor
+        matchingColorAncestor.querySelectorAll('*').forEach((inner) => {
+          const innerEl = inner as HTMLElement;
+          if (innerEl.style && innerEl.style.color) {
+            innerEl.style.color = '';
+          }
+          if (innerEl.hasAttribute('data-wiki-color')) {
+            innerEl.removeAttribute('data-wiki-color');
+          }
+        });
+        targetSpan = matchingColorAncestor;
+      } else {
+        const sp = document.createElement('span');
+        sp.style.color = color;
+        sp.setAttribute('data-wiki-color', color);
+        if (midNode.parentNode) {
           midNode.parentNode.replaceChild(sp, midNode);
           sp.appendChild(midNode);
-          if (!firstWrapped) firstWrapped = sp;
-          lastWrapped = sp;
         }
-      });
-
-      if (firstWrapped && lastWrapped) {
-        const nextRange = document.createRange();
-        nextRange.setStartBefore(firstWrapped);
-        nextRange.setEndAfter(lastWrapped);
-        sel.removeAllRanges();
-        sel.addRange(nextRange);
-        savedRangeRef.current = nextRange.cloneRange();
+        targetSpan = sp;
       }
-      setShowColorPicker(null);
-      checkActiveFormats();
-      onContentChange();
-      return;
-    } else {
-      const span = document.createElement('span');
-      span.style.color = color;
-      span.setAttribute('data-wiki-color', color);
-      span.appendChild(range.extractContents());
-      range.insertNode(span);
-      targetSpan = span;
-    }
 
-    // Ensure unstyled text anchor nodes exist right before and right after `targetSpan`
-    // while keeping `targetSpan` selected so the user can change or uncolor the selected text anytime!
-    const parent = targetSpan.parentNode;
-    if (parent) {
-      if (!targetSpan.previousSibling || targetSpan.previousSibling.nodeType !== Node.TEXT_NODE) {
-        parent.insertBefore(document.createTextNode('\u200B'), targetSpan);
-      }
-      if (!targetSpan.nextSibling || targetSpan.nextSibling.nodeType !== Node.TEXT_NODE) {
-        parent.insertBefore(document.createTextNode('\u200B'), targetSpan.nextSibling);
-      }
-    }
-
-    // Strip any nested conflicting `data-wiki-color` spans inside `targetSpan` so changing color always overrides cleanly
-    targetSpan.querySelectorAll('[data-wiki-color]').forEach((inner) => {
-      const innerEl = inner as HTMLElement;
-      innerEl.style.color = '';
-      innerEl.removeAttribute('data-wiki-color');
+      if (!firstColored) firstColored = targetSpan;
+      lastColored = targetSpan;
     });
 
-    const newRange = document.createRange();
-    newRange.selectNodeContents(targetSpan);
-    sel.removeAllRanges();
-    sel.addRange(newRange);
-    savedRangeRef.current = newRange.cloneRange();
+    if (firstColored && lastColored) {
+      // Ensure unstyled text anchor nodes exist right before firstColored and right after lastColored if single span
+      if (firstColored === lastColored && (firstColored as HTMLElement).parentNode) {
+        const singleSpan = firstColored as HTMLElement;
+        const parent = singleSpan.parentNode!;
+        if (
+          !singleSpan.previousSibling ||
+          singleSpan.previousSibling.nodeType !== Node.TEXT_NODE
+        ) {
+          parent.insertBefore(document.createTextNode('\u200B'), singleSpan);
+        }
+        if (
+          !singleSpan.nextSibling ||
+          singleSpan.nextSibling.nodeType !== Node.TEXT_NODE
+        ) {
+          parent.insertBefore(document.createTextNode('\u200B'), singleSpan.nextSibling);
+        }
+      }
+
+      const nextRange = document.createRange();
+      nextRange.setStartBefore(firstColored);
+      nextRange.setEndAfter(lastColored);
+      sel.removeAllRanges();
+      sel.addRange(nextRange);
+      savedRangeRef.current = nextRange.cloneRange();
+    }
 
     setShowColorPicker(null);
     checkActiveFormats();
@@ -846,8 +984,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
 
   /**
    * Selection-Scoped Highlight (<mark>):
-   * - Wraps ONLY the selected text in `<mark>`.
-   * - Ensures unstyled boundary text nodes exist immediately before and after the highlight `<mark>` and places the cursor OUTSIDE `<mark>` after applying, so typing at the start or end of the word never bleeds the highlight!
+   * - Applies or removes (`transparent`) highlight across ALL selected text and all selected paragraphs.
    */
   const applySelectionHighlight = (color: string) => {
     const range = restoreSavedSelection();
@@ -860,19 +997,49 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
       findAncestorTag(range.endContainer, ['MARK']);
 
     if (color === 'transparent') {
-      if (existingMark) {
-        if (range.collapsed) {
+      if (range.collapsed) {
+        if (existingMark) {
           splitElementAtCursorToDefault(existingMark);
-        } else {
-          unwrapElement(existingMark);
         }
-      } else if (!range.collapsed) {
-        editorRef.current.querySelectorAll('mark').forEach((node) => {
-          if (range.intersectsNode(node)) {
-            unwrapElement(node as HTMLElement);
-          }
-        });
+        setShowColorPicker(null);
+        checkActiveFormats();
+        onContentChange();
+        return;
       }
+
+      const slices = getSelectedTextNodeSlices(range);
+      let firstUnmarked: Node | null = null;
+      let lastUnmarked: Node | null = null;
+
+      slices.forEach(({ tNode, startOff, endOff }) => {
+        const fullLen = (tNode.textContent || '').length;
+        let midNode: Text = tNode;
+        if (endOff < fullLen) {
+          midNode.splitText(endOff);
+        }
+        if (startOff > 0) {
+          midNode = midNode.splitText(startOff);
+        }
+
+        let markAnc = findAncestorTag(midNode, ['MARK']);
+        while (markAnc) {
+          splitAncestorAroundNode(markAnc, midNode);
+          markAnc = findAncestorTag(midNode, ['MARK']);
+        }
+
+        if (!firstUnmarked) firstUnmarked = midNode;
+        lastUnmarked = midNode;
+      });
+
+      if (firstUnmarked && lastUnmarked) {
+        const nextRange = document.createRange();
+        nextRange.setStartBefore(firstUnmarked);
+        nextRange.setEndAfter(lastUnmarked);
+        sel.removeAllRanges();
+        sel.addRange(nextRange);
+        savedRangeRef.current = nextRange.cloneRange();
+      }
+
       setShowColorPicker(null);
       checkActiveFormats();
       onContentChange();
@@ -893,43 +1060,72 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
       return;
     }
 
-    let targetMark: HTMLElement;
-    if (existingMark && existingMark.textContent === sel.toString()) {
-      existingMark.style.backgroundColor = color;
-      targetMark = existingMark;
-    } else {
-      const mark = document.createElement('mark');
-      mark.style.backgroundColor = color;
-      mark.style.padding = '0 2px';
-      mark.style.borderRadius = '2px';
-      mark.style.color = 'inherit';
-      const contents = range.extractContents();
-      mark.appendChild(contents);
-      range.insertNode(mark);
-      targetMark = mark;
-    }
+    const slices = getSelectedTextNodeSlices(range);
+    let firstMarked: HTMLElement | null = null;
+    let lastMarked: HTMLElement | null = null;
 
-    // Ensure unstyled text anchor nodes exist right before and right after `targetMark`
-    // while keeping `targetMark` selected so the user can change or remove the highlight anytime!
-    const parent = targetMark.parentNode;
-    if (parent) {
-      if (!targetMark.previousSibling || targetMark.previousSibling.nodeType !== Node.TEXT_NODE) {
-        parent.insertBefore(document.createTextNode('\u200B'), targetMark);
+    slices.forEach(({ tNode, startOff, endOff }) => {
+      const fullLen = (tNode.textContent || '').length;
+      let midNode: Text = tNode;
+      if (endOff < fullLen) {
+        midNode.splitText(endOff);
       }
-      if (!targetMark.nextSibling || targetMark.nextSibling.nodeType !== Node.TEXT_NODE) {
-        parent.insertBefore(document.createTextNode('\u200B'), targetMark.nextSibling);
+      if (startOff > 0) {
+        midNode = midNode.splitText(startOff);
       }
-    }
 
-    targetMark.querySelectorAll('mark').forEach((inner) => {
-      unwrapElement(inner as HTMLElement);
+      const cleanMidText = (midNode.textContent || '').replace(/\u200B/g, '');
+      const markAnc = findAncestorTag(midNode, ['MARK']);
+      let targetMark: HTMLElement;
+
+      if (
+        markAnc &&
+        (markAnc.textContent || '').replace(/\u200B/g, '') === cleanMidText
+      ) {
+        markAnc.style.backgroundColor = color;
+        targetMark = markAnc;
+      } else {
+        const mark = document.createElement('mark');
+        mark.style.backgroundColor = color;
+        mark.style.padding = '0 2px';
+        mark.style.borderRadius = '2px';
+        mark.style.color = 'inherit';
+        if (midNode.parentNode) {
+          midNode.parentNode.replaceChild(mark, midNode);
+          mark.appendChild(midNode);
+        }
+        targetMark = mark;
+      }
+
+      if (!firstMarked) firstMarked = targetMark;
+      lastMarked = targetMark;
     });
 
-    const newRange = document.createRange();
-    newRange.selectNodeContents(targetMark);
-    sel.removeAllRanges();
-    sel.addRange(newRange);
-    savedRangeRef.current = newRange.cloneRange();
+    if (firstMarked && lastMarked) {
+      if (firstMarked === lastMarked && (firstMarked as HTMLElement).parentNode) {
+        const singleMark = firstMarked as HTMLElement;
+        const parent = singleMark.parentNode!;
+        if (
+          !singleMark.previousSibling ||
+          singleMark.previousSibling.nodeType !== Node.TEXT_NODE
+        ) {
+          parent.insertBefore(document.createTextNode('\u200B'), singleMark);
+        }
+        if (
+          !singleMark.nextSibling ||
+          singleMark.nextSibling.nodeType !== Node.TEXT_NODE
+        ) {
+          parent.insertBefore(document.createTextNode('\u200B'), singleMark.nextSibling);
+        }
+      }
+
+      const newRange = document.createRange();
+      newRange.setStartBefore(firstMarked);
+      newRange.setEndAfter(lastMarked);
+      sel.removeAllRanges();
+      sel.addRange(newRange);
+      savedRangeRef.current = newRange.cloneRange();
+    }
 
     setShowColorPicker(null);
     checkActiveFormats();
@@ -1062,129 +1258,73 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     const hasSelection = !range.collapsed && sel.toString().length > 0;
 
     if (hasSelection) {
-      const clonedFrag = range.cloneContents();
-      const containsBlockElements = Boolean(
-        clonedFrag.querySelector('p, div, h1, h2, h3, li, blockquote, pre')
-      );
+      const slices = getSelectedTextNodeSlices(range);
+      let firstPxEl: HTMLElement | null = null;
+      let lastPxEl: HTMLElement | null = null;
 
-      if (
-        existingPxSpan &&
-        !containsBlockElements &&
-        existingPxSpan.textContent?.replace(/\u200B/g, '') ===
-          sel.toString().replace(/\u200B/g, '')
-      ) {
-        existingPxSpan.style.fontSize = `${px}px`;
-        existingPxSpan.style.lineHeight = '1.45';
-        existingPxSpan.setAttribute('data-wiki-px', String(px));
-        // Clear any nested `data-wiki-px` or inline font-size inside `existingPxSpan` so inner spans never block resizing
-        existingPxSpan.querySelectorAll('*').forEach((child) => {
-          const childEl = child as HTMLElement;
-          if (childEl.style && childEl.style.fontSize) {
-            childEl.style.fontSize = '';
-          }
-          if (childEl.hasAttribute('data-wiki-px')) {
-            childEl.removeAttribute('data-wiki-px');
-          }
-        });
-        const newRange = document.createRange();
-        newRange.selectNodeContents(existingPxSpan);
-        sel.removeAllRanges();
-        sel.addRange(newRange);
-        savedRangeRef.current = newRange.cloneRange();
-      } else if (containsBlockElements) {
-        // When an entire paragraph or multiple paragraphs/lines are selected:
-        // Wrap or update each text node in its own inline `data-wiki-px` span AND clear any conflicting inline fontSize on intermediate spans, so the actual text scales smoothly instead of just changing line gaps!
-        const textNodesInSelection: Text[] = [];
-        const walker = document.createTreeWalker(
-          editorRef.current,
-          NodeFilter.SHOW_TEXT
-        );
-        let curNode: Node | null = walker.nextNode();
-        while (curNode) {
-          if (
-            curNode.nodeType === Node.TEXT_NODE &&
-            range.intersectsNode(curNode) &&
-            (curNode.textContent || '').replace(/\u200B/g, '').length > 0 &&
-            !findAncestorByAttr(curNode, 'data-wiki-spoiler') &&
-            !findAncestorByAttr(curNode, 'data-wiki-latex')
-          ) {
-            textNodesInSelection.push(curNode as Text);
-          }
-          curNode = walker.nextNode();
+      slices.forEach(({ tNode, startOff, endOff }) => {
+        const fullLen = (tNode.textContent || '').length;
+        let midNode: Text = tNode;
+        if (endOff < fullLen) {
+          midNode.splitText(endOff);
+        }
+        if (startOff > 0) {
+          midNode = midNode.splitText(startOff);
         }
 
-        let firstWrapped: HTMLElement | null = null;
-        let lastWrapped: HTMLElement | null = null;
-
-        textNodesInSelection.forEach((tNode) => {
-          const fullText = tNode.textContent || '';
-          const startOff = tNode === range.startContainer ? range.startOffset : 0;
-          const endOff = tNode === range.endContainer ? range.endOffset : fullText.length;
-          if (endOff <= startOff) return;
-
-          let midNode: Text = tNode;
-          if (endOff < fullText.length) {
-            midNode.splitText(endOff);
-          }
-          if (startOff > 0) {
-            midNode = midNode.splitText(startOff);
-          }
-
-          const parentEl = midNode.parentElement;
+        const cleanMidText = (midNode.textContent || '').replace(/\u200B/g, '');
+        let matchingPxAnc: HTMLElement | null = null;
+        let cur: Node | null = midNode.parentNode;
+        while (cur && cur !== editorRef.current) {
+          const el = cur as HTMLElement;
           if (
-            parentEl &&
-            parentEl.hasAttribute('data-wiki-px') &&
-            parentEl.childNodes.length === 1
+            el.nodeType === Node.ELEMENT_NODE &&
+            el.hasAttribute('data-wiki-px') &&
+            (el.textContent || '').replace(/\u200B/g, '') === cleanMidText
           ) {
-            parentEl.style.fontSize = `${px}px`;
-            parentEl.style.lineHeight = '1.45';
-            parentEl.setAttribute('data-wiki-px', String(px));
-            if (!firstWrapped) firstWrapped = parentEl;
-            lastWrapped = parentEl;
-          } else if (midNode.parentNode) {
-            const sp = document.createElement('span');
-            sp.style.fontSize = `${px}px`;
-            sp.style.lineHeight = '1.45';
-            sp.setAttribute('data-wiki-px', String(px));
+            matchingPxAnc = el;
+          }
+          cur = cur.parentNode;
+        }
+
+        let targetEl: HTMLElement;
+        if (matchingPxAnc) {
+          matchingPxAnc.style.fontSize = `${px}px`;
+          matchingPxAnc.style.lineHeight = '1.45';
+          matchingPxAnc.setAttribute('data-wiki-px', String(px));
+          matchingPxAnc.querySelectorAll('*').forEach((child) => {
+            const childEl = child as HTMLElement;
+            if (childEl.style && childEl.style.fontSize) {
+              childEl.style.fontSize = '';
+            }
+            if (childEl.hasAttribute('data-wiki-px')) {
+              childEl.removeAttribute('data-wiki-px');
+            }
+          });
+          targetEl = matchingPxAnc;
+        } else {
+          const sp = document.createElement('span');
+          sp.style.fontSize = `${px}px`;
+          sp.style.lineHeight = '1.45';
+          sp.setAttribute('data-wiki-px', String(px));
+          if (midNode.parentNode) {
             midNode.parentNode.replaceChild(sp, midNode);
             sp.appendChild(midNode);
-            if (!firstWrapped) firstWrapped = sp;
-            lastWrapped = sp;
           }
-        });
-
-        if (firstWrapped && lastWrapped) {
-          const nextRange = document.createRange();
-          nextRange.setStartBefore(firstWrapped);
-          nextRange.setEndAfter(lastWrapped);
-          sel.removeAllRanges();
-          sel.addRange(nextRange);
-          savedRangeRef.current = nextRange.cloneRange();
+          targetEl = sp;
         }
-      } else {
-        const span = document.createElement('span');
-        span.style.fontSize = `${px}px`;
-        span.style.lineHeight = '1.45';
-        span.setAttribute('data-wiki-px', String(px));
-        const extracted = range.extractContents();
-        span.appendChild(extracted);
-        // Clear any nested `data-wiki-px` or inline font-size on inner elements so increasing/decreasing px size always scales the actual text (not just line gaps!)
-        span.querySelectorAll('*').forEach((child) => {
-          const childEl = child as HTMLElement;
-          if (childEl.style && childEl.style.fontSize) {
-            childEl.style.fontSize = '';
-          }
-          if (childEl.hasAttribute('data-wiki-px')) {
-            childEl.removeAttribute('data-wiki-px');
-          }
-        });
-        range.insertNode(span);
 
-        const newRange = document.createRange();
-        newRange.selectNodeContents(span);
+        if (!firstPxEl) firstPxEl = targetEl;
+        lastPxEl = targetEl;
+      });
+
+      if (firstPxEl && lastPxEl) {
+        const nextRange = document.createRange();
+        nextRange.setStartBefore(firstPxEl);
+        nextRange.setEndAfter(lastPxEl);
         sel.removeAllRanges();
-        sel.addRange(newRange);
-        savedRangeRef.current = newRange.cloneRange();
+        sel.addRange(nextRange);
+        savedRangeRef.current = nextRange.cloneRange();
       }
     } else {
       if (existingPxSpan) {
@@ -1226,28 +1366,43 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     const range = restoreSavedSelection();
     const sel = window.getSelection();
     if (sel && range && editorRef.current) {
-      let existingPxSpan =
-        findAncestorByAttr(range.commonAncestorContainer, 'data-wiki-px') ||
-        findAncestorByAttr(range.startContainer, 'data-wiki-px') ||
-        findAncestorByAttr(range.endContainer, 'data-wiki-px');
-
-      if ( !range.collapsed ) {
-        editorRef.current.querySelectorAll('[data-wiki-px]').forEach((node) => {
-          if (range.intersectsNode(node)) {
-            unwrapElement(node as HTMLElement);
-          }
-        });
-      }
-      while (existingPxSpan) {
-        if (range.collapsed) {
+      if (range.collapsed) {
+        const existingPxSpan =
+          findAncestorByAttr(range.commonAncestorContainer, 'data-wiki-px') ||
+          findAncestorByAttr(range.startContainer, 'data-wiki-px') ||
+          findAncestorByAttr(range.endContainer, 'data-wiki-px');
+        if (existingPxSpan) {
           splitElementAtCursorToDefault(existingPxSpan, 'data-wiki-px');
-        } else {
-          unwrapElement(existingPxSpan);
         }
-        const nextRange = sel.rangeCount > 0 ? sel.getRangeAt(0) : null;
-        existingPxSpan = nextRange
-          ? findAncestorByAttr(nextRange.commonAncestorContainer, 'data-wiki-px')
-          : null;
+      } else {
+        const slices = getSelectedTextNodeSlices(range);
+        let firstNode: Node | null = null;
+        let lastNode: Node | null = null;
+        slices.forEach(({ tNode, startOff, endOff }) => {
+          const fullLen = (tNode.textContent || '').length;
+          let midNode: Text = tNode;
+          if (endOff < fullLen) {
+            midNode.splitText(endOff);
+          }
+          if (startOff > 0) {
+            midNode = midNode.splitText(startOff);
+          }
+          let pxAnc = findAncestorByAttr(midNode, 'data-wiki-px');
+          while (pxAnc) {
+            splitAncestorAroundNode(pxAnc, midNode);
+            pxAnc = findAncestorByAttr(midNode, 'data-wiki-px');
+          }
+          if (!firstNode) firstNode = midNode;
+          lastNode = midNode;
+        });
+        if (firstNode && lastNode) {
+          const nextRange = document.createRange();
+          nextRange.setStartBefore(firstNode);
+          nextRange.setEndAfter(lastNode);
+          sel.removeAllRanges();
+          sel.addRange(nextRange);
+          savedRangeRef.current = nextRange.cloneRange();
+        }
       }
     }
     setIsTextPxEnabled(false);
@@ -1715,7 +1870,13 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     reader.onload = () => {
       if (typeof reader.result === 'string') {
         setShowMediaPickerMenu(false);
-        onOpenMediaImageStudio(reader.result);
+        if (onInsertRawCanvasImage) {
+          onInsertRawCanvasImage(reader.result);
+          const sizeStr = formatByteSizeLabel(estimateDataUrlByteSize(reader.result));
+          showBriefHint(`Image added (${sizeStr}). Tap "Compress / Edit" if needed.`);
+        } else {
+          onOpenMediaImageStudio(reader.result);
+        }
       }
     };
     reader.readAsDataURL(file);
@@ -1803,11 +1964,9 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     const reader = new FileReader();
     reader.onload = () => {
       if (typeof reader.result === 'string') {
-        if (onOpenBgImageStudio) {
-          onOpenBgImageStudio(reader.result);
-        } else {
-          onChangeCanvasBg(reader.result, canvasBgOpacity);
-        }
+        onChangeCanvasBg(reader.result, canvasBgOpacity);
+        const sizeStr = formatByteSizeLabel(estimateDataUrlByteSize(reader.result));
+        showBriefHint(`Background set (${sizeStr}). Tap "Compress / Edit" if needed.`);
       }
     };
     reader.readAsDataURL(file);
@@ -2580,12 +2739,16 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
 
               {canvasBgDataUrl && (
                 <>
+                  <span className="shrink-0 border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-2 py-1 font-wiki-mono text-[10px] font-semibold text-[var(--wiki-muted)]">
+                    {formatByteSizeLabel(estimateDataUrlByteSize(canvasBgDataUrl))}
+                  </span>
                   {onOpenBgImageStudio && (
                     <button
                       type="button"
                       onMouseDown={preventFocusLoss}
                       onClick={() => onOpenBgImageStudio(canvasBgDataUrl)}
                       className="flex h-8 shrink-0 items-center gap-1 border border-[#3366cc]/50 bg-[#3366cc]/10 px-2 text-xs font-semibold text-[#3366cc]"
+                      title="Optionally compress or edit background image"
                     >
                       <span>Compress / Edit</span>
                     </button>

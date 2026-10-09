@@ -14,6 +14,7 @@ import {
   FileDown,
   Search,
   CheckCircle2,
+  Loader2,
   AlertTriangle,
   KeyRound,
 } from 'lucide-react';
@@ -227,6 +228,9 @@ export default function App() {
   // 3-dots menu, Export modal, Delete Confirmation Modal & Locked Diary Prompt states
   const [openMenuLogId, setOpenMenuLogId] = useState<string | null>(null);
   const [exportingLog, setExportingLog] = useState<DiaryLog | null>(null);
+  const [exportProcessingBanner, setExportProcessingBanner] = useState<string | null>(
+    null
+  );
   const [exportStatusBanner, setExportStatusBanner] = useState<string | null>(null);
   const [pendingDeleteLog, setPendingDeleteLog] = useState<DiaryLog | null>(null);
   const [pendingUnlockDiary, setPendingUnlockDiary] = useState<{
@@ -660,16 +664,24 @@ export default function App() {
   };
 
   const handleSelectExportFormat = async (format: ExportFormat) => {
-    if (!exportingLog) return;
+    if (!exportingLog || exportProcessingBanner) return;
     const targetLog = exportingLog;
     setExportingLog(null);
+    setExportStatusBanner(null);
+    setExportProcessingBanner(
+      `Exporting "${targetLog.heading}" as .${format.toUpperCase()}... Please wait.`
+    );
+    // Allow React to paint the processing pop-up before heavy export work begins
+    await new Promise((resolve) => window.setTimeout(resolve, 50));
     try {
       const msg = await exportDiaryLog(targetLog, format);
+      setExportProcessingBanner(null);
       setExportStatusBanner(msg);
       window.setTimeout(() => {
         setExportStatusBanner((prev) => (prev === msg ? null : prev));
       }, 3200);
     } catch {
+      setExportProcessingBanner(null);
       setExportStatusBanner('Export failed. Please check storage permissions.');
       window.setTimeout(() => setExportStatusBanner(null), 3000);
     }
@@ -702,8 +714,16 @@ export default function App() {
         if (openMenuLogId) setOpenMenuLogId(null);
       }}
     >
+      {/* Export Processing Pop-up Banner (Prevents duplicate export taps during large exports) */}
+      {exportProcessingBanner && (
+        <div className="fixed bottom-20 left-4 right-4 z-50 mx-auto flex max-w-sm items-center gap-2.5 border border-[#3366cc] bg-[var(--wiki-bg)] px-3.5 py-2.5 text-xs font-semibold text-[#3366cc] shadow-xl">
+          <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+          <span className="truncate">{exportProcessingBanner}</span>
+        </div>
+      )}
+
       {/* Export / Status Confirmation Banner */}
-      {exportStatusBanner && (
+      {exportStatusBanner && !exportProcessingBanner && (
         <div className="fixed bottom-20 left-4 right-4 z-50 mx-auto flex max-w-sm items-center gap-2 border border-[#14866d] bg-[var(--wiki-bg)] px-3.5 py-2.5 text-xs font-semibold text-[#14866d] shadow-xl">
           <CheckCircle2 className="h-4 w-4 shrink-0" />
           <span className="truncate">{exportStatusBanner}</span>
@@ -1136,7 +1156,9 @@ export default function App() {
 
                           <button
                             type="button"
+                            disabled={Boolean(exportProcessingBanner)}
                             onClick={() => {
+                              if (exportProcessingBanner) return;
                               setOpenMenuLogId(null);
                               if (log.diaryLockPin) {
                                 setPendingUnlockDiary({ log, action: 'export' });
@@ -1146,10 +1168,12 @@ export default function App() {
                                 setExportingLog(log);
                               }
                             }}
-                            className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-xs font-medium text-[var(--wiki-text)] hover:bg-[var(--wiki-surface)]"
+                            className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-xs font-medium text-[var(--wiki-text)] hover:bg-[var(--wiki-surface)] disabled:opacity-50"
                           >
                             <Download className="h-4 w-4 text-[#3366cc]" />
-                            <span>Export</span>
+                            <span>
+                              {exportProcessingBanner ? 'Exporting...' : 'Export'}
+                            </span>
                           </button>
 
                           <button

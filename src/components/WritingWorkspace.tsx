@@ -40,7 +40,11 @@ import { scheduleAndroidNativeReminder } from '../utils/notificationSound';
 import { ImageCropperModal } from './ImageCropperModal';
 import { ReminderModal } from './ReminderModal';
 import { RichTextToolbar } from './RichTextToolbar';
-import { MediaImageStudioModal } from './MediaImageStudioModal';
+import {
+  MediaImageStudioModal,
+  estimateDataUrlByteSize,
+  formatByteSizeLabel,
+} from './MediaImageStudioModal';
 import { MediaAudioStudioModal } from './MediaAudioStudioModal';
 import { CanvasAudioPlayerCard } from './CanvasAudioPlayerCard';
 import {
@@ -1661,6 +1665,10 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
               <span>+15°</span>
             </button>
 
+            <span className="shrink-0 border border-[var(--wiki-border)] bg-[var(--wiki-bg)] px-2 py-1 font-wiki-mono text-[10px] font-semibold text-[var(--wiki-muted)]">
+              {formatByteSizeLabel(estimateDataUrlByteSize(selectedCanvasImage.dataUrl))}
+            </span>
+
             <button
               type="button"
               onClick={() => {
@@ -1668,10 +1676,10 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
                 setRawMediaStudioImage(selectedCanvasImage.dataUrl);
               }}
               className="flex h-7 items-center gap-1 border border-[#3366cc] bg-[#3366cc]/10 px-2.5 font-semibold text-[#3366cc] hover:bg-[#3366cc] hover:text-white transition-colors"
-              title="Open full Image Studio (Crop, Compress, Opacity, Adjust & 22+ Filters)"
+              title="Open Image Studio (Optional Compression, Crop, Opacity, Adjust & 22+ Filters)"
             >
               <Pencil className="h-3.5 w-3.5" />
-              <span>Edit / Filters</span>
+              <span>Compress / Edit</span>
             </button>
 
             <button
@@ -1802,6 +1810,14 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
               <span>+15°</span>
             </button>
 
+            {selectedInlineImgElement.src.startsWith('data:') && (
+              <span className="shrink-0 border border-[var(--wiki-border)] bg-[var(--wiki-bg)] px-2 py-1 font-wiki-mono text-[10px] font-semibold text-[var(--wiki-muted)]">
+                {formatByteSizeLabel(
+                  estimateDataUrlByteSize(selectedInlineImgElement.src)
+                )}
+              </span>
+            )}
+
             <button
               type="button"
               onClick={() => {
@@ -1810,10 +1826,10 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
                 setRawMediaStudioImage(selectedInlineImgElement.src);
               }}
               className="flex h-7 items-center gap-1 border border-[#3366cc] bg-[#3366cc]/10 px-2.5 font-semibold text-[#3366cc] hover:bg-[#3366cc] hover:text-white transition-colors"
-              title="Open full Image Studio (Crop, Compress, Opacity, Adjust & 22+ Filters) right in place"
+              title="Open Image Studio (Optional Compression, Crop, Opacity, Adjust & 22+ Filters) right in place"
             >
               <Pencil className="h-3.5 w-3.5" />
-              <span>Edit / Filters</span>
+              <span>Compress / Edit</span>
             </button>
           </div>
 
@@ -2303,6 +2319,61 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
           onOpenMediaImageStudio={(rawDataUrl) => {
             setEditingCanvasImageId(null);
             setRawMediaStudioImage(rawDataUrl);
+          }}
+          onInsertRawCanvasImage={(rawDataUrl) => {
+            const tempImg = new Image();
+            tempImg.onload = () => {
+              const displayW = Math.min(240, Math.max(60, tempImg.width || 240));
+              const displayH =
+                tempImg.width > 0
+                  ? Math.round((displayW * tempImg.height) / tempImg.width)
+                  : 180;
+              const newId = `img_${Date.now()}`;
+              setCanvasImages((prev) => {
+                const next: CanvasDraggableImage[] = [
+                  ...prev,
+                  {
+                    id: newId,
+                    dataUrl: rawDataUrl,
+                    x: 24 + (prev.length * 18) % 100,
+                    y: 36 + (prev.length * 24) % 120,
+                    width: displayW,
+                    height: displayH,
+                    opacity: 1,
+                    rotation: 0,
+                    layer: 'foreground',
+                  },
+                ];
+                pushCanvasSnapshot({ canvasImages: next });
+                return next;
+              });
+              setSelectedCanvasImgId(newId);
+              setSelectedCanvasAudioId(null);
+            };
+            tempImg.onerror = () => {
+              const newId = `img_${Date.now()}`;
+              setCanvasImages((prev) => {
+                const next: CanvasDraggableImage[] = [
+                  ...prev,
+                  {
+                    id: newId,
+                    dataUrl: rawDataUrl,
+                    x: 24 + (prev.length * 18) % 100,
+                    y: 36 + (prev.length * 24) % 120,
+                    width: 220,
+                    height: 165,
+                    opacity: 1,
+                    rotation: 0,
+                    layer: 'foreground',
+                  },
+                ];
+                pushCanvasSnapshot({ canvasImages: next });
+                return next;
+              });
+              setSelectedCanvasImgId(newId);
+              setSelectedCanvasAudioId(null);
+            };
+            tempImg.src = rawDataUrl;
           }}
           onOpenMediaAudioStudio={(rawAudioDataUrl, fileName, ext) => {
             const validExts: AudioFormatOption[] = [
