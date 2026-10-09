@@ -812,3 +812,60 @@ export async function readFromPrivateSpecialFolder(
     encryptedEnvelope: null,
   };
 }
+
+/**
+ * Permanently deletes all local application data across Primary and Secondary vaults:
+ * - Clears all localStorage keys
+ * - Deletes both IndexedDB databases (`WikiLogPrivateSystemVaultDB` & `WikiLogIsolatedDecoyVaultDB`)
+ * - Removes OPFS backup directories if present
+ */
+export async function clearAllAppVaultData(): Promise<void> {
+  try {
+    localStorage.clear();
+  } catch {
+    // ignore
+  }
+
+  try {
+    sessionStorage.clear();
+  } catch {
+    // ignore
+  }
+
+  const dbNames = [
+    VAULT_CONFIGS.primary.idbDatabaseName,
+    VAULT_CONFIGS.decoy.idbDatabaseName,
+  ];
+
+  for (const name of dbNames) {
+    try {
+      await new Promise<void>((resolve) => {
+        const req = indexedDB.deleteDatabase(name);
+        req.onsuccess = () => resolve();
+        req.onerror = () => resolve();
+        req.onblocked = () => resolve();
+      });
+    } catch {
+      // ignore
+    }
+  }
+
+  try {
+    if (navigator.storage && typeof navigator.storage.getDirectory === 'function') {
+      const rootDir = await navigator.storage.getDirectory();
+      for (const folder of [
+        VAULT_CONFIGS.primary.safFolderName,
+        VAULT_CONFIGS.decoy.safFolderName,
+      ]) {
+        try {
+          await rootDir.removeEntry(folder, { recursive: true });
+        } catch {
+          // ignore
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+}
+

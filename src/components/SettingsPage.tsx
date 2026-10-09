@@ -15,9 +15,15 @@ import {
   X,
   Maximize2,
   Minimize2,
+  FileText,
+  ExternalLink,
+  Download,
+  AlertTriangle,
 } from 'lucide-react';
 import {
   AudioFormatOption,
+  CustomFontItem,
+  DiaryLog,
   MicRecordingSettings,
   VaultMode,
 } from '../utils/cryptoVault';
@@ -27,6 +33,8 @@ import {
   WordAnalysisRecord,
 } from '../utils/wordAnalysisEngine';
 import { WordAnalysisModal } from './WordAnalysisModal';
+import { LEGAL_AND_ABOUT_SECTIONS } from '../utils/legalAndAboutContent';
+import { exportAllAppDataAsZip } from '../utils/zipDataExporter';
 
 interface SettingsPageProps {
   vaultMode: VaultMode;
@@ -44,6 +52,9 @@ interface SettingsPageProps {
   onBackToHome: () => void;
   micSettings: MicRecordingSettings;
   onUpdateMicSettings: (next: MicRecordingSettings) => void;
+  logs: DiaryLog[];
+  customFonts: CustomFontItem[];
+  onClearAllAppData: () => Promise<void>;
 }
 
 const AUDIO_FORMATS: { id: AudioFormatOption; label: string }[] = [
@@ -88,9 +99,17 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   onBackToHome,
   micSettings,
   onUpdateMicSettings,
+  logs,
+  customFonts,
+  onClearAllAppData,
 }) => {
   const [showPasscodeModal, setShowPasscodeModal] = useState<boolean>(false);
   const [showMicModal, setShowMicModal] = useState<boolean>(false);
+  const [showLegalAboutPage, setShowLegalAboutPage] = useState<boolean>(false);
+  const [showClearAllConfirmModal, setShowClearAllConfirmModal] =
+    useState<boolean>(false);
+  const [isExportingZip, setIsExportingZip] = useState<boolean>(false);
+  const [isClearingAllData, setIsClearingAllData] = useState<boolean>(false);
   // Whether the currently open Set Passcode modal is configuring the covert Secondary Vault (via 10s hold in Primary)
   const [isConfiguringSecondaryViaHold, setIsConfiguringSecondaryViaHold] =
     useState<boolean>(false);
@@ -255,6 +274,211 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const filteredSavedWords = savedWords.filter((item) =>
     item.word.toLowerCase().includes(wordFilterQuery.trim().toLowerCase())
   );
+
+  // Dedicated "Legal, About & Data Notice" Sub-Page when user clicks the button in Settings
+  if (showLegalAboutPage) {
+    return (
+      <div className="flex h-full w-full flex-col bg-[var(--wiki-bg)] text-[var(--wiki-text)]">
+        {/* Header */}
+        <header className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-4">
+          <div className="flex items-center gap-3 min-w-0">
+            <button
+              type="button"
+              onClick={() => setShowLegalAboutPage(false)}
+              className="flex h-10 w-10 shrink-0 items-center justify-center border border-transparent hover:border-[var(--wiki-border)] hover:bg-[var(--wiki-bg)]"
+              aria-label="Back to Settings"
+            >
+              <ArrowLeft className="h-5 w-5" />
+            </button>
+            <h1 className="font-wiki-serif text-xl font-bold leading-tight truncate">
+              Legal, About &amp; Data Notice
+            </h1>
+          </div>
+        </header>
+
+        {/* Scrollable Content with 5 Headings, Clickable Links, and Export/Clear Data Buttons */}
+        <div className="flex-1 overflow-y-auto px-4 py-5 space-y-5">
+          {toastMsg && (
+            <div className="flex items-center gap-2 border border-[#14866d] bg-[#14866d]/10 px-3 py-2.5 text-xs font-medium text-[var(--wiki-text)]">
+              <Check className="h-4 w-4 shrink-0 text-[#14866d]" />
+              <span>{toastMsg}</span>
+            </div>
+          )}
+
+          {LEGAL_AND_ABOUT_SECTIONS.map((sec) => (
+            <section
+              key={sec.id}
+              className="border border-[var(--wiki-border)] bg-[var(--wiki-bg)] p-4 space-y-3"
+            >
+              <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-[var(--wiki-hairline)] pb-2">
+                <h2 className="font-wiki-serif text-lg font-bold text-[var(--wiki-text)]">
+                  {sec.heading}
+                </h2>
+                {sec.lastUpdated && (
+                  <span className="font-wiki-mono text-[10px] text-[var(--wiki-muted)]">
+                    Updated: {sec.lastUpdated}
+                  </span>
+                )}
+              </div>
+
+              <div className="space-y-2.5 text-xs leading-relaxed text-[var(--wiki-text)]">
+                {sec.paragraphs.map((p, idx) => (
+                  <p key={idx}>{p}</p>
+                ))}
+              </div>
+
+              {sec.bulletPoints && sec.bulletPoints.length > 0 && (
+                <ul className="list-disc pl-5 space-y-1.5 text-xs leading-relaxed text-[var(--wiki-text)]">
+                  {sec.bulletPoints.map((pt, idx) => (
+                    <li key={idx}>{pt}</li>
+                  ))}
+                </ul>
+              )}
+
+              {/* Clickable External Links */}
+              {sec.links && sec.links.length > 0 && (
+                <div className="pt-1 space-y-1.5">
+                  <div className="text-[11px] font-semibold text-[var(--wiki-muted)]">
+                    Reference Links:
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    {sec.links.map((lnk, idx) => (
+                      <a
+                        key={idx}
+                        href={lnk.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 text-xs font-medium text-[var(--wiki-link)] underline hover:text-[var(--wiki-link-hover)] break-all"
+                      >
+                        <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                        <span>{lnk.label}</span>
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Action Buttons specifically for the last topic: Data Deletion & Export Notice */}
+              {sec.id === 'data-deletion-export' && (
+                <div className="mt-4 flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 border-t border-[var(--wiki-hairline)] pt-3.5">
+                  <button
+                    type="button"
+                    disabled={isExportingZip || isClearingAllData}
+                    onClick={async () => {
+                      setIsExportingZip(true);
+                      try {
+                        const resultMsg = await exportAllAppDataAsZip(
+                          logs,
+                          customFonts,
+                          vaultMode
+                        );
+                        showToast(resultMsg);
+                      } catch {
+                        showToast('Failed to export ZIP archive.');
+                      } finally {
+                        setIsExportingZip(false);
+                      }
+                    }}
+                    className="flex h-10 flex-1 items-center justify-center gap-2 bg-[#3366cc] px-4 text-xs font-semibold text-white hover:bg-[#2a56b0] disabled:opacity-50 transition-colors"
+                  >
+                    <Download className="h-4 w-4 shrink-0" />
+                    <span>
+                      {isExportingZip
+                        ? 'Exporting ZIP Archive...'
+                        : 'Export All Data (.zip)'}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={isExportingZip || isClearingAllData}
+                    onClick={() => setShowClearAllConfirmModal(true)}
+                    className="flex h-10 flex-1 items-center justify-center gap-2 border border-[#b32424] bg-[#b32424] px-4 text-xs font-semibold text-white hover:bg-[#941d1d] disabled:opacity-50 transition-colors"
+                  >
+                    <Trash2 className="h-4 w-4 shrink-0" />
+                    <span>Clear All Data</span>
+                  </button>
+                </div>
+              )}
+            </section>
+          ))}
+        </div>
+
+        {/* Clear All Data Confirmation Pop-up Modal */}
+        {showClearAllConfirmModal && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs"
+            onClick={() => {
+              if (!isClearingAllData) setShowClearAllConfirmModal(false);
+            }}
+          >
+            <div
+              className="w-full max-w-sm border border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-text)] shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between border-b border-[var(--wiki-hairline)] bg-[var(--wiki-surface)] px-4 py-3">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="h-4 w-4 shrink-0 text-[#b32424]" />
+                  <h3 className="font-wiki-serif text-lg font-bold">
+                    Clear All Data?
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  disabled={isClearingAllData}
+                  onClick={() => setShowClearAllConfirmModal(false)}
+                  className="flex h-8 w-8 items-center justify-center text-[var(--wiki-muted)] hover:text-[var(--wiki-text)]"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="p-4 space-y-4">
+                <p className="text-xs leading-relaxed text-[var(--wiki-text)]">
+                  Are you sure you want to permanently delete{' '}
+                  <strong>all data from Likkho</strong> (all diaries, images, audio
+                  recordings, custom fonts, saved word analyses, and passcodes)? This
+                  action cannot be undone.
+                </p>
+
+                <div className="flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    disabled={isClearingAllData}
+                    onClick={() => setShowClearAllConfirmModal(false)}
+                    className="h-10 border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-4 text-xs font-medium text-[var(--wiki-text)]"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isClearingAllData}
+                    onClick={async () => {
+                      setIsClearingAllData(true);
+                      try {
+                        await onClearAllAppData();
+                        setShowClearAllConfirmModal(false);
+                        setShowLegalAboutPage(false);
+                        onBackToHome();
+                      } finally {
+                        setIsClearingAllData(false);
+                      }
+                    }}
+                    className="flex h-10 items-center gap-1.5 bg-[#b32424] px-4 text-xs font-semibold text-white hover:bg-[#941d1d] disabled:opacity-50"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    <span>
+                      {isClearingAllData ? 'Deleting...' : 'Delete All Data'}
+                    </span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   // Dedicated "Saved Word Analysis" Sub-Page when user clicks the "Saved Word Analysis" button in Settings
   if (showSavedWordsPage) {
@@ -645,6 +869,28 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 </div>
                 <div className="text-xs text-[var(--wiki-muted)]">
                   Format: .{micSettings.format} · {(micSettings.sampleRate / 1000).toFixed(1).replace(/\.0$/, '')} kHz · {Math.round(micSettings.bitRate / 1000)} kbps
+                </div>
+              </div>
+            </div>
+            <ChevronRight className="h-5 w-5 text-[var(--wiki-muted)]" />
+          </button>
+
+          {/* 7. Legal, About, Open-Source Licenses & Data Deletion / Export Notice Button */}
+          <button
+            type="button"
+            onClick={() => setShowLegalAboutPage(true)}
+            className="flex w-full items-center justify-between px-4 py-4 text-left hover:bg-[var(--wiki-surface)] transition-colors"
+          >
+            <div className="flex items-center gap-3.5">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center border border-[var(--wiki-border)] bg-[var(--wiki-surface)]">
+                <FileText className="h-5 w-5 text-[#3366cc]" />
+              </div>
+              <div>
+                <div className="font-wiki-serif text-base font-bold">
+                  Legal, About &amp; Data Notice
+                </div>
+                <div className="text-xs text-[var(--wiki-muted)]">
+                  Privacy Policy, Terms, About, Licenses, Export &amp; Clear Data
                 </div>
               </div>
             </div>

@@ -169,7 +169,10 @@ function loadImageElement(src: string): Promise<HTMLImageElement | null> {
  * - Foreground-layer Canvas Images (`layer !== 'background'`) at their exact (x, y, width, rotation)
  * - Foreground-layer Audio Players (`layer !== 'background'`) at their exact (x, y, width, height, rotation) with creation date & time stamp!
  */
-async function renderFullDiaryCanvasToJpeg(log: DiaryLog): Promise<{
+async function renderFullDiaryCanvasToJpeg(
+  log: DiaryLog,
+  options?: { omitCanvasBackground?: boolean }
+): Promise<{
   jpegDataUrl: string;
   jpegBytes: Uint8Array;
   pixelWidth: number;
@@ -177,6 +180,7 @@ async function renderFullDiaryCanvasToJpeg(log: DiaryLog): Promise<{
   logicalWidth: number;
   logicalHeight: number;
   visualSpans: { top: number; bottom: number }[];
+  transparentCanvas: HTMLCanvasElement;
 }> {
   const logicalWidth = 768;
   const headerHeight = 96;
@@ -224,9 +228,11 @@ async function renderFullDiaryCanvasToJpeg(log: DiaryLog): Promise<{
   const ctx = canvas.getContext('2d')!;
   ctx.scale(scale, scale);
 
-  // 1. Base white background
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, logicalWidth, logicalHeight);
+  // 1. Base white background ONLY when not rendering a transparent content layer for multi-page A4 PDF
+  if (!options?.omitCanvasBackground) {
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, logicalWidth, logicalHeight);
+  }
 
   // 2. Draw Diary Header Bar
   ctx.fillStyle = '#f8f9fa';
@@ -265,8 +271,8 @@ async function renderFullDiaryCanvasToJpeg(log: DiaryLog): Promise<{
   ctx.font = '12px monospace';
   ctx.fillText(createdLine + modifiedLine, titleStartX, 68);
 
-  // 3. Draw Canvas Background Image (strictly inside Canvas area below Header)
-  if (log.canvasBgDataUrl) {
+  // 3. Draw Canvas Background Image (strictly inside Canvas area below Header) ONLY when not omitted for per-page A4 rendering
+  if (log.canvasBgDataUrl && !options?.omitCanvasBackground) {
     const bgImg = await loadImageElement(log.canvasBgDataUrl);
     if (bgImg) {
       ctx.save();
@@ -674,14 +680,15 @@ async function renderFullDiaryCanvasToJpeg(log: DiaryLog): Promise<{
     logicalWidth,
     logicalHeight,
     visualSpans,
+    transparentCanvas: canvas,
   };
 }
 
 /**
  * Renders the DiaryLog into required standard A4 pages (595.28 x 841.89 pt)
  * so external PDF readers can open and paginate the PDF naturally, the edited
- * Canvas Background Image is properly rendered on every A4 page, and NO text line
- * is ever split/cut in half across two pages!
+ * Canvas Background Image is rendered as ONE single unified background image on EVERY A4 page
+ * (never broken into blocks), and NO text line is ever split/cut in half across two pages!
  */
 async function renderMultiPageA4DiaryPages(log: DiaryLog): Promise<
   {
@@ -690,8 +697,11 @@ async function renderMultiPageA4DiaryPages(log: DiaryLog): Promise<
     pixelHeight: number;
   }[]
 > {
-  const fullRendered = await renderFullDiaryCanvasToJpeg(log);
-  const fullImg = await loadImageElement(fullRendered.jpegDataUrl);
+  // Render content onto a transparent layer (omitting the canvas background image so it is never sliced into blocks!)
+  const fullRendered = await renderFullDiaryCanvasToJpeg(log, {
+    omitCanvasBackground: true,
+  });
+  const contentCanvas = fullRendered.transparentCanvas;
   const bgImg = log.canvasBgDataUrl ? await loadImageElement(log.canvasBgDataUrl) : null;
 
   const logicalPageWidth = 768;
@@ -786,7 +796,7 @@ async function renderMultiPageA4DiaryPages(log: DiaryLog): Promise<
     }
   }
 
-  const drawEditedBgCover = (
+  const drawSingleFullPageBackground = (
     c: CanvasRenderingContext2D,
     targetY: number,
     targetH: number
@@ -831,57 +841,54 @@ async function renderMultiPageA4DiaryPages(log: DiaryLog): Promise<
     const pCtx = pageCanvas.getContext('2d')!;
     pCtx.scale(scale, scale);
 
-    // Base white A4 sheet
+    // 1. Base white A4 sheet
     pCtx.fillStyle = '#ffffff';
     pCtx.fillRect(0, 0, logicalPageWidth, logicalPageHeight);
 
     if (slice.isFirstPage) {
-      // Draw edited background on the lower portion if content is shorter than full A4 page
-      drawEditedBgCover(pCtx, headerHeight, logicalPageHeight - headerHeight);
+      // 2. Draw ONE unified Canvas Background Image across the entire Page 1 canvas area below the header
+      drawSingleFullPageBackground(pCtx, headerHeight, logicalPageHeight - headerHeight);
 
-      if (fullImg) {
-        // Draw Header from fullRendered
-        pCtx.drawImage(
-          fullImg,
-          0,
-          0,
-          logicalPageWidth * scale,
-          headerHeight * scale,
-          0,
-          0,
-          logicalPageWidth,
-          headerHeight
-        );
-        // Draw First Page Content Slice
-        pCtx.drawImage(
-          fullImg,
-          0,
-          slice.srcYLogical * scale,
-          logicalPageWidth * scale,
-          slice.sliceHLogical * scale,
-          0,
-          headerHeight,
-          logicalPageWidth,
-          slice.sliceHLogical
-        );
-      }
+      // 3. Draw Header + transparent Page 1 Content Slice over the unified background
+      pCtx.drawImage(
+        contentCanvas,
+        0,
+        0,
+        logicalPageWidth * scale,
+        headerHeight * scale,
+        0,
+        0,
+        logicalPageWidth,
+        headerHeight
+      );
+      pCtx.drawImage(
+        contentCanvas,
+        0,
+        slice.srcYLogical * scale,
+        logicalPageWidth * scale,
+        slice.sliceHLogical * scale,
+        0,
+        headerHeight,
+        logicalPageWidth,
+        slice.sliceHLogical
+      );
     } else {
-      // Continuation A4 Page: first paint the edited Canvas Background across the A4 page so any unused bottom area also matches
-      drawEditedBgCover(pCtx, 0, logicalPageHeight);
+      // Continuation A4 Page:
+      // 2. Draw ONE unified Canvas Background Image across the entire A4 page
+      drawSingleFullPageBackground(pCtx, 0, logicalPageHeight);
 
-      if (fullImg) {
-        pCtx.drawImage(
-          fullImg,
-          0,
-          slice.srcYLogical * scale,
-          logicalPageWidth * scale,
-          slice.sliceHLogical * scale,
-          0,
-          24,
-          logicalPageWidth,
-          slice.sliceHLogical
-        );
-      }
+      // 3. Draw transparent Content Slice over the unified background (never breaking the background into blocks!)
+      pCtx.drawImage(
+        contentCanvas,
+        0,
+        slice.srcYLogical * scale,
+        logicalPageWidth * scale,
+        slice.sliceHLogical * scale,
+        0,
+        24,
+        logicalPageWidth,
+        slice.sliceHLogical
+      );
     }
 
     // Subtle page number footer when there are multiple A4 pages

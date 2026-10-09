@@ -24,6 +24,7 @@ import {
   VaultMode,
   loadActiveAppStateFromIDB,
   saveActiveAppStateToIDB,
+  clearAllAppVaultData,
   getRemainingPasscodeCooldownSeconds,
   recordPasscodeFailure,
   resetPasscodeFailures,
@@ -75,8 +76,8 @@ const INITIAL_STARTER_LOGS: DiaryLog[] = buildWelcomeStarterLogs();
 function upgradeLegacyStarterLogsIfNeeded(list: DiaryLog[]): DiaryLog[] {
   if (
     list.length === 1 &&
-    list[0].id === 'log_starter_1' &&
-    list[0].heading === 'My First Entry'
+    (list[0].id === 'log_starter_1' ||
+      list[0].id === 'log_starter_welcome_guide_v1')
   ) {
     return INITIAL_STARTER_LOGS;
   }
@@ -840,6 +841,35 @@ export default function App() {
           onBackToHome={() => navigateTo('home')}
           micSettings={micSettings}
           onUpdateMicSettings={(next) => setMicSettings(next)}
+          logs={logs}
+          customFonts={customFonts}
+          onClearAllAppData={async () => {
+            // Cancel any scheduled reminders
+            logs.forEach((l) => {
+              if (window.LikkhoNative?.cancelNativeReminder) {
+                window.LikkhoNative.cancelNativeReminder(l.id);
+              }
+            });
+            await clearAllAppVaultData();
+            setLogs([]);
+            setCustomFonts([]);
+            setMicSettings(DEFAULT_MIC_SETTINGS);
+            setSavedPasscode(null);
+            setSecondaryPasscode(null);
+            setBiometricsEnabled(false);
+            setSavedKeyHash(null);
+            setVaultMode('primary');
+            setIsLocked(false);
+            // Persist empty logs state after clear
+            await saveActiveAppStateToIDB(IDB_LOGS_KEY, [], 'primary');
+            try {
+              localStorage.setItem(STORAGE_LOGS_KEY, JSON.stringify([]));
+            } catch {
+              // ignore
+            }
+            setExportStatusBanner('All application data has been deleted.');
+            window.setTimeout(() => setExportStatusBanner(null), 3200);
+          }}
         />
       ) : route === 'backup' ? (
         <BackupRestorePage

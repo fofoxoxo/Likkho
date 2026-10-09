@@ -588,6 +588,8 @@ jobs:
                           } catch (Exception ignored) {}
                       }
                       webView.setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null);
+                      webView.setFocusable(true);
+                      webView.setFocusableInTouchMode(true);
                       webView.getSettings().setJavaScriptEnabled(true);
                       webView.getSettings().setDomStorageEnabled(true);
                       webView.getSettings().setAllowFileAccess(true);

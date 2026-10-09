@@ -1,116 +1,21 @@
 import { DiaryLog } from './cryptoVault';
 
-/**
- * Generates a real playable 2-second warm ambient chime WAV data URL
- * so the starter diary's interactive red audio player card can actually be played,
- * scrubbed, speed-adjusted (0.5x–2x), resized, rotated, and layered on the canvas!
- */
-function createSamplePlayableWavDataUrl(): string {
-  const sampleRate = 8000;
-  const durationSec = 2;
-  const numSamples = sampleRate * durationSec;
-  const dataBytes = numSamples * 2; // 16-bit mono PCM
-  const buffer = new ArrayBuffer(44 + dataBytes);
-  const view = new DataView(buffer);
-
-  const writeStr = (offset: number, str: string) => {
-    for (let i = 0; i < str.length; i++) {
-      view.setUint8(offset + i, str.charCodeAt(i));
-    }
-  };
-
-  writeStr(0, 'RIFF');
-  view.setUint32(4, 36 + dataBytes, true);
-  writeStr(8, 'WAVE');
-  writeStr(12, 'fmt ');
-  view.setUint32(16, 16, true); // PCM chunk size
-  view.setUint16(20, 1, true); // PCM format = 1
-  view.setUint16(22, 1, true); // Mono = 1 channel
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * 2, true); // Byte rate
-  view.setUint16(32, 2, true); // Block align
-  view.setUint16(34, 16, true); // Bits per sample
-  writeStr(36, 'data');
-  view.setUint32(40, dataBytes, true);
-
-  // Two-note pleasant C5 -> G5 acoustic bell chime
-  for (let i = 0; i < numSamples; i++) {
-    const t = i / sampleRate;
-    const freq = t < 0.9 ? 523.25 : 783.99;
-    const localT = t < 0.9 ? t : t - 0.9;
-    const env = Math.exp(-3.2 * localT);
-    const wave =
-      Math.sin(2 * Math.PI * freq * t) * 0.65 +
-      Math.sin(2 * Math.PI * freq * 2 * t) * 0.2;
-    const sample = Math.max(-1, Math.min(1, wave * env * 0.45));
-    view.setInt16(44 + i * 2, Math.round(sample * 32767), true);
-  }
-
-  const bytes = new Uint8Array(buffer);
-  let binary = '';
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return `data:audio/wav;base64,${btoa(binary)}`;
-}
-
 function createStarterPfpSvgDataUrl(): string {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
     <rect width="120" height="120" fill="#1e293b"/>
-    <rect x="6" y="6" width="108" height="108" fill="none" stroke="#60a5fa" stroke-width="2.5"/>
-    <text x="60" y="54" font-family="Georgia, serif" font-size="24" font-weight="bold" fill="#ffffff" text-anchor="middle">लिक्खो</text>
-    <text x="60" y="82" font-family="Georgia, serif" font-size="19" font-weight="bold" fill="#93c5fd" text-anchor="middle">LIKKHO</text>
+    <rect x="6" y="6" width="108" height="108" fill="none" stroke="#60a5fa" stroke-width="2"/>
+    <text x="60" y="54" font-family="Georgia, serif" font-size="23" font-weight="bold" fill="#ffffff" text-anchor="middle">लिक्खो</text>
+    <text x="60" y="82" font-family="Georgia, serif" font-size="18" font-weight="bold" fill="#93c5fd" text-anchor="middle">LIKKHO</text>
   </svg>`;
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
 
-function createStarterCanvasBackgroundDataUrl(): string {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 1000" width="800" height="1000">
-    <defs>
-      <linearGradient id="paperGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" stop-color="#dbeafe"/>
-        <stop offset="50%" stop-color="#fef3c7"/>
-        <stop offset="100%" stop-color="#e0e7ff"/>
-      </linearGradient>
-      <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
-        <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#3366cc" stroke-width="0.6" stroke-opacity="0.22"/>
-      </pattern>
-    </defs>
-    <rect width="800" height="1000" fill="url(#paperGrad)"/>
-    <rect width="800" height="1000" fill="url(#grid)"/>
-    <circle cx="680" cy="140" r="110" fill="#3b82f6" fill-opacity="0.12"/>
-    <circle cx="120" cy="820" r="140" fill="#f59e0b" fill-opacity="0.12"/>
-  </svg>`;
-  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
-}
-
-function createStarterStampImageDataUrl(): string {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 200" width="320" height="200">
-    <rect x="4" y="4" width="312" height="192" rx="8" fill="#fffbeb" stroke="#d97706" stroke-width="4"/>
-    <rect x="14" y="14" height="172" width="292" fill="none" stroke="#b45309" stroke-width="1.5" stroke-dasharray="6,4"/>
-    <text x="160" y="55" font-family="Georgia, serif" font-size="18" font-weight="bold" fill="#92400e" text-anchor="middle">★ LIKKHO CANVAS CARD ★</text>
-    <text x="160" y="92" font-family="monospace" font-size="13" font-weight="bold" fill="#1e293b" text-anchor="middle">Tap me to Drag, Resize, Rotate,</text>
-    <text x="160" y="114" font-family="monospace" font-size="13" font-weight="bold" fill="#1e293b" text-anchor="middle">Apply Studio Filters &amp; Compress</text>
-    <text x="160" y="145" font-family="sans-serif" font-size="12" fill="#b45309" text-anchor="middle">मुझे टैप करके ड्रैग, रोटेट या फ़िल्टर करें!</text>
-    <text x="160" y="172" font-family="monospace" font-size="11" fill="#047857" text-anchor="middle">[Foreground / Background Layer Ready]</text>
-  </svg>`;
-  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
-}
-
-function createInlineWikiSampleSvgDataUrl(): string {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 230" width="480" height="230">
-    <rect width="480" height="230" fill="#f8fafc" stroke="#3366cc" stroke-width="2"/>
-    <rect x="16" y="16" width="448" height="42" fill="#3366cc"/>
-    <text x="240" y="43" font-family="Georgia, serif" font-size="17" font-weight="bold" fill="#ffffff" text-anchor="middle">Wikipedia Inline Editable Media Demo</text>
-    <text x="240" y="92" font-family="sans-serif" font-size="13" fill="#1e293b" text-anchor="middle">When you fetch a topic with "With Images", images stay</text>
-    <text x="240" y="114" font-family="sans-serif" font-size="13" fill="#1e293b" text-anchor="middle">right in their exact article section—not shuffled at the top!</text>
-    <text x="240" y="148" font-family="sans-serif" font-size="13" font-weight="bold" fill="#3366cc" text-anchor="middle">इस इनलाइन इमेज पर टैप करें — ऊपर कंट्रोल बार खुलेगा जहाँ से</text>
-    <text x="240" y="170" font-family="sans-serif" font-size="13" font-weight="bold" fill="#3366cc" text-anchor="middle">आप Size -/+, Rotate, Studio Filters &amp; Delete कर सकते हैं!</text>
-    <text x="240" y="204" font-family="monospace" font-size="11" fill="#64748b" text-anchor="middle">Click this image right now inside the editor to test it</text>
-  </svg>`;
-  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
-}
-
+/**
+ * Generates the official Starter Guide Diary for Likkho.
+ * Written in a clean, professional bilingual (English & Hindi) tone,
+ * explaining all features of the application up to the latest release
+ * without embedding demo canvas backgrounds, floating cards, or live formatting tricks.
+ */
 export function buildWelcomeStarterLogs(): DiaryLog[] {
   const now = Date.now() - 60 * 1000 * 15;
   const d = new Date(now);
@@ -125,98 +30,76 @@ export function buildWelcomeStarterLogs(): DiaryLog[] {
     hour12: true,
   });
 
-  const inlineWikiImgUrl = createInlineWikiSampleSvgDataUrl();
-
   const contentHtml = `
-<h1>Welcome to Likkho (लिक्खो) — The No-Nonsense, All-In-One Tour!</h1>
-<p><strong>Hey dost! / नमस्ते दोस्त!</strong> Welcome to <strong>Likkho</strong>. Humne koi boring 50-page manual nahi banaya hai—seedhi aur frank baat karte hain! This single starter diary is a <u>live playground</u> that uses <em>every single canvas feature</em> and explains <strong>every feature of the app</strong> frankly in both <strong>Hindi</strong> and <strong>English</strong>.</p>
+<h1>Likkho (लिक्खो) — Official Feature Documentation &amp; User Guide</h1>
+<p>Welcome to <strong>Likkho (लिक्खो)</strong>. This guide provides a comprehensive, professional overview of every feature available in the application in both <strong>English</strong> and <strong>Hindi (हिन्दी)</strong>.</p>
+<p><strong>लिक्खो (Likkho)</strong> में आपका स्वागत है। इस मार्गदर्शिका में ऐप की सभी विशेषताओं और टूल्स को पेशेवर और सरल भाषा में (अंग्रेज़ी और हिन्दी दोनों में) विस्तार से समझाया गया है।</p>
 
-<blockquote>"एक ऐसी डायरी जो दिखने में जितनी सादगी भरी और क्लासिक है, अंदर से उतनी ही पावरफुल, कस्टमाइज़ेबल और बुलेटप्रूफ प्राइवेसी वाली है। — Write freely, edit wildly, and lock it down like a secret agent."</blockquote>
+<h2>1. Profile Picture (PFP) Studio — Photo, Emoji/Text &amp; Background Color</h2>
+<p><strong>English:</strong> Each diary entry includes a 1:1 square Profile Picture (PFP) in the workspace header. Tapping the PFP icon opens the PFP Studio, where you can either crop and apply filters to an image from your device or switch to the Emoji / Text tab to enter custom characters or emojis and choose a custom background color and text color.</p>
+<p><strong>हिन्दी:</strong> प्रत्येक डायरी एंट्री के हेडर में 1:1 स्क्वायर प्रोफ़ाइल पिक्चर (PFP) लगाने की सुविधा है। इस पर टैप करने पर PFP स्टूडियो खुलता है, जहाँ आप अपनी गैलरी से फ़ोटो चुनकर क्रॉप और फ़िल्टर कर सकते हैं, या "Emoji / Text" विकल्प चुनकर कोई भी इमोजी/टेक्स्ट लिख सकते हैं और उसका बैकग्राउंड तथा टेक्स्ट कलर अपनी पसंद से बदल सकते हैं।</p>
 
-<hr />
+<h2>2. Rich Text Canvas &amp; Typography Tools</h2>
+<p><strong>English:</strong> The writing canvas provides a complete editorial toolbar supporting Undo, Redo, Bold, Italic, Underline, Strikethrough, Headings (H1, H2, H3), Bullet Lists, Numbered Lists, Interactive To-Do Checklists, Quotations, Code Snippets, Section Dividers, Text Alignment, Indentation, Superscript, Subscript, Hyperlinks, Text Color, Highlighter, Pixel Font Size Slider (10px–48px), and Custom Font (.ttf) imports for both English and Hindi.</p>
+<p><strong>हिन्दी:</strong> राइटिंग कैनवास के टूलबार में लेखन और फ़ॉर्मेटिंग के सभी आधुनिक विकल्प मौजूद हैं—जैसे Undo, Redo, Bold, Italic, Underline, Strikethrough, Headings (H1, H2, H3), बुलेट और नंबर लिस्ट, टू-डू चेकलिस्ट, कोटेशन, कोड स्निपेट, सेक्शन डिवाइडर, टेक्स्ट अलाइनमेंट, इंडेंटेशन, सुपरस्क्रिप्ट, सबस्क्रिप्ट, हाइपरलिंक, टेक्स्ट कलर, हाइलाइटर, पिक्सेल फ़ॉन्ट साइज़ स्लाइडर (10px–48px), और कस्टम <code>.ttf</code> फ़ॉन्ट इम्पोर्ट (अंग्रेज़ी और हिन्दी दोनों के लिए)।</p>
 
-<h2>1. Rich Canvas Typography &amp; Styling (कैनवास के सभी टेक्स्ट फीचर्स — Live Demo)</h2>
-<p>Look at this very page—yahan canvas ke saare text tools use kiye gaye hain so you can see them in action right now:</p>
+<h2>3. Mathematical Symbols &amp; LaTeX Formula Display</h2>
+<p><strong>English:</strong> Using the Sigma (Σ) tool in the canvas toolbar, you can insert and render inline LaTeX mathematical expressions without disturbing surrounding words or line spacing. The tool includes six structured mathematical categories: Basic Arithmetic &amp; Algebra, Formats &amp; Layout Templates (fractions, powers, subscripts, roots, brackets, modulus, norm), Greek Letters &amp; Constants, Geometry &amp; Trigonometry, Calculus &amp; Advanced Math (integrals, summations, products, limits, derivatives, nabla), and Sets &amp; Logic.</p>
+<p><strong>हिन्दी:</strong> टूलबार में दिए गए सिग्मा (Σ) टूल की मदद से आप कैनवास पर LaTeX गणितीय सूत्र (Formulas) प्रदर्शित कर सकते हैं, जो आस-पास के शब्दों या वाक्यों को बिल्कुल डिस्टर्ब नहीं करते। इसमें 6 श्रेणियाँ उपलब्ध हैं: Basic Arithmetic &amp; Algebra, Formats &amp; Layout Templates (भिन्न, घात, वर्गमूल, ब्रैकेट, मापांक आदि), Greek Letters &amp; Constants, Geometry &amp; Trigonometry, Calculus &amp; Advanced Math (इंटीग्रल, समेशन, लिमिट, डेरिवेटिव), और Sets &amp; Logic.</p>
+
+<h2>4. Passcode-Protected Spoiler Text</h2>
+<p><strong>English:</strong> You can lock specific words or phrases inside a paragraph using the Spoiler tool (Eye-Off icon) with a dedicated passcode. Only the spoiler word itself is locked and encrypted in place; all other words in the same paragraph remain normally editable and deletable with Backspace, and typing at the start or end boundary of a spoiler never extends the spoiler.</p>
+<p><strong>हिन्दी:</strong> आप किसी भी शब्द या वाक्यांश को सेलेक्ट करके टूलबार के Spoiler (Eye-Off) विकल्प से पासकोड के साथ छुपा (Blur/Lock) सकते हैं। केवल स्पॉइलर वाला शब्द ही लॉक रहता है—उसी पैराग्राफ के बाकी सभी शब्दों को सामान्य रूप से एडिट या Backspace से डिलीट किया जा सकता है, और स्पॉइलर के शुरू या अंत में टाइप करने पर स्पॉइलर आगे नहीं बढ़ता।</p>
+
+<h2>5. Canvas Background, Floating Images &amp; Audio Player Cards</h2>
+<p><strong>English:</strong> Likkho allows you to customize the canvas with a Background Image (with adjustable opacity, crop, compression, and 22+ studio filters), free-draggable and rotatable Canvas Images that can be placed either in front of text (Foreground Layer) or behind text (Background Layer), and interactive Audio Player Cards supporting live microphone recording, imported audio files, playback speed control (0.5x to 2x), directional resizing, and 360° rotation.</p>
+<p><strong>हिन्दी:</strong> लिक्खो में आप कैनवास के पीछे अपनी पसंद की बैकग्राउंड इमेज (ओपेसिटी, क्रॉप, कम्प्रेशन और 22+ स्टूडियो फ़िल्टर के साथ) लगा सकते हैं। इसके अलावा कैनवास पर फ़्लोटिंग इमेजेज़ और ऑडियो प्लेयर कार्ड्स जोड़े जा सकते हैं जिन्हें छोटा-बड़ा करने, रोटेट करने, और टेक्स्ट के आगे (Foreground) या पीछे (Background) रखने की सुविधा है।</p>
+
+<h2>6. Bilingual Wikipedia Research Tool (English &amp; Hindi)</h2>
+<p><strong>English:</strong> The Wikipedia (W) tool in the toolbar connects to the official MediaWiki REST API in both English and Hindi. As you type, a Live Search Suggestions Dropdown helps you disambiguate topics (for example, choosing between the technology company or the fruit). You can toggle "With Images" or "Without Images"; when imported with images, each illustration remains in its exact article section and can be resized, rotated, filtered, or deleted right in place.</p>
+<p><strong>हिन्दी:</strong> टूलबार में मौजूद विकिपीडिया (W) टूल की सहायता से आप इंटरनेट कनेक्शन होने पर अंग्रेज़ी और हिन्दी दोनों भाषाओं में किसी भी विषय पर जानकारी खोजकर सीधे कैनवास पर ला सकते हैं। सर्च बॉक्स के नीचे लाइव सुझाव (Live Search Suggestions Dropdown) दिखते हैं। "With Images" चुनने पर लेख की सभी तस्वीरें अपने सही स्थान पर ही आती हैं और उन्हें वहीं से एडिट किया जा सकता है।</p>
+
+<h2>7. 6-Category Linguistic Word Analysis &amp; Offline Dictionary</h2>
+<p><strong>English:</strong> The Word Analysis tool analyzes any selected or searched word across six comprehensive linguistic categories: (1) Phonetics, Sound &amp; Prosody, (2) Lexical &amp; Semantics, (3) Morphology, Syntax &amp; Etymology, (4) Pragmatics, Vibe &amp; Sentiment, (5) Knowledge Graph &amp; Entities, and (6) Style, Grammar &amp; Quantitative Metrics. Analyzed words are automatically saved for offline viewing under Settings → Saved Word Analysis in alphabetical order (A–Z) with instant search.</p>
+<p><strong>हिन्दी:</strong> वर्ड एनालिसिस टूल किसी भी चुने गए या खोजे गए शब्द का 6 प्रमुख भाषाई श्रेणियों में गहराई से विश्लेषण करता है: (1) ध्वनि और उच्चारण (Phonetics &amp; Rhymes), (2) अर्थ और पर्यायवाची/विलोम (Lexical &amp; Semantics), (3) शब्द-संरचना और व्युत्पत्ति (Morphology &amp; Etymology), (4) भाव और टोन (Pragmatics &amp; Sentiment), (5) नॉलेज ग्राफ़ (Knowledge Graph &amp; Entities), तथा (6) व्याकरण और पठनीयता स्कोर (Style &amp; Quantitative Metrics)। एक बार खोजे गए शब्द अपने आप सेव हो जाते हैं जिन्हें बिना इंटरनेट के भी Settings → Saved Word Analysis में वर्णमाला क्रम (A–Z) में देखा और खोजा जा सकता है।</p>
+
+<h2>8. Dual-Vault Security, Individual Diary Lock &amp; Anti-Brute-Force Protection</h2>
+<p><strong>English:</strong> Likkho features a multi-layered privacy architecture:</p>
 <ul>
-  <li><strong>Text Formatting:</strong> <b>Bold text</b>, <i>Italic emphasis</i>, <u>Underlined notes</u>, and <s>Strikethrough</s> for things you changed your mind about.</li>
-  <li><strong>Colors &amp; Highlights:</strong> <span style="color: #b32424; font-weight: bold;">Custom Coloured Text</span> aur <mark style="background-color: #fef08a; color: #202122;">Bright Highlighter Marks</mark> taaki important lines turant chamkein!</li>
-  <li><strong>Scientific &amp; Math Scripts:</strong> Write formulas like E = mc<sup>2</sup> (Superscript) and H<sub>2</sub>O (Subscript) effortlessly.</li>
-  <li><strong>Interactive Spoiler Text (Tap to Reveal!):</strong> Niche wale काले बॉक्स पर उंगली से टैप करके देखो: <span data-spoiler="true" style="background-color:#202122;color:transparent;padding:0 4px;border-radius:2px;cursor:pointer;user-select:none;">Surprise! यह एक छुपा हुआ सीक्रेट स्पॉइलर टेक्स्ट है!</span></li>
-  <li><strong>Custom .TTF Fonts (English &amp; Hindi):</strong> Toolbar ke Font Picker me jaakar aap apne phone se koi bhi <code>.ttf</code> font import kar sakte hain—vo app aur backup dono me save rehta hai!</li>
+  <li><strong>Primary Passcode &amp; Biometric Unlock:</strong> Protect the application with a 4 to 6 digit passcode and optional device biometric verification. When app passcode protection is enabled, screenshots and screen recordings are blocked and the Recent Apps preview is shielded.</li>
+  <li><strong>Covert Secondary Vault (Second Space):</strong> Once a Primary Passcode is set, long-pressing the "Set Passcode" button in Primary Settings continuously for 10 seconds opens a passcode setup dialog to activate an isolated Secondary Vault. Entering the Primary Passcode on the lock screen opens the Primary Vault, while entering the Secondary Passcode opens the Secondary Vault. Removing either the Primary or Secondary Passcode automatically deactivates the Secondary Vault.</li>
+  <li><strong>Individual Diary Lock:</strong> Any individual diary entry can be locked with its own passcode via the toolbar Lock icon. A locked diary cannot be opened, exported, or deleted without verifying its passcode first.</li>
+  <li><strong>Progressive Cooldown:</strong> Five consecutive incorrect passcode attempts trigger a 30-second security cooldown, and each subsequent failed attempt multiplies 30 seconds by the attempt count.</li>
+</ul>
+<p><strong>हिन्दी:</strong> लिक्खो में आपकी गोपनीयता के लिए बहु-स्तरीय सुरक्षा प्रणाली दी गई है:</p>
+<ul>
+  <li><strong>प्राइमरी पासकोड और बायोमेट्रिक अनलॉक:</strong> ऐप को 4 से 6 अंकों के पिन और बायोमेट्रिक (फ़िंगरप्रिंट/फ़ेस) से सुरक्षित करें। पासकोड चालू रहने पर ऐप में स्क्रीनशॉट और स्क्रीन रिकॉर्डिंग अपने आप ब्लॉक हो जाती है।</li>
+  <li><strong>सीक्रेट सेकेंडरी वॉल्ट (Second Space):</strong> प्राइमरी वॉल्ट में पासकोड सेट होने के बाद, प्राइमरी के Settings पेज पर "Set Passcode" बटन को लगातार 10 सेकंड तक दबाए रखने (Long Press) पर सेकेंडरी वॉल्ट का पासकोड सेट करने का पॉप-अप खुलता है। लॉक स्क्रीन पर जिस वॉल्ट का पासकोड डाला जाएगा, वही स्पेस खुलेगा। प्राइमरी या सेकेंडरी में से किसी भी एक का पासकोड हटाने पर सेकेंडरी वॉल्ट निष्क्रिय (Deactivate) हो जाता है।</li>
+  <li><strong>व्यक्तिगत डायरी लॉक:</strong> आप किसी विशेष डायरी पर अलग पासकोड भी लगा सकते हैं। लॉक की गई डायरी को बिना पासवर्ड के न तो खोला जा सकता है, न एक्सपोर्ट किया जा सकता है और न ही डिलीट किया जा सकता है।</li>
 </ul>
 
-<ol>
-  <li><strong>Step 1:</strong> Toolbar ko left-right swipe karke saare tools dekho (Undo, Redo, Headings H1/H2, Alignment, Lists, Links, Divider, Clear Format).</li>
-  <li><strong>Step 2:</strong> Niche diye gaye Floating Image Card aur Red Audio Player Card ko touch karke drag, resize ya rotate karke dekho!</li>
-</ol>
-
-<hr />
-
-<h2>2. Interactive Canvas Media: Background, Floating Images &amp; Audio Cards</h2>
-<p><strong>Frankly speaking:</strong> Normal apps me photo aur audio bas ek line me chipak jaate hain. Likkho me poora canvas aapka studio hai:</p>
+<h2>9. Multi-Page A4 PDF Export, Multi-Format Import/Export, Reminders &amp; Encrypted Backup</h2>
+<p><strong>English:</strong></p>
 <ul>
-  <li><strong>Canvas Background + Compression &amp; Filters:</strong> Is diary ke peeche jo subtle grid-paper background dikh raha hai, vo <em>Canvas Background</em> tool se laga hai. Jab aap कोई भी फोटो Canvas या Background में लगाते हैं, तो <strong>Image Studio</strong> खुलता है जहाँ आप <strong>Compression (20%–100% quality + max resolution + live KB size)</strong>, <strong>Brightness, Contrast, Warmth, Grayscale, Sepia, Blur</strong> सब एडजस्ट कर सकते हैं!</li>
-  <li><strong>Draggable &amp; Rotatable Images (Foreground / Background Layer):</strong> Is diary me ek पीला <em>"LIKKHO CANVAS CARD"</em> लगा है—उसे टैप करो! Aap use drag kar sakte ho, <code>-15° / +15°</code> rotate kar sakte ho, opacity badal sakte ho, ya text ke <strong>peeche (Background Layer)</strong> ya <strong>aage (Foreground Layer)</strong> bhej sakte ho.</li>
-  <li><strong>Red Rectangular Audio Player Card:</strong> Is diary me ek <strong>Playable Audio Card</strong> bhi attach hai! ▶ Play button daba kar usकी 2-second bell chime suno, playback speed (<code>0.5x</code> se <code>2x</code>) badlo, ya card par tap karke uski width, height aur rotation set karo.</li>
+  <li><strong>Multi-Page A4 PDF Export:</strong> Exporting an entry as a PDF paginates the document into standard A4 pages so external PDF viewers read it seamlessly. Each A4 page displays a single unified canvas background image without breaking into blocks, and text lines are cleanly paginated so no line is ever sliced across two pages.</li>
+  <li><strong>10 Export Formats &amp; Document Import:</strong> Entries can be exported in 10 formats (<code>.pdf</code>, <code>.docx</code>, <code>.html</code>, <code>.md</code>, <code>.txt</code>, <code>.rtf</code>, <code>.json</code>, <code>.csv</code>, <code>.tsv</code>, <code>.xml</code>), and external documents can be imported directly into the canvas.</li>
+  <li><strong>Audio Recording Settings, Reminders &amp; Full Screen Mode:</strong> Configure recording format (<code>.wav</code>, <code>.flac</code>, <code>.m4a</code>, <code>.aac</code>, <code>.mp3</code>, <code>.ogg</code>, <code>.webm</code>), sample rate, and bitrate via the Settings pop-up, schedule exact date and time reminders, toggle immersive Full Screen Mode, and create AES-256-GCM encrypted backups or export/clear all data from the Legal &amp; Data Management section in Settings.</li>
 </ul>
-
-<hr />
-
-<h2>3. Wikipedia Live Search Tool (English + हिंदी + In-Place Editable Images)</h2>
-<p>Kuch likhte waqt internet se research chahiye? Toolbar me <strong>W (Wikipedia)</strong> icon par click karo:</p>
+<p><strong>हिन्दी:</strong></p>
 <ul>
-  <li><strong>Bilingual Search (EN / HI):</strong> Aap <strong>English</strong> aur <strong>हिंदी (Hindi)</strong> dono Wikipedia par search kar sakte hain.</li>
-  <li><strong>Live Search Suggestions Dropdown:</strong> Jaise hi aap <em>"Apple"</em> type karenge, niche live dropdown me options aa jayenge (Apple Inc. company vs Apple fruit) taaki aap exact topic chunein.</li>
-  <li><strong>With / Without Images (In-Place Editing):</strong> Agar aap <em>With Images</em> on rakhte hain, to Wikipedia ki photos ऊपर एक जगह इकट्ठी नहीं होतीं—हर फोटो आर्टिकल के ठीक उसी पैराग्राफ के साथ आती है जहाँ वो विकिपीडिया पर है! Aur sabse khaas baat: <strong>niche di gayi sample inline image par tap karke dekho</strong>—aap use wahin baithe-baithe resize, rotate, filter/compress ya delete kar sakte hain:</li>
+  <li><strong>मल्टी-पेज A4 PDF एक्सपोर्ट:</strong> किसी डायरी को PDF में एक्सपोर्ट करने पर वह मानक A4 पेजों में विभाजित होती है, जिसमें हर पेज पर एकसमान कैनवास बैकग्राउंड रहता है और कोई भी पंक्ति दो पेजों के बीच आधी नहीं कटती।</li>
+  <li><strong>10 एक्सपोर्ट फ़ॉर्मेट और डॉक्यूमेंट इम्पोर्ट:</strong> आप अपनी डायरी को 10 अलग-अलग फ़ॉर्मेट में एक्सपोर्ट कर सकते हैं और बाहरी फ़ाइलों को कैनवास में इम्पोर्ट कर सकते हैं।</li>
+  <li><strong>ऑडियो सेटिंग्स, रिमाइंडर, फुल स्क्रीन और डेटा प्रबंधन:</strong> Settings से ऑडियो रिकॉर्डिंग का फ़ॉर्मेट व बिटरेट चुनें, फुल स्क्रीन मोड ऑन/ऑफ करें, डायरी पर अलार्म रिमाइंडर लगाएँ, AES-256-GCM एन्क्रिप्टेड बैकअप बनाएँ, या Settings के Legal &amp; Data Notice पेज से अपना सारा डेटा <code>.zip</code> फ़ाइल में एक्सपोर्ट या क्लियर करें।</li>
 </ul>
-
-<figure class="likkho-wiki-inline-figure" style="margin: 14px 0; display: block;">
-  <img src="${inlineWikiImgUrl}" alt="Wikipedia Inline Editable Demo" data-wiki-inline="true" style="max-width: 100%; width: 340px; height: auto; display: block; border: 1px solid #a2a9b1; cursor: pointer;" />
-  <figcaption style="font-size: 12px; color: #54595d; font-style: italic; margin-top: 4px;">↑ Tap this inline image inside the workspace to test in-place Size, Rotate &amp; Image Studio Filter controls!</figcaption>
-</figure>
-
-<hr />
-
-<h2>4. Deep 6-Category Word Analysis &amp; Offline Dictionary</h2>
-<p>Kisi shabd ki gehrai jaanni ho? Canvas par koi word select karke (ya seedhe search karke) toolbar me <strong>Word Analysis (Book icon)</strong> par tap karo:</p>
-<ul>
-  <li><strong>6 Categories &amp; 22+ Linguistic Metrics:</strong> Yeh tool <em>Free Dictionary API, Datamuse API, LanguageTool API, aur TextRazor / Wikipedia Knowledge Graph</em> se data laakar aapko <strong>Phonetics (IPA, Syllables, Perfect &amp; Slant Rhymes, Meter), Lexical (Definitions, Synonyms, Antonyms, Hypernyms, Hyponyms, Collocations), Morphology &amp; Etymology, Pragmatics &amp; Sentiment Polarity, Knowledge Graph (NER &amp; Disambiguation), aur Style/Zipf/Readability</strong> ek clean pop-up me dikhata hai.</li>
-  <li><strong>Auto-Save for Offline Viewing:</strong> Jo bhi word aap ek baar search karte hain, vo apne aap save ho jata hai! Baad me bina internet ke <strong>Settings → Saved Word Analysis</strong> button par click karke aap saare words <strong>Alphabetical Order (A–Z)</strong> me dekh sakte hain aur upar diye <strong>Search button</strong> se turant khoj sakte hain.</li>
-</ul>
-
-<hr />
-
-<h2>5. Stealth Dual-Vault Architecture, Anti-Screenshot &amp; Brute-Force Cooldown</h2>
-<p>Ab baat karte hain Likkho ke sabse badass security system ki—बिल्कुल साफ और फ्रैंक शब्दों में:</p>
-<ul>
-  <li><strong>Primary Passcode &amp; Individual Diary Lock:</strong> Settings me jaakar aap app par 4–6 digit Passcode (aur Primary me Biometric Unlock) laga sakte hain. Iske alawa har diary ke andar toolbar me <strong>Lock icon</strong> se kisi single diary par alag PIN bhi laga sakte hain!</li>
-  <li><strong>Anti-Screenshot &amp; Recent Apps Blur/Black:</strong> Jab app me passcode ON hota hai, to app ke andar kisi bhi page ka <strong>Screenshot ya Screen Recording bilkul block</strong> ho jata hai, aur phone ke Recent Apps switcher me Likkho ka preview <strong>black/blur</strong> ho jata hai. Agar passcode hata denge, to screenshot wapas allow ho jayega.</li>
-  <li><strong>Covert Secondary / Decoy Vault (Plausible Deniability):</strong> Maan lijiye koi aapke peeche pad jaye ki <em>"Apni diary ka PIN batao!"</em> — iske liye Likkho me ek <strong>Secret Second Space (Decoy Vault)</strong> hai.
-    <br /><strong>कैसे चालू करें?</strong> Sabse pehle Primary me ek passcode set karein. Ab Primary ke <strong>Settings</strong> page par <strong>"Set Passcode" button ko lagataar 10 seconds tak daba kar rakhein (10-sec long press)</strong>! Ek bilkul waisa hi Set Passcode pop-up khulega—wahan ek alag PIN daal dein. Bas! Ab lock screen par Primary PIN daalenge to asli दुनिया (<code>real_vault.db</code>) khulegi, aur Secondary PIN daalenge to ek 100% alag, fresh Secondary Vault (<code>decoy_vault.db</code>) khulegi! Secondary vault me Biometrics ka option nahi dikhta, aur agar aap Primary ya Secondary me se kisi ka bhi passcode remove karenge to Secondary vault automatically deactivate ho jayega.</li>
-  <li><strong>Anti-Brute-Force Cooldown:</strong> Agar koi lagataar <strong>5 baar galat PIN</strong> daalta hai, to <strong>30 seconds ka cooldown timer</strong> lag jata hai. Uske baad har agle galat attempt par 30 seconds attempt number se multiply hote jaate hain (6th गलत प्रयास = 180s, 7th = 210s...).</li>
-</ul>
-
-<hr />
-
-<h2>6. Multi-Page A4 PDF Export (Zero Line-Cutting!), 10 Formats, Reminders &amp; SAF Backup</h2>
-<ul>
-  <li><strong>Smart Multi-Page A4 PDF Export:</strong> Jab aap kisi diary ko <code>.pdf</code> me export karte hain, to poora lamba canvas ek single ajeeb page nahi banta—balki <strong>Standard A4 Pages</strong> me break hota hai jisme har page par aapka <strong>edited Canvas Background</strong> dikhta hai, aur koi bhi text line do pages ke beech me kat-ti (split) nahi hai!</li>
-  <li><strong>10 Export Formats:</strong> Export any diary as <code>.pdf</code>, <code>.docx</code>, <code>.html</code>, <code>.md</code>, <code>.txt</code>, <code>.rtf</code>, <code>.json</code>, <code>.csv</code>, <code>.tsv</code>, or <code>.xml</code>.</li>
-  <li><strong>Audio Recording Pop-up in Settings:</strong> Settings me <strong>Audio Recording Settings</strong> button par click karke pop-up me apna pasandida format (<code>.wav, .flac, .m4a, .aac, .mp3, .ogg, .webm</code>), Sample Rate (8kHz–48kHz) aur Bitrate (64kbps–320kbps) set karein.</li>
-  <li><strong>Date &amp; Time Alarm Reminders:</strong> Workspace ke toolbar me <strong>Bell icon</strong> se kisi bhi diary par reminder lagayein—waqt aane par notification aur alarm chime bajegi.</li>
-  <li><strong>AES-256-GCM Encrypted Backup &amp; Restore:</strong> Settings → <strong>Backup &amp; Restore</strong> me jaakar apne phone ke kisi bhi folder me poora vault (texts, images, audio, custom fonts) strong encryption ke saath backup aur restore karein.</li>
-</ul>
-
-<p><strong>तो देर किस बात की?</strong> Is starter diary ke elements ko chhed kar dekho, ya homepage ke <strong>+ (Plus)</strong> button par tap karke apni pehli asli kahani likhna shuru karo. <em>Happy Writing on Likkho!</em></p>
 `.trim();
 
   return [
     {
       id: 'log_starter_welcome_guide_v1',
-      heading: 'Welcome to Likkho (लिक्खो) — Complete Interactive Feature Tour!',
+      heading: 'Likkho (लिक्खो) — Official Feature Guide & Documentation',
       contentHtml,
       plainPreview:
-        'Hey dost! Welcome to Likkho. This starter diary uses every canvas feature (rich text, spoilers, background, draggable image card, playable audio card, inline Wikipedia image) and frankly explains all features in Hindi & English.',
+        'Official bilingual (English & Hindi) documentation explaining all features of Likkho: Rich Canvas, LaTeX Math, Wikipedia, 6-Category Word Analysis, Dual-Vault Security, and A4 PDF Export.',
       pfpDataUrl: createStarterPfpSvgDataUrl(),
       createdAt: now,
       updatedAt: now,
@@ -226,38 +109,10 @@ export function buildWelcomeStarterLogs(): DiaryLog[] {
       updatedTimeStamp: timeStamp,
       reminderAt: null,
       pinned: true,
-      canvasBgDataUrl: createStarterCanvasBackgroundDataUrl(),
-      canvasBgOpacity: 0.28,
-      canvasImages: [
-        {
-          id: 'starter_canvas_img_1',
-          dataUrl: createStarterStampImageDataUrl(),
-          x: 410,
-          y: 415,
-          width: 245,
-          height: 153,
-          opacity: 0.96,
-          rotation: -4,
-          layer: 'foreground',
-        },
-      ],
-      audioAttachments: [
-        {
-          id: 'starter_canvas_audio_1',
-          name: 'Likkho Welcome Chime.wav',
-          format: 'wav',
-          dataUrl: createSamplePlayableWavDataUrl(),
-          durationSec: 2,
-          createdAt: now,
-          x: 405,
-          y: 590,
-          width: 275,
-          height: 64,
-          rotation: 0,
-          playbackRate: 1,
-          layer: 'foreground',
-        },
-      ],
+      canvasBgDataUrl: null,
+      canvasBgOpacity: 0.25,
+      canvasImages: [],
+      audioAttachments: [],
     },
   ];
 }

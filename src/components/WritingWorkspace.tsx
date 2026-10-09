@@ -753,8 +753,10 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     let range = sel.getRangeAt(0);
 
     // If the collapsed cursor ever landed inside a spoiler span (at its start or end edge),
-    // immediately step it outside so typing or deleting acts on normal surrounding text
-    if (range.collapsed) {
+    // immediately step it outside so typing or deleting acts on normal surrounding text.
+    // IMPORTANT: Only touch window.getSelection() if actually inside a spoiler span,
+    // so long-pressing the keyboard spacebar to open the OS language selector pop-up is NEVER interrupted!
+    if (range.collapsed && findEnclosingSpoilerSpan(range.startContainer)) {
       range = ensureCursorOutsideSpoilerSpan(sel, range);
     }
 
@@ -794,18 +796,26 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
       lastValidHtmlWithSpoilersRef.current = editorRef.current.innerHTML;
       scheduleTextHistorySnapshot();
       return;
-    } else if (range.collapsed && inputType.startsWith('insert')) {
+    } else if (
+      range.collapsed &&
+      inputType.startsWith('insert') &&
+      !nativeEv.isComposing
+    ) {
       escapeColorOrHighlightEdgeIfAtBoundary(sel, range);
     }
   };
 
   const handleEditorKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (isReadingMode) return;
+    // Never interfere with Spacebar press/hold so Android/iOS keyboard spacebar long-press language switcher popup always opens smoothly
+    if (e.key === ' ' || e.code === 'Space') {
+      return;
+    }
     const sel = window.getSelection();
     if (!sel || sel.rangeCount === 0) return;
     let range = sel.getRangeAt(0);
 
-    if (range.collapsed) {
+    if (range.collapsed && findEnclosingSpoilerSpan(range.startContainer)) {
       range = ensureCursorOutsideSpoilerSpan(sel, range);
     }
 
@@ -2204,6 +2214,10 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
             <div
               ref={editorRef}
               contentEditable={!isReadingMode}
+              inputMode="text"
+              spellCheck={true}
+              autoCorrect="on"
+              autoCapitalize="sentences"
               suppressContentEditableWarning
               onBeforeInput={handleEditorBeforeInput}
               onKeyDown={handleEditorKeyDown}
