@@ -1665,8 +1665,11 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
               <span>+15°</span>
             </button>
 
-            <span className="shrink-0 border border-[var(--wiki-border)] bg-[var(--wiki-bg)] px-2 py-1 font-wiki-mono text-[10px] font-semibold text-[var(--wiki-muted)]">
-              {formatByteSizeLabel(estimateDataUrlByteSize(selectedCanvasImage.dataUrl))}
+            <span className="shrink-0 px-1.5 font-wiki-mono text-[11px] font-medium text-[var(--wiki-muted)] select-none">
+              Size:{' '}
+              <strong className="font-semibold text-[var(--wiki-text)]">
+                {formatByteSizeLabel(estimateDataUrlByteSize(selectedCanvasImage.dataUrl))}
+              </strong>
             </span>
 
             <button
@@ -1811,10 +1814,13 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
             </button>
 
             {selectedInlineImgElement.src.startsWith('data:') && (
-              <span className="shrink-0 border border-[var(--wiki-border)] bg-[var(--wiki-bg)] px-2 py-1 font-wiki-mono text-[10px] font-semibold text-[var(--wiki-muted)]">
-                {formatByteSizeLabel(
-                  estimateDataUrlByteSize(selectedInlineImgElement.src)
-                )}
+              <span className="shrink-0 px-1.5 font-wiki-mono text-[11px] font-medium text-[var(--wiki-muted)] select-none">
+                Size:{' '}
+                <strong className="font-semibold text-[var(--wiki-text)]">
+                  {formatByteSizeLabel(
+                    estimateDataUrlByteSize(selectedInlineImgElement.src)
+                  )}
+                </strong>
               </span>
             )}
 

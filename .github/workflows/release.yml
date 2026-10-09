@@ -470,21 +470,21 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           ./gradlew assembleRelease bundleRelease
-          cp app/build/outputs/apk/release/app-release.apk app/build/outputs/apk/release/Likkho-release.apk
-          cp app/build/outputs/bundle/release/app-release.aab app/build/outputs/bundle/release/Likkho-release.aab
+          mv app/build/outputs/apk/release/app-release.apk app/build/outputs/apk/release/likkho-release.apk
+          mv app/build/outputs/bundle/release/app-release.aab app/build/outputs/bundle/release/likkho-release.aab
 
       - name: Upload Signed Release APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Likkho-Signed-Release-APK
-          path: android/app/build/outputs/apk/release/*.apk
+          name: likkho-release-apk
+          path: android/app/build/outputs/apk/release/likkho-release.apk
           retention-days: 30
 
       - name: Upload Signed Release AAB Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Likkho-Signed-Release-AAB
-          path: android/app/build/outputs/bundle/release/*.aab
+          name: likkho-release-aab
+          path: android/app/build/outputs/bundle/release/likkho-release.aab
           retention-days: 30
 
       - name: Create GitHub Release on Version Tag
@@ -493,7 +493,5 @@ jobs:
         with:
           generate_release_notes: true
           files: |
-            android/app/build/outputs/apk/release/Likkho-release.apk
-            android/app/build/outputs/apk/release/app-release.apk
-            android/app/build/outputs/bundle/release/Likkho-release.aab
-            android/app/build/outputs/bundle/release/app-release.aab
+            android/app/build/outputs/apk/release/likkho-release.apk
+            android/app/build/outputs/bundle/release/likkho-release.aab
