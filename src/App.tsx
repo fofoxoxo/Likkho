@@ -29,6 +29,9 @@ import {
   getRemainingPasscodeCooldownSeconds,
   recordPasscodeFailure,
   resetPasscodeFailures,
+  isExternalFilePickerPending,
+  clearExternalFilePickerPending,
+  markExternalFilePickerPending,
 } from './utils/cryptoVault';
 import {
   soundManager,
@@ -272,19 +275,43 @@ export default function App() {
 
     if (!isProtected) return;
 
+    // Automatically mark external file picker pending whenever any <input type="file"> is clicked anywhere in the app
+    const handleGlobalClickCapture = (ev: MouseEvent) => {
+      const target = ev.target as HTMLElement | null;
+      if (!target) return;
+      if (
+        (target.tagName === 'INPUT' && (target as HTMLInputElement).type === 'file') ||
+        target.closest('input[type="file"]')
+      ) {
+        markExternalFilePickerPending();
+      }
+    };
+
     const handleAppClosedOrBackgrounded = () => {
       if (document.visibilityState === 'hidden') {
+        if (isExternalFilePickerPending()) {
+          return;
+        }
         setIsLocked(true);
+      } else if (document.visibilityState === 'visible') {
+        window.setTimeout(() => {
+          clearExternalFilePickerPending();
+        }, 1200);
       }
     };
 
     const handlePageHide = () => {
+      if (isExternalFilePickerPending()) {
+        return;
+      }
       setIsLocked(true);
     };
 
+    document.addEventListener('click', handleGlobalClickCapture, true);
     document.addEventListener('visibilitychange', handleAppClosedOrBackgrounded);
     window.addEventListener('pagehide', handlePageHide);
     return () => {
+      document.removeEventListener('click', handleGlobalClickCapture, true);
       document.removeEventListener('visibilitychange', handleAppClosedOrBackgrounded);
       window.removeEventListener('pagehide', handlePageHide);
     };
@@ -762,20 +789,27 @@ export default function App() {
         </div>
       )}
 
-      {/* Instant Lock & Launch Lock Overlay — Routes to Primary (`real_vault.db`) or Secondary (`decoy_vault.db`) */}
-      {isLocked && effectivePrimaryPin ? (
-        <PasscodeScreen
-          savedPasscode={savedPasscode || ''}
-          secondaryPasscode={secondaryPasscode}
-          biometricsEnabled={biometricsEnabled}
-          onUnlock={(unlockedMode) => {
-            setVaultMode(unlockedMode);
-            setRoute('home');
-            setEditingLog(null);
-            setIsLocked(false);
-          }}
-        />
-      ) : route === 'workspace' ? (
+      {/* Instant Lock & Launch Lock Overlay — Rendered as a top-level overlay so the active Canvas / Workspace is NEVER unmounted or lost when locked! */}
+      {isLocked && effectivePrimaryPin && (
+        <div className="fixed inset-0 z-[100] flex h-full w-full flex-col bg-[var(--wiki-bg)]">
+          <PasscodeScreen
+            savedPasscode={savedPasscode || ''}
+            secondaryPasscode={secondaryPasscode}
+            biometricsEnabled={biometricsEnabled}
+            onUnlock={(unlockedMode) => {
+              clearExternalFilePickerPending();
+              if (unlockedMode !== vaultMode) {
+                setVaultMode(unlockedMode);
+                setRoute('home');
+                setEditingLog(null);
+              }
+              setIsLocked(false);
+            }}
+          />
+        </div>
+      )}
+
+      {route === 'workspace' ? (
         <WritingWorkspace
           vaultMode={vaultMode}
           initialLog={editingLog}

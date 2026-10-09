@@ -54,6 +54,8 @@ import {
   CustomFontItem,
   MicRecordingSettings,
   VaultMode,
+  markExternalFilePickerPending,
+  clearExternalFilePickerPending,
 } from '../utils/cryptoVault';
 import {
   finalizeRecordedAudioToDataUrl,
@@ -1412,6 +1414,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
   };
 
   const handleTtfFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    clearExternalFilePickerPending();
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
@@ -1854,6 +1857,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
   };
 
   const triggerAndroidMediaPermission = () => {
+    markExternalFilePickerPending();
     try {
       if (window.LikkhoNative?.requestFilesAndMediaPermission) {
         window.LikkhoNative.requestFilesAndMediaPermission();
@@ -1864,6 +1868,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
   };
 
   const handleMediaImagePicked = (e: React.ChangeEvent<HTMLInputElement>) => {
+    clearExternalFilePickerPending();
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
@@ -1884,6 +1889,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
   };
 
   const handleMediaAudioPicked = (e: React.ChangeEvent<HTMLInputElement>) => {
+    clearExternalFilePickerPending();
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
@@ -1959,6 +1965,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
   };
 
   const handleBgFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    clearExternalFilePickerPending();
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
@@ -2093,6 +2100,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
 
   // Multi-Format Document Import Tool (TXT, MD, RTF, CSV, JSON, XML, PDF, DOCX, DOC, ODT, HTML, EPUB, LOG)
   const handleImportFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    clearExternalFilePickerPending();
     const file = e.target.files?.[0];
     if (!file) return;
     try {

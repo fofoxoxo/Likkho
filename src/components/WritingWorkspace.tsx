@@ -35,6 +35,8 @@ import {
   getRemainingPasscodeCooldownSeconds,
   recordPasscodeFailure,
   resetPasscodeFailures,
+  markExternalFilePickerPending,
+  clearExternalFilePickerPending,
 } from '../utils/cryptoVault';
 import { scheduleAndroidNativeReminder } from '../utils/notificationSound';
 import { ImageCropperModal } from './ImageCropperModal';
@@ -255,9 +257,17 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
   const editorRef = useRef<HTMLDivElement | null>(null);
   const canvasContainerRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const initializedForLogIdRef = useRef<string | null>(null);
 
-  // Populate initial HTML into contentEditable once on mount & initialize history stack
+  // Populate initial HTML into contentEditable once per diary ID & initialize history stack
+  // (Never re-wipe the active editor DOM when `onSaveLog(log, false)` updates `initialLog` with the same diary ID!)
   useEffect(() => {
+    const targetId = initialLog?.id || stableLogIdRef.current;
+    if (initializedForLogIdRef.current === targetId) {
+      return;
+    }
+    initializedForLogIdRef.current = targetId;
+
     const startHtml = initialLog?.contentHtml || '';
     if (editorRef.current) {
       editorRef.current.innerHTML = startHtml;
@@ -377,6 +387,29 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     }
     historyStackRef.current = nextStack;
     historyIndexRef.current = nextStack.length - 1;
+
+    // Auto-persist non-empty canvas drafts in the background so switching to an external app/file manager never loses work
+    try {
+      const { log, hasAnyEntry } = buildCurrentLogObject(undefined, true);
+      if (hasAnyEntry) {
+        onSaveLog(
+          {
+            ...log,
+            heading: snap.heading.trim() || (log.plainPreview.slice(0, 40) || 'Untitled Entry'),
+            pfpDataUrl: snap.pfpDataUrl,
+            contentHtml: normalizeSpoilersAndSelectionForSave(snap.contentHtml),
+            canvasBgDataUrl: snap.canvasBgDataUrl,
+            canvasBgOpacity: snap.canvasBgOpacity,
+            canvasImages: snap.canvasImages,
+            audioAttachments: snap.audioAttachments,
+            diaryLockPin: snap.diaryLockPin,
+          },
+          false
+        );
+      }
+    } catch {
+      // ignore background auto-save errors
+    }
   };
 
   const applyCanvasSnapshot = (snap: CanvasHistorySnapshot) => {
@@ -1124,6 +1157,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
   };
 
   const handleImageFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    clearExternalFilePickerPending();
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();

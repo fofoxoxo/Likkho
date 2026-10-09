@@ -540,6 +540,7 @@ jobs:
               private String pendingBackupEnvelope = null;
               private String pendingVaultMode = "primary";
               private boolean isAppPasscodeProtected = false;
+              private volatile boolean isSystemFilePickerOpen = false;
               private String currentStatusBarHex = "#f8f9fa";
               private String currentNavBarHex = "#ffffff";
               private boolean currentDarkIconsOnLightBar = true;
@@ -621,11 +622,13 @@ jobs:
                                   filePathCallback.onReceiveValue(null);
                               }
                               filePathCallback = filePathCb;
+                              isSystemFilePickerOpen = true;
                               requestMediaPermissionsIfNeeded();
                               try {
                                   Intent intent = fileChooserParams.createIntent();
                                   startActivityForResult(intent, FILE_CHOOSER_RESULT_CODE);
                               } catch (Exception e) {
+                                  isSystemFilePickerOpen = false;
                                   filePathCallback = null;
                                   return false;
                               }
@@ -682,7 +685,7 @@ jobs:
 
               @Override
               public void onPause() {
-                  if (isAppPasscodeProtected) {
+                  if (isAppPasscodeProtected && !isSystemFilePickerOpen) {
                       showRecentsPrivacyShield();
                   }
                   super.onPause();
@@ -695,7 +698,7 @@ jobs:
                       applyWindowSystemBarsColor(currentStatusBarHex, currentNavBarHex, currentDarkIconsOnLightBar);
                       applyWindowFullScreenMode(isFullScreenEnabled);
                   }
-                  if (isAppPasscodeProtected) {
+                  if (isAppPasscodeProtected && !isSystemFilePickerOpen) {
                       if (!hasFocus) {
                           showRecentsPrivacyShield();
                       } else {
@@ -873,6 +876,7 @@ jobs:
 
               private void launchSafDirectoryPicker(int operation) {
                   pendingSafOperation = operation;
+                  isSystemFilePickerOpen = true;
                   runOnUiThread(() -> {
                       try {
                           Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
@@ -888,6 +892,7 @@ jobs:
                           }
                           startActivityForResult(intent, SAF_TREE_PICKER_CODE);
                       } catch (Exception e) {
+                          isSystemFilePickerOpen = false;
                           if (operation == SAF_OP_BACKUP) {
                               notifySafBackupResult(false, "Unable to open folder picker: " + e.getMessage());
                           } else if (operation == SAF_OP_RESTORE) {
@@ -1213,6 +1218,10 @@ jobs:
                       applyAppPasscodeProtection(enabled);
                   }
                   @JavascriptInterface
+                  public boolean isSystemFilePickerActive() {
+                      return isSystemFilePickerOpen;
+                  }
+                  @JavascriptInterface
                   public void setSystemBarsTheme(String statusBarHex, String navBarHex, boolean isLightIcons) {
                       applyWindowSystemBarsColor(statusBarHex, navBarHex, isLightIcons);
                   }
@@ -1483,9 +1492,19 @@ jobs:
                           filePathCallback.onReceiveValue(results);
                           filePathCallback = null;
                       }
+                      if (bridge != null && bridge.getWebView() != null) {
+                          bridge.getWebView().postDelayed(() -> isSystemFilePickerOpen = false, 1500);
+                      } else {
+                          isSystemFilePickerOpen = false;
+                      }
                   } else if (requestCode == DEVICE_CREDENTIAL_UNLOCK_CODE) {
                       notifyBiometricResult(resultCode == RESULT_OK, "");
                   } else if (requestCode == SAF_TREE_PICKER_CODE) {
+                      if (bridge != null && bridge.getWebView() != null) {
+                          bridge.getWebView().postDelayed(() -> isSystemFilePickerOpen = false, 1500);
+                      } else {
+                          isSystemFilePickerOpen = false;
+                      }
                       int op = pendingSafOperation;
                       pendingSafOperation = SAF_OP_NONE;
                       if (resultCode == RESULT_OK && data != null && data.getData() != null) {

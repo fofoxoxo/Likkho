@@ -10,10 +10,39 @@
 
 export type VaultMode = 'primary' | 'decoy';
 
+// ==================== External OS File Picker / SAF Grace Window ====================
+// Prevents opening the Android OS File Manager / Photo Picker / SAF Folder Picker
+// from falsely locking the app or unmounting the active Canvas workspace when `visibilitychange` fires.
+let externalFilePickerGraceUntilMs = 0;
+
+export function markExternalFilePickerPending(durationMs: number = 5 * 60 * 1000): void {
+  externalFilePickerGraceUntilMs = Date.now() + durationMs;
+}
+
+export function clearExternalFilePickerPending(): void {
+  externalFilePickerGraceUntilMs = 0;
+}
+
+export function isExternalFilePickerPending(): boolean {
+  try {
+    if (
+      window.LikkhoNative &&
+      typeof window.LikkhoNative.isSystemFilePickerActive === 'function' &&
+      window.LikkhoNative.isSystemFilePickerActive()
+    ) {
+      return true;
+    }
+  } catch {
+    // ignore
+  }
+  return Date.now() < externalFilePickerGraceUntilMs;
+}
+
 declare global {
   interface Window {
     LikkhoNative?: {
       setAppPasscodeProtectionEnabled?: (enabled: boolean) => void;
+      isSystemFilePickerActive?: () => boolean;
       setSystemBarsTheme?: (
         statusBarHex: string,
         navBarHex: string,
