@@ -691,6 +691,13 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
         } else {
           unwrapElement(existingColorSpan);
         }
+      } else if (!range.collapsed) {
+        // Also unwrap any `data-wiki-color` spans contained inside the selected range
+        editorRef.current.querySelectorAll('[data-wiki-color]').forEach((node) => {
+          if (range.intersectsNode(node)) {
+            unwrapElement(node as HTMLElement);
+          }
+        });
       }
       setShowColorPicker(null);
       checkActiveFormats();
@@ -713,10 +720,91 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     }
 
     let targetSpan: HTMLElement;
-    if (existingColorSpan && existingColorSpan.textContent === sel.toString()) {
+    const extracted = range.cloneContents();
+    const containsBlockElements = Boolean(
+      extracted.querySelector('p, div, h1, h2, h3, li, blockquote, pre')
+    );
+
+    if (
+      existingColorSpan &&
+      !containsBlockElements &&
+      existingColorSpan.textContent?.replace(/\u200B/g, '') ===
+        sel.toString().replace(/\u200B/g, '')
+    ) {
       existingColorSpan.style.color = color;
       existingColorSpan.setAttribute('data-wiki-color', color);
       targetSpan = existingColorSpan;
+    } else if (containsBlockElements) {
+      // Multi-paragraph or block selection: wrap each text node inside the selection range cleanly in its own inline `data-wiki-color` span so paragraph boundaries never break!
+      const textNodesInSelection: Text[] = [];
+      const walker = document.createTreeWalker(
+        editorRef.current,
+        NodeFilter.SHOW_TEXT
+      );
+      let curNode: Node | null = walker.nextNode();
+      while (curNode) {
+        if (
+          curNode.nodeType === Node.TEXT_NODE &&
+          range.intersectsNode(curNode) &&
+          (curNode.textContent || '').replace(/\u200B/g, '').length > 0 &&
+          !findAncestorByAttr(curNode, 'data-wiki-spoiler') &&
+          !findAncestorByAttr(curNode, 'data-wiki-latex')
+        ) {
+          textNodesInSelection.push(curNode as Text);
+        }
+        curNode = walker.nextNode();
+      }
+
+      let firstWrapped: HTMLElement | null = null;
+      let lastWrapped: HTMLElement | null = null;
+
+      textNodesInSelection.forEach((tNode) => {
+        const fullText = tNode.textContent || '';
+        const startOff = tNode === range.startContainer ? range.startOffset : 0;
+        const endOff = tNode === range.endContainer ? range.endOffset : fullText.length;
+        if (endOff <= startOff) return;
+
+        let midNode: Text = tNode;
+        if (endOff < fullText.length) {
+          midNode.splitText(endOff);
+        }
+        if (startOff > 0) {
+          midNode = midNode.splitText(startOff);
+        }
+
+        const parentEl = midNode.parentElement;
+        if (
+          parentEl &&
+          parentEl.hasAttribute('data-wiki-color') &&
+          parentEl.childNodes.length === 1
+        ) {
+          parentEl.style.color = color;
+          parentEl.setAttribute('data-wiki-color', color);
+          if (!firstWrapped) firstWrapped = parentEl;
+          lastWrapped = parentEl;
+        } else if (midNode.parentNode) {
+          const sp = document.createElement('span');
+          sp.style.color = color;
+          sp.setAttribute('data-wiki-color', color);
+          midNode.parentNode.replaceChild(sp, midNode);
+          sp.appendChild(midNode);
+          if (!firstWrapped) firstWrapped = sp;
+          lastWrapped = sp;
+        }
+      });
+
+      if (firstWrapped && lastWrapped) {
+        const nextRange = document.createRange();
+        nextRange.setStartBefore(firstWrapped);
+        nextRange.setEndAfter(lastWrapped);
+        sel.removeAllRanges();
+        sel.addRange(nextRange);
+        savedRangeRef.current = nextRange.cloneRange();
+      }
+      setShowColorPicker(null);
+      checkActiveFormats();
+      onContentChange();
+      return;
     } else {
       const span = document.createElement('span');
       span.style.color = color;
@@ -727,24 +815,29 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     }
 
     // Ensure unstyled text anchor nodes exist right before and right after `targetSpan`
-    // and move cursor outside `targetSpan` so typing after/before never continues the color
+    // while keeping `targetSpan` selected so the user can change or uncolor the selected text anytime!
     const parent = targetSpan.parentNode;
     if (parent) {
       if (!targetSpan.previousSibling || targetSpan.previousSibling.nodeType !== Node.TEXT_NODE) {
         parent.insertBefore(document.createTextNode('\u200B'), targetSpan);
       }
-      let afterNode = targetSpan.nextSibling;
-      if (!afterNode || afterNode.nodeType !== Node.TEXT_NODE) {
-        afterNode = document.createTextNode('\u200B');
-        parent.insertBefore(afterNode, targetSpan.nextSibling);
+      if (!targetSpan.nextSibling || targetSpan.nextSibling.nodeType !== Node.TEXT_NODE) {
+        parent.insertBefore(document.createTextNode('\u200B'), targetSpan.nextSibling);
       }
-      const newRange = document.createRange();
-      newRange.setStart(afterNode, (afterNode.textContent || '').startsWith('\u200B') ? 1 : 0);
-      newRange.collapse(true);
-      sel.removeAllRanges();
-      sel.addRange(newRange);
-      savedRangeRef.current = newRange.cloneRange();
     }
+
+    // Strip any nested conflicting `data-wiki-color` spans inside `targetSpan` so changing color always overrides cleanly
+    targetSpan.querySelectorAll('[data-wiki-color]').forEach((inner) => {
+      const innerEl = inner as HTMLElement;
+      innerEl.style.color = '';
+      innerEl.removeAttribute('data-wiki-color');
+    });
+
+    const newRange = document.createRange();
+    newRange.selectNodeContents(targetSpan);
+    sel.removeAllRanges();
+    sel.addRange(newRange);
+    savedRangeRef.current = newRange.cloneRange();
 
     setShowColorPicker(null);
     checkActiveFormats();
@@ -773,6 +866,12 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
         } else {
           unwrapElement(existingMark);
         }
+      } else if (!range.collapsed) {
+        editorRef.current.querySelectorAll('mark').forEach((node) => {
+          if (range.intersectsNode(node)) {
+            unwrapElement(node as HTMLElement);
+          }
+        });
       }
       setShowColorPicker(null);
       checkActiveFormats();
@@ -811,24 +910,26 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     }
 
     // Ensure unstyled text anchor nodes exist right before and right after `targetMark`
-    // and move cursor outside `targetMark` so typing after/before never continues the highlight
+    // while keeping `targetMark` selected so the user can change or remove the highlight anytime!
     const parent = targetMark.parentNode;
     if (parent) {
       if (!targetMark.previousSibling || targetMark.previousSibling.nodeType !== Node.TEXT_NODE) {
         parent.insertBefore(document.createTextNode('\u200B'), targetMark);
       }
-      let afterNode = targetMark.nextSibling;
-      if (!afterNode || afterNode.nodeType !== Node.TEXT_NODE) {
-        afterNode = document.createTextNode('\u200B');
-        parent.insertBefore(afterNode, targetMark.nextSibling);
+      if (!targetMark.nextSibling || targetMark.nextSibling.nodeType !== Node.TEXT_NODE) {
+        parent.insertBefore(document.createTextNode('\u200B'), targetMark.nextSibling);
       }
-      const newRange = document.createRange();
-      newRange.setStart(afterNode, (afterNode.textContent || '').startsWith('\u200B') ? 1 : 0);
-      newRange.collapse(true);
-      sel.removeAllRanges();
-      sel.addRange(newRange);
-      savedRangeRef.current = newRange.cloneRange();
     }
+
+    targetMark.querySelectorAll('mark').forEach((inner) => {
+      unwrapElement(inner as HTMLElement);
+    });
+
+    const newRange = document.createRange();
+    newRange.selectNodeContents(targetMark);
+    sel.removeAllRanges();
+    sel.addRange(newRange);
+    savedRangeRef.current = newRange.cloneRange();
 
     setShowColorPicker(null);
     checkActiveFormats();
@@ -895,6 +996,11 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
         span.setAttribute('data-wiki-font', fontFamily);
         const extracted = range.extractContents();
         span.appendChild(extracted);
+        span.querySelectorAll('[data-wiki-font]').forEach((inner) => {
+          const innerEl = inner as HTMLElement;
+          innerEl.style.fontFamily = '';
+          innerEl.removeAttribute('data-wiki-font');
+        });
         range.insertNode(span);
 
         const newRange = document.createRange();
@@ -956,23 +1062,122 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     const hasSelection = !range.collapsed && sel.toString().length > 0;
 
     if (hasSelection) {
+      const clonedFrag = range.cloneContents();
+      const containsBlockElements = Boolean(
+        clonedFrag.querySelector('p, div, h1, h2, h3, li, blockquote, pre')
+      );
+
       if (
         existingPxSpan &&
+        !containsBlockElements &&
         existingPxSpan.textContent?.replace(/\u200B/g, '') ===
           sel.toString().replace(/\u200B/g, '')
       ) {
         existingPxSpan.style.fontSize = `${px}px`;
+        existingPxSpan.style.lineHeight = '1.45';
         existingPxSpan.setAttribute('data-wiki-px', String(px));
+        // Clear any nested `data-wiki-px` or inline font-size inside `existingPxSpan` so inner spans never block resizing
+        existingPxSpan.querySelectorAll('*').forEach((child) => {
+          const childEl = child as HTMLElement;
+          if (childEl.style && childEl.style.fontSize) {
+            childEl.style.fontSize = '';
+          }
+          if (childEl.hasAttribute('data-wiki-px')) {
+            childEl.removeAttribute('data-wiki-px');
+          }
+        });
         const newRange = document.createRange();
         newRange.selectNodeContents(existingPxSpan);
         sel.removeAllRanges();
         sel.addRange(newRange);
         savedRangeRef.current = newRange.cloneRange();
+      } else if (containsBlockElements) {
+        // When an entire paragraph or multiple paragraphs/lines are selected:
+        // Wrap or update each text node in its own inline `data-wiki-px` span AND clear any conflicting inline fontSize on intermediate spans, so the actual text scales smoothly instead of just changing line gaps!
+        const textNodesInSelection: Text[] = [];
+        const walker = document.createTreeWalker(
+          editorRef.current,
+          NodeFilter.SHOW_TEXT
+        );
+        let curNode: Node | null = walker.nextNode();
+        while (curNode) {
+          if (
+            curNode.nodeType === Node.TEXT_NODE &&
+            range.intersectsNode(curNode) &&
+            (curNode.textContent || '').replace(/\u200B/g, '').length > 0 &&
+            !findAncestorByAttr(curNode, 'data-wiki-spoiler') &&
+            !findAncestorByAttr(curNode, 'data-wiki-latex')
+          ) {
+            textNodesInSelection.push(curNode as Text);
+          }
+          curNode = walker.nextNode();
+        }
+
+        let firstWrapped: HTMLElement | null = null;
+        let lastWrapped: HTMLElement | null = null;
+
+        textNodesInSelection.forEach((tNode) => {
+          const fullText = tNode.textContent || '';
+          const startOff = tNode === range.startContainer ? range.startOffset : 0;
+          const endOff = tNode === range.endContainer ? range.endOffset : fullText.length;
+          if (endOff <= startOff) return;
+
+          let midNode: Text = tNode;
+          if (endOff < fullText.length) {
+            midNode.splitText(endOff);
+          }
+          if (startOff > 0) {
+            midNode = midNode.splitText(startOff);
+          }
+
+          const parentEl = midNode.parentElement;
+          if (
+            parentEl &&
+            parentEl.hasAttribute('data-wiki-px') &&
+            parentEl.childNodes.length === 1
+          ) {
+            parentEl.style.fontSize = `${px}px`;
+            parentEl.style.lineHeight = '1.45';
+            parentEl.setAttribute('data-wiki-px', String(px));
+            if (!firstWrapped) firstWrapped = parentEl;
+            lastWrapped = parentEl;
+          } else if (midNode.parentNode) {
+            const sp = document.createElement('span');
+            sp.style.fontSize = `${px}px`;
+            sp.style.lineHeight = '1.45';
+            sp.setAttribute('data-wiki-px', String(px));
+            midNode.parentNode.replaceChild(sp, midNode);
+            sp.appendChild(midNode);
+            if (!firstWrapped) firstWrapped = sp;
+            lastWrapped = sp;
+          }
+        });
+
+        if (firstWrapped && lastWrapped) {
+          const nextRange = document.createRange();
+          nextRange.setStartBefore(firstWrapped);
+          nextRange.setEndAfter(lastWrapped);
+          sel.removeAllRanges();
+          sel.addRange(nextRange);
+          savedRangeRef.current = nextRange.cloneRange();
+        }
       } else {
         const span = document.createElement('span');
         span.style.fontSize = `${px}px`;
+        span.style.lineHeight = '1.45';
         span.setAttribute('data-wiki-px', String(px));
-        span.appendChild(range.extractContents());
+        const extracted = range.extractContents();
+        span.appendChild(extracted);
+        // Clear any nested `data-wiki-px` or inline font-size on inner elements so increasing/decreasing px size always scales the actual text (not just line gaps!)
+        span.querySelectorAll('*').forEach((child) => {
+          const childEl = child as HTMLElement;
+          if (childEl.style && childEl.style.fontSize) {
+            childEl.style.fontSize = '';
+          }
+          if (childEl.hasAttribute('data-wiki-px')) {
+            childEl.removeAttribute('data-wiki-px');
+          }
+        });
         range.insertNode(span);
 
         const newRange = document.createRange();
@@ -986,6 +1191,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
         const clean = (existingPxSpan.textContent || '').replace(/\u200B/g, '');
         if (clean.length === 0) {
           existingPxSpan.style.fontSize = `${px}px`;
+          existingPxSpan.style.lineHeight = '1.45';
           existingPxSpan.setAttribute('data-wiki-px', String(px));
           return;
         }
@@ -994,6 +1200,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
       const activeRange = sel.getRangeAt(0);
       const span = document.createElement('span');
       span.style.fontSize = `${px}px`;
+      span.style.lineHeight = '1.45';
       span.setAttribute('data-wiki-px', String(px));
       const zwsp = document.createTextNode('\u200B');
       span.appendChild(zwsp);
@@ -1024,6 +1231,13 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
         findAncestorByAttr(range.startContainer, 'data-wiki-px') ||
         findAncestorByAttr(range.endContainer, 'data-wiki-px');
 
+      if ( !range.collapsed ) {
+        editorRef.current.querySelectorAll('[data-wiki-px]').forEach((node) => {
+          if (range.intersectsNode(node)) {
+            unwrapElement(node as HTMLElement);
+          }
+        });
+      }
       while (existingPxSpan) {
         if (range.collapsed) {
           splitElementAtCursorToDefault(existingPxSpan, 'data-wiki-px');
@@ -2662,19 +2876,6 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
           onMouseDown={preventFocusLoss}
           onClick={() => {
             saveCurrentSelection();
-            const sel = window.getSelection();
-            const anchor = sel && sel.rangeCount > 0 ? sel.anchorNode : null;
-            const existingColorSpan = findAncestorByAttr(anchor, 'data-wiki-color');
-            if (existingColorSpan && showColorPicker !== 'text') {
-              if (sel && sel.isCollapsed) {
-                splitElementAtCursorToDefault(existingColorSpan, 'data-wiki-color');
-              } else {
-                unwrapElement(existingColorSpan);
-              }
-              checkActiveFormats();
-              onContentChange();
-              return;
-            }
             const next = showColorPicker === 'text' ? null : 'text';
             closeAllPopovers();
             setShowColorPicker(next);
@@ -2689,19 +2890,6 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
           onMouseDown={preventFocusLoss}
           onClick={() => {
             saveCurrentSelection();
-            const sel = window.getSelection();
-            const anchor = sel && sel.rangeCount > 0 ? sel.anchorNode : null;
-            const existingMark = findAncestorTag(anchor, ['MARK']);
-            if (existingMark && showColorPicker !== 'highlight') {
-              if (sel && sel.isCollapsed) {
-                splitElementAtCursorToDefault(existingMark);
-              } else {
-                unwrapElement(existingMark);
-              }
-              checkActiveFormats();
-              onContentChange();
-              return;
-            }
             const next = showColorPicker === 'highlight' ? null : 'highlight';
             closeAllPopovers();
             setShowColorPicker(next);

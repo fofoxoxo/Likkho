@@ -10,6 +10,52 @@
 
 export type VaultMode = 'primary' | 'decoy';
 
+declare global {
+  interface Window {
+    LikkhoNative?: {
+      setAppPasscodeProtectionEnabled?: (enabled: boolean) => void;
+      setSystemBarsTheme?: (
+        statusBarHex: string,
+        navBarHex: string,
+        isLightIcons: boolean
+      ) => void;
+      setFullScreenMode?: (enabled: boolean) => void;
+      requestFilesAndMediaPermission?: () => void;
+      requestMicPermission?: () => void;
+      startNativeMicRecording?: (sampleRate: number, bitRate: number) => void;
+      stopNativeMicRecording?: () => void;
+      isNativeMicRecordingActive?: () => boolean;
+      getNativeMicRecordingSeconds?: () => number;
+      startForegroundMicService?: () => void;
+      stopForegroundMicService?: () => void;
+      cancelBiometricPrompt?: () => void;
+      authenticateBiometric?: () => void;
+      scheduleNativeReminder?: (
+        logId: string,
+        title: string,
+        body: string,
+        triggerAtMs: number
+      ) => void;
+      cancelNativeReminder?: (logId: string) => void;
+      getSafBaseFolderName?: () => string;
+      chooseSafBaseFolder?: () => void;
+      saveBackupViaSaf?: (envelope: string, vaultMode: string) => void;
+      restoreBackupViaSaf?: (vaultMode: string) => void;
+      saveExportedFile?: (
+        base64Data: string,
+        filename: string,
+        mimeType: string
+      ) => void;
+    };
+    __handleLikkhoAndroidBack?: () => string;
+    __onLikkhoBiometricResult?: (success: boolean, msg?: string) => void;
+    __onLikkhoNativeMicFinished?: (base64Wav: string, durationSec: number) => void;
+    __onLikkhoSafBackupResult?: (success: boolean, msg: string) => void;
+    __onLikkhoSafRestoreResult?: (success: boolean, payload: string) => void;
+    __onLikkhoSafFolderSelected?: (folderName: string) => void;
+  }
+}
+
 export interface CanvasDraggableImage {
   id: string;
   dataUrl: string;

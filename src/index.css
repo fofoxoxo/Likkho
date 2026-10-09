@@ -2,6 +2,7 @@
 
 @layer base {
   :root {
+    color-scheme: light;
     --wiki-bg: #ffffff;
     --wiki-surface: #f8f9fa;
     --wiki-border: #a2a9b1;
@@ -17,6 +18,7 @@
   }
 
   .dark {
+    color-scheme: dark;
     --wiki-bg: #101418;
     --wiki-surface: #1a1f24;
     --wiki-border: #3a4047;
@@ -136,6 +138,13 @@
 
 .wiki-editor-content p {
   margin-bottom: 0.85rem;
+}
+
+.wiki-editor-content span[data-wiki-px] p,
+.wiki-editor-content span[data-wiki-px] div,
+.wiki-editor-content span[data-wiki-px] li {
+  font-size: inherit;
+  line-height: inherit;
 }
 
 .wiki-editor-content blockquote,

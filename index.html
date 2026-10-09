@@ -3,7 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content" />
-    <meta name="theme-color" content="#ffffff" id="meta-theme-color" />
+    <meta name="theme-color" content="#f8f9fa" id="meta-theme-color" />
+    <meta name="color-scheme" content="light" id="meta-color-scheme" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
@@ -21,11 +22,19 @@
       (function () {
         try {
           var isDark = localStorage.getItem('wikilog_dark_theme_v1') === 'true';
+          var metaTheme = document.getElementById('meta-theme-color');
+          var metaScheme = document.getElementById('meta-color-scheme');
           if (isDark) {
             document.documentElement.classList.add('dark');
             document.documentElement.style.backgroundColor = '#101418';
+            document.documentElement.style.colorScheme = 'dark';
+            if (metaTheme) metaTheme.setAttribute('content', '#1a1f24');
+            if (metaScheme) metaScheme.setAttribute('content', 'dark');
           } else {
             document.documentElement.style.backgroundColor = '#ffffff';
+            document.documentElement.style.colorScheme = 'light';
+            if (metaTheme) metaTheme.setAttribute('content', '#f8f9fa');
+            if (metaScheme) metaScheme.setAttribute('content', 'light');
           }
           if ('serviceWorker' in navigator) {
             navigator.serviceWorker.getRegistrations().then(function (regs) {

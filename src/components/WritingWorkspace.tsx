@@ -2593,7 +2593,12 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
       {rawBgStudioImage && (
         <MediaImageStudioModal
           imageSrc={rawBgStudioImage}
-          onCancel={() => setRawBgStudioImage(null)}
+          onCancel={() => {
+            setRawBgStudioImage(null);
+            window.setTimeout(() => {
+              editorRef.current?.focus({ preventScroll: true });
+            }, 20);
+          }}
           onConfirm={(processedDataUrl, opacity) => {
             const nextOpacity =
               typeof opacity === 'number' && opacity > 0 && opacity < 1
@@ -2606,6 +2611,9 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
               canvasBgOpacity: nextOpacity,
             });
             setRawBgStudioImage(null);
+            window.setTimeout(() => {
+              editorRef.current?.focus({ preventScroll: true });
+            }, 20);
           }}
         />
       )}

@@ -9,7 +9,7 @@
     "StatusBar": {
       "overlaysWebView": false,
       "style": "LIGHT",
-      "backgroundColor": "#FFFFFF"
+      "backgroundColor": "#F8F9FA"
     },
     "LocalNotifications": {
       "smallIcon": "ic_stat_icon_config_sample",

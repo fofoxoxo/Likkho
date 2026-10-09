@@ -64,8 +64,41 @@ jobs:
             sed -i 's/<application/<uses-permission android:name="android.permission.POST_NOTIFICATIONS" \/>\n    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" \/>\n    <uses-permission android:name="android.permission.USE_EXACT_ALARM" \/>\n    <uses-permission android:name="android.permission.VIBRATE" \/>\n    <uses-permission android:name="android.permission.WAKE_LOCK" \/>\n    <uses-permission android:name="android.permission.USE_BIOMETRIC" \/>\n    <uses-permission android:name="android.permission.USE_FINGERPRINT" \/>\n    <uses-permission android:name="android.permission.RECORD_AUDIO" \/>\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" \/>\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" \/>\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" \/>\n    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" \/>\n    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" \/>\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" \/>\n    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" \/>\n    <application android:hardwareAccelerated="true"/' "$MANIFEST"
           fi
 
-          # Ensure MainActivity uses adjustResize for smooth keyboard and toolbar docking
+          # Ensure MainActivity uses adjustResize for smooth keyboard and toolbar docking and handles uiMode changes without force-dark status bar resets
           sed -i 's/android:name=".MainActivity"/android:name=".MainActivity" android:windowSoftInputMode="adjustResize"/' "$MANIFEST" || true
+
+          # Disable Android System Force-Dark on Status Bar, Navigation Bar & Window when System Dark Mode is ON while Likkho is in Light Mode, and allow ShortEdges cutout for Full Screen mode
+          rm -rf android/app/src/main/res/values-night android/app/src/main/res/values-night-v* || true
+          cat << 'EOF' > android/app/src/main/res/values/styles.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources xmlns:tools="http://schemas.android.com/tools">
+              <style name="AppTheme" parent="Theme.AppCompat.Light.NoActionBar">
+                  <item name="colorPrimary">#3366cc</item>
+                  <item name="colorPrimaryDark">#f8f9fa</item>
+                  <item name="colorAccent">#3366cc</item>
+                  <item name="android:windowBackground">#ffffff</item>
+                  <item name="android:statusBarColor">#f8f9fa</item>
+                  <item name="android:navigationBarColor">#ffffff</item>
+                  <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+                  <item name="android:windowTranslucentStatus">false</item>
+                  <item name="android:windowTranslucentNavigation">false</item>
+                  <item name="android:windowLightStatusBar" tools:targetApi="m">true</item>
+                  <item name="android:windowLightNavigationBar" tools:targetApi="o_mr1">true</item>
+                  <item name="android:enforceStatusBarContrast" tools:targetApi="q">false</item>
+                  <item name="android:enforceNavigationBarContrast" tools:targetApi="q">false</item>
+                  <item name="android:forceDarkAllowed" tools:targetApi="q">false</item>
+                  <item name="android:windowLayoutInDisplayCutoutMode" tools:targetApi="p">shortEdges</item>
+              </style>
+              <style name="AppTheme.NoActionBar" parent="AppTheme">
+                  <item name="windowActionBar">false</item>
+                  <item name="windowNoTitle">true</item>
+                  <item name="android:background">@null</item>
+              </style>
+              <style name="AppTheme.NoActionBarLaunch" parent="AppTheme.NoActionBar">
+                  <item name="android:background">#ffffff</item>
+              </style>
+          </resources>
+          EOF
 
           # Register ReminderReceiver and MicForegroundService (foregroundServiceType="microphone", stopWithTask="false") inside <application>
           if ! grep -q "ReminderReceiver" "$MANIFEST"; then
@@ -480,6 +513,10 @@ jobs:
               private static final String KEY_SAF_TREE_URI = "saf_base_tree_uri";
               private static final String KEY_SAF_DECOY_TREE_URI = "saf_decoy_base_tree_uri";
               private static final String KEY_PASSCODE_PROTECTED = "app_passcode_protection_enabled";
+              private static final String KEY_STATUS_BAR_HEX = "saved_status_bar_hex";
+              private static final String KEY_NAV_BAR_HEX = "saved_nav_bar_hex";
+              private static final String KEY_DARK_ICONS_ON_LIGHT = "saved_dark_icons_on_light";
+              private static final String KEY_FULLSCREEN_ENABLED = "saved_fullscreen_enabled";
               private static final String PRIMARY_SUBFOLDER_NAME = ".likkho_backups";
               private static final String DECOY_SUBFOLDER_NAME = ".likkho_decoy_backups";
               private static final String PRIMARY_VAULT_FILENAME = "real_vault.db";
@@ -503,26 +540,53 @@ jobs:
               private String pendingBackupEnvelope = null;
               private String pendingVaultMode = "primary";
               private boolean isAppPasscodeProtected = false;
+              private String currentStatusBarHex = "#f8f9fa";
+              private String currentNavBarHex = "#ffffff";
+              private boolean currentDarkIconsOnLightBar = true;
+              private boolean isFullScreenEnabled = false;
               private android.view.View recentsPrivacyOverlayView = null;
 
               @Override
               public void onCreate(Bundle savedInstanceState) {
+                  // Disable Android System Dark Mode (Night Mode) override at Activity level so Likkho controls its own Light/Dark status & navigation bars
+                  androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_NO);
                   super.onCreate(savedInstanceState);
                   currentInstance = this;
 
+                  SharedPreferences initPrefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+                  currentStatusBarHex = initPrefs.getString(KEY_STATUS_BAR_HEX, "#f8f9fa");
+                  currentNavBarHex = initPrefs.getString(KEY_NAV_BAR_HEX, "#ffffff");
+                  currentDarkIconsOnLightBar = initPrefs.getBoolean(KEY_DARK_ICONS_ON_LIGHT, true);
+                  isFullScreenEnabled = initPrefs.getBoolean(KEY_FULLSCREEN_ENABLED, false);
+
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && getWindow() != null) {
+                      getWindow().getDecorView().setForceDarkAllowed(false);
+                  }
+
                   // Configure seamless Android OS Status Bar & Navigation Bar colors from the very first frame (no top/bottom mismatched gaps)
-                  applyWindowSystemBarsColor("#f8f9fa", "#ffffff", true);
+                  applyWindowSystemBarsColor(currentStatusBarHex, currentNavBarHex, currentDarkIconsOnLightBar);
+                  applyWindowFullScreenMode(isFullScreenEnabled);
 
                   // Restore persisted App Passcode Protection state immediately on launch:
                   // - If Passcode is enabled: sets FLAG_SECURE (blocks screenshots & screen recording on every page + blanks Recent Apps preview) + Android 13+ setRecentsScreenshotEnabled(false)
                   // - If Passcode is NOT enabled: clears FLAG_SECURE so screenshots & screen recording are allowed
-                  SharedPreferences initPrefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
                   isAppPasscodeProtected = initPrefs.getBoolean(KEY_PASSCODE_PROTECTED, false);
                   applyAppPasscodeProtection(isAppPasscodeProtected);
 
                   if (this.bridge != null && this.bridge.getWebView() != null) {
                       final WebView webView = this.bridge.getWebView();
-                      webView.setBackgroundColor(android.graphics.Color.WHITE);
+                      webView.setBackgroundColor(android.graphics.Color.parseColor(currentNavBarHex));
+                      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                          webView.setForceDarkAllowed(false);
+                          try {
+                              webView.getSettings().setForceDark(android.webkit.WebSettings.FORCE_DARK_OFF);
+                          } catch (Exception ignored) {}
+                      }
+                      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                          try {
+                              webView.getSettings().setAlgorithmicDarkeningAllowed(false);
+                          } catch (Exception ignored) {}
+                      }
                       webView.setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null);
                       webView.getSettings().setJavaScriptEnabled(true);
                       webView.getSettings().setDomStorageEnabled(true);
@@ -600,9 +664,18 @@ jobs:
                   super.onResume();
                   currentInstance = this;
                   hideRecentsPrivacyShield();
+                  applyWindowSystemBarsColor(currentStatusBarHex, currentNavBarHex, currentDarkIconsOnLightBar);
+                  applyWindowFullScreenMode(isFullScreenEnabled);
                   if (!MicForegroundService.isRecording && MicForegroundService.latestFinishedFilePath != null) {
                       deliverFinishedNativeRecordingIfPossible(this);
                   }
+              }
+
+              @Override
+              public void onConfigurationChanged(android.content.res.Configuration newConfig) {
+                  super.onConfigurationChanged(newConfig);
+                  applyWindowSystemBarsColor(currentStatusBarHex, currentNavBarHex, currentDarkIconsOnLightBar);
+                  applyWindowFullScreenMode(isFullScreenEnabled);
               }
 
               @Override
@@ -616,6 +689,10 @@ jobs:
               @Override
               public void onWindowFocusChanged(boolean hasFocus) {
                   super.onWindowFocusChanged(hasFocus);
+                  if (hasFocus) {
+                      applyWindowSystemBarsColor(currentStatusBarHex, currentNavBarHex, currentDarkIconsOnLightBar);
+                      applyWindowFullScreenMode(isFullScreenEnabled);
+                  }
                   if (isAppPasscodeProtected) {
                       if (!hasFocus) {
                           showRecentsPrivacyShield();
@@ -1018,19 +1095,36 @@ jobs:
               }
 
               private void applyWindowSystemBarsColor(final String statusBarHex, final String navBarHex, final boolean darkIconsOnLightBar) {
+                  currentStatusBarHex = statusBarHex != null ? statusBarHex : "#f8f9fa";
+                  currentNavBarHex = navBarHex != null ? navBarHex : "#ffffff";
+                  currentDarkIconsOnLightBar = darkIconsOnLightBar;
+                  getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                      .edit()
+                      .putString(KEY_STATUS_BAR_HEX, currentStatusBarHex)
+                      .putString(KEY_NAV_BAR_HEX, currentNavBarHex)
+                      .putBoolean(KEY_DARK_ICONS_ON_LIGHT, currentDarkIconsOnLightBar)
+                      .apply();
+
                   runOnUiThread(() -> {
                       try {
                           android.view.Window window = getWindow();
                           if (window == null) return;
-                          WindowCompat.setDecorFitsSystemWindows(window, true);
+                          android.view.View decor = window.getDecorView();
+                          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                              decor.setForceDarkAllowed(false);
+                          }
+                          WindowCompat.setDecorFitsSystemWindows(window, !isFullScreenEnabled);
                           window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS);
                           window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_TRANSLUCENT_NAVIGATION);
                           window.addFlags(android.view.WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
 
-                          int statusColor = android.graphics.Color.parseColor(statusBarHex);
-                          int navColor = android.graphics.Color.parseColor(navBarHex);
+                          int statusColor = android.graphics.Color.parseColor(currentStatusBarHex);
+                          int navColor = android.graphics.Color.parseColor(currentNavBarHex);
                           window.setStatusBarColor(statusColor);
                           window.setNavigationBarColor(navColor);
+                          window.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(navColor));
+                          decor.setBackgroundColor(navColor);
+
                           if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                               window.setNavigationBarDividerColor(navColor);
                           }
@@ -1039,13 +1133,62 @@ jobs:
                               window.setNavigationBarContrastEnforced(false);
                           }
 
-                          WindowInsetsControllerCompat controller = WindowCompat.getInsetsController(window, window.getDecorView());
+                          WindowInsetsControllerCompat controller = WindowCompat.getInsetsController(window, decor);
                           if (controller != null) {
-                              controller.setAppearanceLightStatusBars(darkIconsOnLightBar);
-                              controller.setAppearanceLightNavigationBars(darkIconsOnLightBar);
+                              controller.setAppearanceLightStatusBars(currentDarkIconsOnLightBar);
+                              controller.setAppearanceLightNavigationBars(currentDarkIconsOnLightBar);
                           }
+
+                          int sysUiVis = decor.getSystemUiVisibility();
+                          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                              if (currentDarkIconsOnLightBar) {
+                                  sysUiVis |= android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+                              } else {
+                                  sysUiVis &= ~android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+                              }
+                          }
+                          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                              if (currentDarkIconsOnLightBar) {
+                                  sysUiVis |= android.view.View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+                              } else {
+                                  sysUiVis &= ~android.view.View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+                              }
+                          }
+                          decor.setSystemUiVisibility(sysUiVis);
+
                           if (bridge != null && bridge.getWebView() != null) {
                               bridge.getWebView().setBackgroundColor(navColor);
+                          }
+                      } catch (Exception ignored) {}
+                  });
+              }
+
+              private void applyWindowFullScreenMode(final boolean enabled) {
+                  isFullScreenEnabled = enabled;
+                  getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                      .edit()
+                      .putBoolean(KEY_FULLSCREEN_ENABLED, enabled)
+                      .apply();
+                  runOnUiThread(() -> {
+                      try {
+                          android.view.Window window = getWindow();
+                          if (window == null) return;
+                          android.view.View decor = window.getDecorView();
+                          WindowCompat.setDecorFitsSystemWindows(window, !enabled);
+                          WindowInsetsControllerCompat controller = WindowCompat.getInsetsController(window, decor);
+                          if (controller != null) {
+                              if (enabled) {
+                                  controller.setSystemBarsBehavior(WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+                                  controller.hide(androidx.core.view.WindowInsetsCompat.Type.systemBars());
+                              } else {
+                                  controller.show(androidx.core.view.WindowInsetsCompat.Type.systemBars());
+                              }
+                          }
+                          if (enabled) {
+                              window.addFlags(android.view.WindowManager.LayoutParams.FLAG_FULLSCREEN);
+                          } else {
+                              window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_FULLSCREEN);
+                              applyWindowSystemBarsColor(currentStatusBarHex, currentNavBarHex, currentDarkIconsOnLightBar);
                           }
                       } catch (Exception ignored) {}
                   });
@@ -1070,6 +1213,10 @@ jobs:
                   @JavascriptInterface
                   public void setSystemBarsTheme(String statusBarHex, String navBarHex, boolean isLightIcons) {
                       applyWindowSystemBarsColor(statusBarHex, navBarHex, isLightIcons);
+                  }
+                  @JavascriptInterface
+                  public void setFullScreenMode(boolean enabled) {
+                      applyWindowFullScreenMode(enabled);
                   }
                   @JavascriptInterface
                   public void requestFilesAndMediaPermission() {

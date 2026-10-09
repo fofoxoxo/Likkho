@@ -48,6 +48,7 @@ type PageRoute = 'home' | 'workspace' | 'settings' | 'backup';
 // Primary Vault (`real_vault.db`) Storage Keys
 const STORAGE_LOGS_KEY = 'wikilog_in_app_logs_v1';
 const STORAGE_DARK_KEY = 'wikilog_dark_theme_v1';
+const STORAGE_FULLSCREEN_KEY = 'wikilog_fullscreen_mode_v1';
 const STORAGE_PIN_KEY = 'wikilog_passcode_v1';
 const STORAGE_BIO_KEY = 'wikilog_biometrics_enabled_v1';
 const STORAGE_ENC_HASH_KEY = 'wikilog_encryption_key_hash_v1';
@@ -159,6 +160,14 @@ export default function App() {
     }
   });
 
+  const [fullScreenMode, setFullScreenMode] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(STORAGE_FULLSCREEN_KEY) === 'true';
+    } catch {
+      return false;
+    }
+  });
+
   const [savedPasscode, setSavedPasscode] = useState<string | null>(() => {
     try {
       return localStorage.getItem(STORAGE_PIN_KEY) || null;
@@ -221,7 +230,7 @@ export default function App() {
   const [pendingDeleteLog, setPendingDeleteLog] = useState<DiaryLog | null>(null);
   const [pendingUnlockDiary, setPendingUnlockDiary] = useState<{
     log: DiaryLog;
-    action: 'open' | 'export';
+    action: 'open' | 'export' | 'delete';
   } | null>(null);
   const [diaryUnlockInput, setDiaryUnlockInput] = useState<string>('');
   const [diaryUnlockError, setDiaryUnlockError] = useState<string | null>(null);
@@ -352,10 +361,11 @@ export default function App() {
       });
   }, [vaultMode]);
 
-  // Sync Light & Dark Theme with DOM & Android OS Status Bar + Navigation Bar
+  // Sync Light & Dark Theme with DOM & Android OS Status Bar + Navigation Bar (even when System Dark Mode is ON)
   useEffect(() => {
     const rootEl = document.documentElement;
     const metaTheme = document.getElementById('meta-theme-color');
+    const metaScheme = document.getElementById('meta-color-scheme');
     const surfaceColor = darkMode ? '#1a1f24' : '#f8f9fa';
     const bgColor = darkMode ? '#101418' : '#ffffff';
 
@@ -365,6 +375,9 @@ export default function App() {
       rootEl.classList.remove('dark');
     }
     rootEl.style.backgroundColor = bgColor;
+    rootEl.style.colorScheme = darkMode ? 'dark' : 'light';
+    document.body.style.backgroundColor = bgColor;
+    document.body.style.colorScheme = darkMode ? 'dark' : 'light';
 
     try {
       localStorage.setItem(STORAGE_DARK_KEY, String(darkMode));
@@ -375,12 +388,64 @@ export default function App() {
     if (metaTheme) {
       metaTheme.setAttribute('content', surfaceColor);
     }
-
-    // Sync Android OS Status Bar (matches top header --wiki-surface) & Navigation Bar (matches bottom --wiki-bg)
-    if (window.LikkhoNative && typeof window.LikkhoNative.setSystemBarsTheme === 'function') {
-      window.LikkhoNative.setSystemBarsTheme(surfaceColor, bgColor, !darkMode);
+    if (metaScheme) {
+      metaScheme.setAttribute('content', darkMode ? 'dark' : 'light');
     }
-  }, [darkMode]);
+
+    const syncNativeBars = () => {
+      if (
+        window.LikkhoNative &&
+        typeof window.LikkhoNative.setSystemBarsTheme === 'function'
+      ) {
+        window.LikkhoNative.setSystemBarsTheme(surfaceColor, bgColor, !darkMode);
+      }
+      if (
+        window.LikkhoNative &&
+        typeof window.LikkhoNative.setFullScreenMode === 'function'
+      ) {
+        window.LikkhoNative.setFullScreenMode(fullScreenMode);
+      }
+    };
+
+    syncNativeBars();
+    window.addEventListener('focus', syncNativeBars);
+    document.addEventListener('visibilitychange', syncNativeBars);
+    return () => {
+      window.removeEventListener('focus', syncNativeBars);
+      document.removeEventListener('visibilitychange', syncNativeBars);
+    };
+  }, [darkMode, fullScreenMode]);
+
+  const handleToggleFullScreenMode = async () => {
+    const next = !fullScreenMode;
+    setFullScreenMode(next);
+    try {
+      localStorage.setItem(STORAGE_FULLSCREEN_KEY, String(next));
+    } catch {
+      // ignore
+    }
+
+    if (
+      window.LikkhoNative &&
+      typeof window.LikkhoNative.setFullScreenMode === 'function'
+    ) {
+      window.LikkhoNative.setFullScreenMode(next);
+    }
+
+    try {
+      if (next) {
+        if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
+          await document.documentElement.requestFullscreen();
+        }
+      } else {
+        if (document.fullscreenElement && document.exitFullscreen) {
+          await document.exitFullscreen();
+        }
+      }
+    } catch {
+      // ignore browser fullscreen restriction when inside native WebView or iframe
+    }
+  };
 
   // Save in-app logs + media to isolated IndexedDB and localStorage for the active vault
   useEffect(() => {
@@ -559,13 +624,18 @@ export default function App() {
     }
   };
 
-  // Request confirmation popup before deleting ANY entry
+  // Request confirmation popup before deleting ANY entry (Locked diaries MUST verify diary passcode first!)
   const requestDeleteLogConfirmation = (id: string) => {
     setOpenMenuLogId(null);
     const target = logs.find((l) => l.id === id) || editingLog;
-    if (target) {
-      setPendingDeleteLog(target);
+    if (!target) return;
+    if (target.diaryLockPin) {
+      setPendingUnlockDiary({ log: target, action: 'delete' });
+      setDiaryUnlockInput('');
+      setDiaryUnlockError(null);
+      return;
     }
+    setPendingDeleteLog(target);
   };
 
   const confirmDeleteLog = () => {
@@ -703,6 +773,8 @@ export default function App() {
           vaultMode={vaultMode}
           darkMode={darkMode}
           onToggleDarkMode={() => setDarkMode((d) => !d)}
+          fullScreenMode={fullScreenMode}
+          onToggleFullScreenMode={handleToggleFullScreenMode}
           savedPasscode={vaultMode === 'decoy' ? secondaryPasscode : savedPasscode}
           onUpdatePasscode={(pin) => {
             if (vaultMode === 'decoy') {
@@ -1125,8 +1197,10 @@ export default function App() {
                   setDiaryUnlockError(null);
                   if (act === 'open') {
                     navigateTo('workspace', targetLog);
-                  } else {
+                  } else if (act === 'export') {
                     setExportingLog(targetLog);
+                  } else if (act === 'delete') {
+                    setPendingDeleteLog(targetLog);
                   }
                 } else {
                   const fail = recordPasscodeFailure();

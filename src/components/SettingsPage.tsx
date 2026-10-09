@@ -13,6 +13,8 @@ import {
   BookOpenCheck,
   Search,
   X,
+  Maximize2,
+  Minimize2,
 } from 'lucide-react';
 import {
   AudioFormatOption,
@@ -30,6 +32,8 @@ interface SettingsPageProps {
   vaultMode: VaultMode;
   darkMode: boolean;
   onToggleDarkMode: () => void;
+  fullScreenMode?: boolean;
+  onToggleFullScreenMode?: () => void;
   savedPasscode: string | null;
   onUpdatePasscode: (newPasscode: string | null) => boolean;
   secondaryPasscode: string | null;
@@ -72,6 +76,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   vaultMode,
   darkMode,
   onToggleDarkMode,
+  fullScreenMode = false,
+  onToggleFullScreenMode,
   savedPasscode,
   onUpdatePasscode,
   secondaryPasscode,
@@ -472,6 +478,45 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               <span className="h-4 w-4 rounded-full bg-white shadow-2xs" />
             </div>
           </button>
+
+          {/* 1b. Toggle Full Screen Mode */}
+          {onToggleFullScreenMode && (
+            <button
+              type="button"
+              onClick={onToggleFullScreenMode}
+              className="flex w-full items-center justify-between px-4 py-4 text-left hover:bg-[var(--wiki-surface)] transition-colors"
+            >
+              <div className="flex items-center gap-3.5">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center border border-[var(--wiki-border)] bg-[var(--wiki-surface)]">
+                  {fullScreenMode ? (
+                    <Minimize2 className="h-5 w-5 text-[#3366cc]" />
+                  ) : (
+                    <Maximize2 className="h-5 w-5 text-[#3366cc]" />
+                  )}
+                </div>
+                <div>
+                  <div className="font-wiki-serif text-base font-bold">
+                    Full Screen Mode
+                  </div>
+                  <div className="text-xs text-[var(--wiki-muted)]">
+                    {fullScreenMode
+                      ? 'Immersive full screen active'
+                      : 'Hide status & navigation bars'}
+                  </div>
+                </div>
+              </div>
+
+              <div
+                className={`flex h-6 w-11 shrink-0 items-center rounded-full border p-0.5 transition-colors ${
+                  fullScreenMode
+                    ? 'border-[#3366cc] bg-[#3366cc] justify-end'
+                    : 'border-[var(--wiki-border)] bg-[var(--wiki-surface)] justify-start'
+                }`}
+              >
+                <span className="h-4 w-4 rounded-full bg-white shadow-2xs" />
+              </div>
+            </button>
+          )}
 
           {/* 2. Set Passcode (10-second long press in Primary when Primary Passcode is set opens identical Set Passcode popup for Secondary Vault) */}
           <button
