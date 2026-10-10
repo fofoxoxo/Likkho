@@ -11,6 +11,114 @@ export const LIKKHO_GITHUB_DOWNLOAD_URL = 'https://github.com/Likkho/Likkho/rele
 export const LIKKHO_SHARE_MESSAGE_TEMPLATE = (heading: string, githubUrl: string) =>
   `📖 Shared a diary entry "${heading}" from Likkho (लिक्खो).\n\nOpen the attached .likkho file in the Likkho app to read the text, images, and audio recordings in their exact order.\n\nDownload Likkho APK from GitHub:\n${githubUrl}`;
 
+// ==================== Universal Shared Diary Encryption (Isolated from Backup & Restore) ====================
+// All `.likkho` shared diary archives are encrypted with an app-wide universal AES-256-GCM key
+// so that shared `.likkho` files are readable exclusively inside the Likkho app and cannot be
+// inspected as plain ZIP/JSON/Markdown by external file viewers.
+// IMPORTANT: This universal key uses its own isolated domain KDF & binary magic header and has
+// ZERO interaction with or effect on the user's personal Backup & Restore encryption key (`cryptoVault.ts`).
+const LIKKHO_UNIVERSAL_SHARE_MAGIC = new Uint8Array([
+  0x4c, 0x4b, 0x53, 0x48, 0x52, 0x45, 0x30, 0x31, // "LKSHRE01" (8 bytes)
+]);
+const LIKKHO_UNIVERSAL_SHARE_KEY_SECRET =
+  'LIKKHO_UNIVERSAL_SHARED_DIARY_CONTAINER_KEY_2026_V1::9f4b2c8e7a1d6f305e8c2a4b7d9e1f6a';
+const LIKKHO_UNIVERSAL_SHARE_KDF_CONTEXT =
+  'LIKKHO_SHARED_ARCHIVE_UNIVERSAL_DOMAIN_ISOLATION_SALT_V1::';
+
+async function deriveUniversalShareAesKey(salt: Uint8Array): Promise<CryptoKey> {
+  const enc = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    enc.encode(`${LIKKHO_UNIVERSAL_SHARE_KDF_CONTEXT}${LIKKHO_UNIVERSAL_SHARE_KEY_SECRET}`),
+    { name: 'PBKDF2' },
+    false,
+    ['deriveKey']
+  );
+
+  return crypto.subtle.deriveKey(
+    {
+      name: 'PBKDF2',
+      salt,
+      iterations: 64000,
+      hash: 'SHA-256',
+    },
+    keyMaterial,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt']
+  );
+}
+
+/**
+ * Encrypts raw `.likkho` archive bytes with Likkho's universal shared-diary key using AES-256-GCM.
+ * Binary layout:
+ * - Bytes 0..7   (8 bytes) : Magic header `"LKSHRE01"`
+ * - Bytes 8..23  (16 bytes): Random PBKDF2 Salt
+ * - Bytes 24..35 (12 bytes): Random AES-GCM IV
+ * - Bytes 36..N            : AES-256-GCM Ciphertext + 128-bit Authentication Tag
+ */
+async function encryptWithUniversalLikkhoShareKey(
+  plainArchiveBytes: Uint8Array
+): Promise<Uint8Array> {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const aesKey = await deriveUniversalShareAesKey(salt);
+
+  const encryptedBuffer = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv, tagLength: 128 },
+    aesKey,
+    plainArchiveBytes
+  );
+  const cipherBytes = new Uint8Array(encryptedBuffer);
+
+  const out = new Uint8Array(
+    LIKKHO_UNIVERSAL_SHARE_MAGIC.length + salt.length + iv.length + cipherBytes.length
+  );
+  let offset = 0;
+  out.set(LIKKHO_UNIVERSAL_SHARE_MAGIC, offset);
+  offset += LIKKHO_UNIVERSAL_SHARE_MAGIC.length;
+  out.set(salt, offset);
+  offset += salt.length;
+  out.set(iv, offset);
+  offset += iv.length;
+  out.set(cipherBytes, offset);
+
+  return out;
+}
+
+function hasUniversalLikkhoShareMagic(bytes: Uint8Array): boolean {
+  if (bytes.length < LIKKHO_UNIVERSAL_SHARE_MAGIC.length + 16 + 12 + 16) {
+    return false;
+  }
+  for (let i = 0; i < LIKKHO_UNIVERSAL_SHARE_MAGIC.length; i++) {
+    if (bytes[i] !== LIKKHO_UNIVERSAL_SHARE_MAGIC[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+async function decryptWithUniversalLikkhoShareKey(
+  encryptedBytes: Uint8Array
+): Promise<Uint8Array> {
+  const magicLen = LIKKHO_UNIVERSAL_SHARE_MAGIC.length;
+  const salt = encryptedBytes.slice(magicLen, magicLen + 16);
+  const iv = encryptedBytes.slice(magicLen + 16, magicLen + 28);
+  const cipherBytes = encryptedBytes.slice(magicLen + 28);
+
+  const aesKey = await deriveUniversalShareAesKey(salt);
+  try {
+    const decryptedBuffer = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv, tagLength: 128 },
+      aesKey,
+      cipherBytes
+    );
+    return new Uint8Array(decryptedBuffer);
+  } catch {
+    throw new Error('This .likkho file could not be decrypted by Likkho.');
+  }
+}
+
 interface LikkhoArchiveManifest {
   magic: 'LIKKHO_SHARED_DIARY_ARCHIVE_V1';
   formatVersion: 1;
@@ -426,7 +534,13 @@ export async function packDiaryToLikkhoBlob(
   });
 
   const zipBlob = buildZipArchiveBlob(zipEntries);
-  const likkhoBlob = new Blob([zipBlob], {
+  const plainZipBytes = new Uint8Array(await zipBlob.arrayBuffer());
+
+  // Encrypt the entire `.likkho` container with Likkho's universal shared-diary AES-256-GCM key
+  // so shared `.likkho` files are readable ONLY by the Likkho app (isolated from user's Backup & Restore key).
+  const encryptedLikkhoBytes = await encryptWithUniversalLikkhoShareKey(plainZipBytes);
+
+  const likkhoBlob = new Blob([encryptedLikkhoBytes], {
     type: 'application/x-likkho',
   });
 
@@ -444,8 +558,15 @@ export async function packDiaryToLikkhoBlob(
 export async function unpackLikkhoArchiveBuffer(
   buffer: ArrayBuffer
 ): Promise<DiaryLog> {
-  const view = new DataView(buffer);
-  const bytes = new Uint8Array(buffer);
+  const incomingBytes = new Uint8Array(buffer);
+
+  // If the `.likkho` file is encrypted with Likkho's universal shared-diary key ("LKSHRE01"),
+  // decrypt it first before reading the internal container.
+  const bytes = hasUniversalLikkhoShareMagic(incomingBytes)
+    ? await decryptWithUniversalLikkhoShareKey(incomingBytes)
+    : incomingBytes;
+
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const decoder = new TextDecoder('utf-8');
   const fileMap = new Map<string, Uint8Array>();
 
