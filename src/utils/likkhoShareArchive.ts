@@ -427,7 +427,7 @@ export async function packDiaryToLikkhoBlob(
 
   const zipBlob = buildZipArchiveBlob(zipEntries);
   const likkhoBlob = new Blob([zipBlob], {
-    type: 'application/octet-stream',
+    type: 'application/x-likkho',
   });
 
   const slug = sanitizeArchiveSlug(log.heading, 'Likkho_Diary');
@@ -696,7 +696,7 @@ export async function shareDiaryAsLikkhoArchive(log: DiaryLog): Promise<string> 
   // 2. Web Share API Level 2 (if running in a mobile browser that supports sharing files)
   try {
     const file = new File([blob], filename, {
-      type: 'application/octet-stream',
+      type: 'application/x-likkho',
     });
     if (
       navigator.share &&
@@ -732,7 +732,7 @@ export async function shareDiaryAsLikkhoArchive(log: DiaryLog): Promise<string> 
     window.LikkhoNative.saveExportedFile(
       base64Data,
       filename,
-      'application/octet-stream'
+      'application/x-likkho'
     );
     return `Saved "${filename}" to Downloads/Likkho (Share message copied)`;
   }

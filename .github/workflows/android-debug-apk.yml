@@ -80,7 +80,7 @@ jobs:
           sed -i 's/android:name=".MainActivity"/android:name=".MainActivity" android:windowSoftInputMode="adjustResize"/' "$MANIFEST" || true
 
           if ! grep -q "pathSuffix=\"\.likkho\"" "$MANIFEST"; then
-            sed -i 's/<\/activity>/    <intent-filter>\n                <action android:name="android.intent.action.VIEW" \/>\n                <action android:name="android.intent.action.EDIT" \/>\n                <category android:name="android.intent.category.DEFAULT" \/>\n                <category android:name="android.intent.category.BROWSABLE" \/>\n                <data android:scheme="content" \/>\n                <data android:scheme="file" \/>\n                <data android:mimeType="*\/*" \/>\n                <data android:host="*" \/>\n                <data android:pathSuffix=".likkho" \/>\n                <data android:pathPattern=".*\\.likkho" \/>\n                <data android:pathPattern=".*\\..*\\.likkho" \/>\n                <data android:pathPattern=".*\\..*\\..*\\.likkho" \/>\n                <data android:pathPattern=".*\\..*\\..*\\..*\\.likkho" \/>\n            <\/intent-filter>\n            <intent-filter>\n                <action android:name="android.intent.action.VIEW" \/>\n                <category android:name="android.intent.category.DEFAULT" \/>\n                <category android:name="android.intent.category.BROWSABLE" \/>\n                <data android:scheme="content" \/>\n                <data android:scheme="file" \/>\n                <data android:mimeType="application\/octet-stream" \/>\n                <data android:mimeType="application\/zip" \/>\n                <data android:mimeType="application\/vnd.likkho.diary" \/>\n                <data android:pathSuffix=".likkho" \/>\n                <data android:pathPattern=".*\\.likkho" \/>\n            <\/intent-filter>\n        <\/activity>/' "$MANIFEST"
+            sed -i 's/<\/activity>/    <intent-filter>\n                <action android:name="android.intent.action.VIEW" \/>\n                <action android:name="android.intent.action.EDIT" \/>\n                <category android:name="android.intent.category.DEFAULT" \/>\n                <category android:name="android.intent.category.BROWSABLE" \/>\n                <data android:scheme="content" \/>\n                <data android:scheme="file" \/>\n                <data android:mimeType="*\/*" \/>\n                <data android:host="*" \/>\n                <data android:pathSuffix=".likkho" \/>\n                <data android:pathPattern=".*\\.likkho" \/>\n                <data android:pathPattern=".*\\..*\\.likkho" \/>\n                <data android:pathPattern=".*\\..*\\..*\\.likkho" \/>\n                <data android:pathPattern=".*\\..*\\..*\\..*\\.likkho" \/>\n            <\/intent-filter>\n            <intent-filter>\n                <action android:name="android.intent.action.VIEW" \/>\n                <action android:name="android.intent.action.EDIT" \/>\n                <category android:name="android.intent.category.DEFAULT" \/>\n                <category android:name="android.intent.category.BROWSABLE" \/>\n                <data android:scheme="content" \/>\n                <data android:scheme="file" \/>\n                <data android:mimeType="application\/x-likkho" \/>\n                <data android:mimeType="application\/vnd.likkho.diary" \/>\n            <\/intent-filter>\n            <intent-filter>\n                <action android:name="android.intent.action.VIEW" \/>\n                <category android:name="android.intent.category.DEFAULT" \/>\n                <category android:name="android.intent.category.BROWSABLE" \/>\n                <data android:scheme="content" \/>\n                <data android:scheme="file" \/>\n                <data android:mimeType="application\/x-likkho" \/>\n                <data android:mimeType="application\/octet-stream" \/>\n                <data android:mimeType="application\/zip" \/>\n                <data android:mimeType="application\/vnd.likkho.diary" \/>\n                <data android:pathSuffix=".likkho" \/>\n                <data android:pathPattern=".*\\.likkho" \/>\n            <\/intent-filter>\n        <\/activity>/' "$MANIFEST"
           fi
 
           mkdir -p android/app/src/main/res/xml
@@ -1593,17 +1593,34 @@ jobs:
                               Uri contentUri = androidx.core.content.FileProvider.getUriForFile(
                                   MainActivity.this,
                                   getPackageName() + ".fileprovider",
-                                  outFile
+                                  outFile,
+                                  safeFilename
                               );
 
+                              if (shareMessage != null && !shareMessage.isEmpty()) {
+                                  try {
+                                      android.content.ClipboardManager cm = (android.content.ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+                                      if (cm != null) {
+                                          cm.setPrimaryClip(android.content.ClipData.newPlainText("Likkho Share Message", shareMessage));
+                                      }
+                                  } catch (Exception ignored) {}
+                              }
+
                               Intent shareIntent = new Intent(Intent.ACTION_SEND);
-                              shareIntent.setType("application/octet-stream");
+                              shareIntent.setType("application/x-likkho");
                               shareIntent.putExtra(Intent.EXTRA_STREAM, contentUri);
                               if (shareMessage != null && !shareMessage.isEmpty()) {
                                   shareIntent.putExtra(Intent.EXTRA_TEXT, shareMessage);
+                                  shareIntent.putExtra("sms_body", shareMessage);
                               }
+                              shareIntent.putExtra(Intent.EXTRA_TITLE, safeFilename);
                               shareIntent.putExtra(Intent.EXTRA_SUBJECT, safeFilename);
-                              shareIntent.setClipData(android.content.ClipData.newRawUri(safeFilename, contentUri));
+                              android.content.ClipData clipData = new android.content.ClipData(
+                                  safeFilename,
+                                  new String[]{"application/x-likkho", "text/plain"},
+                                  new android.content.ClipData.Item(shareMessage != null ? shareMessage : "", null, contentUri)
+                              );
+                              shareIntent.setClipData(clipData);
                               shareIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
 
                               Intent chooser = Intent.createChooser(shareIntent, "Share Likkho Diary (.likkho)");
