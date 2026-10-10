@@ -76,8 +76,19 @@ jobs:
             sed -i 's/<application/<uses-permission android:name="android.permission.POST_NOTIFICATIONS" \/>\n    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" \/>\n    <uses-permission android:name="android.permission.USE_EXACT_ALARM" \/>\n    <uses-permission android:name="android.permission.VIBRATE" \/>\n    <uses-permission android:name="android.permission.WAKE_LOCK" \/>\n    <uses-permission android:name="android.permission.USE_BIOMETRIC" \/>\n    <uses-permission android:name="android.permission.USE_FINGERPRINT" \/>\n    <uses-permission android:name="android.permission.RECORD_AUDIO" \/>\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" \/>\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" \/>\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" \/>\n    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" \/>\n    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" \/>\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" \/>\n    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" \/>\n    <application android:hardwareAccelerated="true"/' "$MANIFEST"
           fi
 
-          # Ensure MainActivity uses adjustResize for smooth keyboard and toolbar docking and handles uiMode changes without force-dark status bar resets
+          # Ensure MainActivity uses adjustResize for smooth keyboard and toolbar docking, handles uiMode changes without force-dark status bar resets, and registers custom intent filters for opening .likkho diary archives
           sed -i 's/android:name=".MainActivity"/android:name=".MainActivity" android:windowSoftInputMode="adjustResize"/' "$MANIFEST" || true
+
+          if ! grep -q "pathSuffix=\"\.likkho\"" "$MANIFEST"; then
+            sed -i 's/<\/activity>/    <intent-filter>\n                <action android:name="android.intent.action.VIEW" \/>\n                <action android:name="android.intent.action.EDIT" \/>\n                <category android:name="android.intent.category.DEFAULT" \/>\n                <category android:name="android.intent.category.BROWSABLE" \/>\n                <data android:scheme="content" \/>\n                <data android:scheme="file" \/>\n                <data android:mimeType="*\/*" \/>\n                <data android:host="*" \/>\n                <data android:pathSuffix=".likkho" \/>\n                <data android:pathPattern=".*\\.likkho" \/>\n                <data android:pathPattern=".*\\..*\\.likkho" \/>\n                <data android:pathPattern=".*\\..*\\..*\\.likkho" \/>\n                <data android:pathPattern=".*\\..*\\..*\\..*\\.likkho" \/>\n            <\/intent-filter>\n            <intent-filter>\n                <action android:name="android.intent.action.VIEW" \/>\n                <category android:name="android.intent.category.DEFAULT" \/>\n                <category android:name="android.intent.category.BROWSABLE" \/>\n                <data android:scheme="content" \/>\n                <data android:scheme="file" \/>\n                <data android:mimeType="application\/octet-stream" \/>\n                <data android:mimeType="application\/zip" \/>\n                <data android:mimeType="application\/vnd.likkho.diary" \/>\n                <data android:pathSuffix=".likkho" \/>\n                <data android:pathPattern=".*\\.likkho" \/>\n            <\/intent-filter>\n        <\/activity>/' "$MANIFEST"
+          fi
+
+          mkdir -p android/app/src/main/res/xml
+          if [ -f android/app/src/main/res/xml/file_paths.xml ]; then
+            if ! grep -q "likkho_shared_cache" android/app/src/main/res/xml/file_paths.xml; then
+              sed -i 's/<\/paths>/    <cache-path name="likkho_shared_cache" path="." \/>\n<\/paths>/' android/app/src/main/res/xml/file_paths.xml || true
+            fi
+          fi
 
           # Disable Android System Force-Dark on Status Bar, Navigation Bar & Window when System Dark Mode is ON while Likkho is in Light Mode, and allow ShortEdges cutout for Full Screen mode
           rm -rf android/app/src/main/res/values-night android/app/src/main/res/values-night-v* || true
@@ -558,6 +569,7 @@ jobs:
               private boolean currentDarkIconsOnLightBar = true;
               private boolean isFullScreenEnabled = false;
               private android.view.View recentsPrivacyOverlayView = null;
+              private volatile String pendingIncomingLikkhoBase64 = null;
 
               @Override
               public void onCreate(Bundle savedInstanceState) {
@@ -612,6 +624,9 @@ jobs:
 
                       // Defer notification permission check until after initial render so app opening is 100% smooth
                       webView.postDelayed(this::requestNotificationPermissionOnStart, 900);
+
+                      // Check if Likkho was launched by tapping a .likkho file in WhatsApp / Telegram / File Manager
+                      handleIncomingLikkhoIntent(getIntent());
 
                       webView.setWebChromeClient(new WebChromeClient() {
                           @Override
@@ -674,6 +689,63 @@ jobs:
                           }
                       }
                   });
+              }
+
+              @Override
+              protected void onNewIntent(Intent intent) {
+                  super.onNewIntent(intent);
+                  setIntent(intent);
+                  handleIncomingLikkhoIntent(intent);
+              }
+
+              private void handleIncomingLikkhoIntent(Intent intent) {
+                  if (intent == null) return;
+                  String action = intent.getAction();
+                  if (!Intent.ACTION_VIEW.equals(action) && !Intent.ACTION_EDIT.equals(action) && !Intent.ACTION_SEND.equals(action)) {
+                      return;
+                  }
+                  Uri dataUri = intent.getData();
+                  if (dataUri == null && Intent.ACTION_SEND.equals(action)) {
+                      dataUri = intent.getParcelableExtra(Intent.EXTRA_STREAM);
+                  }
+                  if (dataUri == null) return;
+
+                  final Uri targetUri = dataUri;
+                  new Thread(() -> {
+                      try (InputStream is = getContentResolver().openInputStream(targetUri)) {
+                          if (is == null) return;
+                          ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                          byte[] buf = new byte[8192];
+                          int r;
+                          while ((r = is.read(buf)) != -1) {
+                              baos.write(buf, 0, r);
+                          }
+                          byte[] rawBytes = baos.toByteArray();
+                          if (rawBytes.length == 0) return;
+
+                          final String b64 = Base64.encodeToString(rawBytes, Base64.NO_WRAP);
+                          pendingIncomingLikkhoBase64 = b64;
+                          intent.setData(null);
+
+                          runOnUiThread(() -> {
+                              if (bridge != null && bridge.getWebView() != null) {
+                                  bridge.getWebView().postDelayed(() -> {
+                                      if (pendingIncomingLikkhoBase64 != null && bridge != null && bridge.getWebView() != null) {
+                                          final String payloadToDeliver = pendingIncomingLikkhoBase64;
+                                          bridge.getWebView().evaluateJavascript(
+                                              "(function(){ if(window.__onLikkhoIncomingArchive){ window.__onLikkhoIncomingArchive('" + payloadToDeliver + "'); return 'DELIVERED'; } return 'PENDING'; })()",
+                                              val -> {
+                                                  if (val != null && val.contains("DELIVERED")) {
+                                                      pendingIncomingLikkhoBase64 = null;
+                                                  }
+                                              }
+                                          );
+                                      }
+                                  }, 450);
+                              }
+                          });
+                      } catch (Exception ignored) {}
+                  }).start();
               }
 
               @Override
@@ -1492,6 +1564,63 @@ jobs:
                           runOnUiThread(() -> Toast.makeText(MainActivity.this, "Export error: " + e.getMessage(), Toast.LENGTH_LONG).show());
                       }
                   }
+
+                  @JavascriptInterface
+                  public String consumePendingIncomingLikkhoArchive() {
+                      String data = pendingIncomingLikkhoBase64;
+                      pendingIncomingLikkhoBase64 = null;
+                      return data != null ? data : "";
+                  }
+
+                  @JavascriptInterface
+                  public void shareLikkhoDiaryArchive(String base64Data, String filename, String shareMessage) {
+                      isSystemFilePickerOpen = true;
+                      runOnUiThread(() -> {
+                          try {
+                              byte[] bytes = Base64.decode(base64Data, Base64.DEFAULT);
+                              String safeFilename = (filename != null && !filename.trim().isEmpty()) ? filename.trim() : "Diary.likkho";
+                              if (!safeFilename.toLowerCase().endsWith(".likkho")) {
+                                  safeFilename = safeFilename + ".likkho";
+                              }
+                              File sharedDir = new File(getCacheDir(), "shared_likkho");
+                              if (!sharedDir.exists()) sharedDir.mkdirs();
+                              File outFile = new File(sharedDir, safeFilename);
+                              try (FileOutputStream fos = new FileOutputStream(outFile)) {
+                                  fos.write(bytes);
+                                  fos.flush();
+                              }
+
+                              Uri contentUri = androidx.core.content.FileProvider.getUriForFile(
+                                  MainActivity.this,
+                                  getPackageName() + ".fileprovider",
+                                  outFile
+                              );
+
+                              Intent shareIntent = new Intent(Intent.ACTION_SEND);
+                              shareIntent.setType("application/octet-stream");
+                              shareIntent.putExtra(Intent.EXTRA_STREAM, contentUri);
+                              if (shareMessage != null && !shareMessage.isEmpty()) {
+                                  shareIntent.putExtra(Intent.EXTRA_TEXT, shareMessage);
+                              }
+                              shareIntent.putExtra(Intent.EXTRA_SUBJECT, safeFilename);
+                              shareIntent.setClipData(android.content.ClipData.newRawUri(safeFilename, contentUri));
+                              shareIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+
+                              Intent chooser = Intent.createChooser(shareIntent, "Share Likkho Diary (.likkho)");
+                              chooser.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                              startActivity(chooser);
+
+                              if (bridge != null && bridge.getWebView() != null) {
+                                  bridge.getWebView().postDelayed(() -> isSystemFilePickerOpen = false, 3000);
+                              } else {
+                                  isSystemFilePickerOpen = false;
+                              }
+                          } catch (Exception e) {
+                              isSystemFilePickerOpen = false;
+                              Toast.makeText(MainActivity.this, "Share error: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                          }
+                      });
+                  }
               }
 
               @Override
@@ -1570,26 +1699,16 @@ jobs:
           }
           EOF
 
-      - name: Assemble Signed Release APK & Debug APK
+      - name: Assemble Debug APK
         working-directory: ./android
-        env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           chmod +x gradlew
-          if [ -n "$KEYSTORE_BASE64" ]; then
-            ./gradlew assembleRelease
-            mv app/build/outputs/apk/release/app-release.apk app/build/outputs/apk/release/likkho-release.apk
-          else
-            ./gradlew assembleDebug
-            cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/likkho-release.apk
-          fi
+          ./gradlew assembleDebug
+          cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/likkho-debug.apk
 
-      - name: Upload Signed Release APK Artifact
+      - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: likkho-release-apk
-          path: android/app/build/outputs/apk/*/likkho-release.apk
+          name: likkho-debug-apk
+          path: android/app/build/outputs/apk/debug/likkho-debug.apk
           retention-days: 30

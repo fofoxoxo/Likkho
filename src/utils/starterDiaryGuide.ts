@@ -78,15 +78,17 @@ export function buildWelcomeStarterLogs(): DiaryLog[] {
   <li><strong>व्यक्तिगत डायरी लॉक:</strong> आप किसी विशेष डायरी पर अलग पासकोड भी लगा सकते हैं। लॉक की गई डायरी को बिना पासवर्ड के न तो खोला जा सकता है, न एक्सपोर्ट किया जा सकता है और न ही डिलीट किया जा सकता है।</li>
 </ul>
 
-<h2>9. Multi-Page A4 PDF Export, Multi-Format Import/Export, Reminders &amp; Encrypted Backup</h2>
+<h2>9. Offline .likkho Diary Sharing, Multi-Page A4 PDF Export &amp; Encrypted Backup</h2>
 <p><strong>English:</strong></p>
 <ul>
+  <li><strong>Offline .likkho Diary Sharing:</strong> From the three-dots menu on any diary entry on the homepage, select "Share (.likkho)" to pack your text, Markdown/HTML formatting, inline &amp; floating images, and audio recordings into a single compressed <code>.likkho</code> archive file. When shared via WhatsApp or Telegram, a message containing the GitHub download link for Likkho is automatically attached. Tapping a <code>.likkho</code> file on a device with Likkho installed opens the app via Android custom intent detection and renders the text, images, and audio players in their exact order. If a locked diary is shared, the recipient receives it in its locked state.</li>
   <li><strong>Multi-Page A4 PDF Export:</strong> Exporting an entry as a PDF paginates the document into standard A4 pages so external PDF viewers read it seamlessly. Each A4 page displays a single unified canvas background image without breaking into blocks, and text lines are cleanly paginated so no line is ever sliced across two pages.</li>
   <li><strong>10 Export Formats &amp; Document Import:</strong> Entries can be exported in 10 formats (<code>.pdf</code>, <code>.docx</code>, <code>.html</code>, <code>.md</code>, <code>.txt</code>, <code>.rtf</code>, <code>.json</code>, <code>.csv</code>, <code>.tsv</code>, <code>.xml</code>), and external documents can be imported directly into the canvas.</li>
   <li><strong>Audio Recording Settings, Reminders &amp; Full Screen Mode:</strong> Configure recording format (<code>.wav</code>, <code>.flac</code>, <code>.m4a</code>, <code>.aac</code>, <code>.mp3</code>, <code>.ogg</code>, <code>.webm</code>), sample rate, and bitrate via the Settings pop-up, schedule exact date and time reminders, toggle immersive Full Screen Mode, and create AES-256-GCM encrypted backups or export/clear all data from the Legal &amp; Data Management section in Settings.</li>
 </ul>
 <p><strong>हिन्दी:</strong></p>
 <ul>
+  <li><strong>ऑफ़लाइन <code>.likkho</code> डायरी शेयरिंग:</strong> होमपेज पर किसी भी डायरी के थ्री-डॉट्स मेनू में दिए गए "Share (.likkho)" विकल्प से आप अपने टेक्स्ट, फ़ॉर्मेटिंग, इमेजेज़ और ऑडियो रिकॉर्डिंग्स को एक सिंगल कम्प्रेस्ड <code>.likkho</code> फ़ाइल में पैक करके WhatsApp या Telegram पर भेज सकते हैं, जिसके साथ ऐप डाउनलोड करने की GitHub लिंक वाला संदेश अपने आप जुड़ जाता है। सामने वाले के फ़ोन में ऐप इंस्टॉल होने पर फ़ाइल पर क्लिक करते ही कस्टम इंटेंट सिस्टम लिक्खो ऐप को खोलकर टेक्स्ट, इमेज और ऑडियो प्लेयर को बिल्कुल उसी क्रम में रेंडर कर देता है। यदि आप लॉक की गई डायरी शेयर करते हैं, तो सामने वाले को भी वह लॉक ही प्राप्त होगी।</li>
   <li><strong>मल्टी-पेज A4 PDF एक्सपोर्ट:</strong> किसी डायरी को PDF में एक्सपोर्ट करने पर वह मानक A4 पेजों में विभाजित होती है, जिसमें हर पेज पर एकसमान कैनवास बैकग्राउंड रहता है और कोई भी पंक्ति दो पेजों के बीच आधी नहीं कटती।</li>
   <li><strong>10 एक्सपोर्ट फ़ॉर्मेट और डॉक्यूमेंट इम्पोर्ट:</strong> आप अपनी डायरी को 10 अलग-अलग फ़ॉर्मेट में एक्सपोर्ट कर सकते हैं और बाहरी फ़ाइलों को कैनवास में इम्पोर्ट कर सकते हैं।</li>
   <li><strong>ऑडियो सेटिंग्स, रिमाइंडर, फुल स्क्रीन और डेटा प्रबंधन:</strong> Settings से ऑडियो रिकॉर्डिंग का फ़ॉर्मेट व बिटरेट चुनें, फुल स्क्रीन मोड ऑन/ऑफ करें, डायरी पर अलार्म रिमाइंडर लगाएँ, AES-256-GCM एन्क्रिप्टेड बैकअप बनाएँ, या Settings के Legal &amp; Data Notice पेज से अपना सारा डेटा <code>.zip</code> फ़ाइल में एक्सपोर्ट या क्लियर करें।</li>
@@ -99,7 +101,7 @@ export function buildWelcomeStarterLogs(): DiaryLog[] {
       heading: 'Likkho (लिक्खो) — Official Feature Guide & Documentation',
       contentHtml,
       plainPreview:
-        'Official bilingual (English & Hindi) documentation explaining all features of Likkho: Rich Canvas, LaTeX Math, Wikipedia, 6-Category Word Analysis, Dual-Vault Security, and A4 PDF Export.',
+        'Official bilingual (English & Hindi) documentation explaining all features of Likkho: Rich Canvas, LaTeX Math, Wikipedia, 6-Category Word Analysis, Offline .likkho Sharing, Dual-Vault Security, and A4 PDF Export.',
       pfpDataUrl: createStarterPfpSvgDataUrl(),
       createdAt: now,
       updatedAt: now,

@@ -17,6 +17,7 @@ import {
   Loader2,
   AlertTriangle,
   KeyRound,
+  Share2,
 } from 'lucide-react';
 import {
   CustomFontItem,
@@ -47,6 +48,10 @@ import { SettingsPage } from './components/SettingsPage';
 import { BackupRestorePage } from './components/BackupRestorePage';
 import { PasscodeScreen } from './components/PasscodeScreen';
 import { buildWelcomeStarterLogs } from './utils/starterDiaryGuide';
+import {
+  shareDiaryAsLikkhoArchive,
+  unpackLikkhoBase64Payload,
+} from './utils/likkhoShareArchive';
 
 type PageRoute = 'home' | 'workspace' | 'settings' | 'backup';
 
@@ -245,6 +250,7 @@ export default function App() {
   const [diaryCooldownSec, setDiaryCooldownSec] = useState<number>(() =>
     getRemainingPasscodeCooldownSeconds()
   );
+  const pendingOpenedSharedLogRef = useRef<DiaryLog | null>(null);
 
   // Active ringing Android notification alert banner
   const [ringingAlert, setRingingAlert] = useState<{
@@ -687,6 +693,93 @@ export default function App() {
     );
     setOpenMenuLogId(null);
   };
+
+  // Share a diary entry as a compressed .likkho archive file (with GitHub download link message).
+  // If the diary is locked, it is shared directly in its locked state so the receiver also receives it locked!
+  const handleShareDiaryLog = async (log: DiaryLog) => {
+    if (exportProcessingBanner) return;
+    setOpenMenuLogId(null);
+    setExportStatusBanner(null);
+    setExportProcessingBanner(
+      `Packing "${log.heading}" as .likkho archive... Please wait.`
+    );
+    await new Promise((resolve) => window.setTimeout(resolve, 40));
+    try {
+      const msg = await shareDiaryAsLikkhoArchive(log);
+      setExportProcessingBanner(null);
+      setExportStatusBanner(msg);
+      window.setTimeout(() => {
+        setExportStatusBanner((prev) => (prev === msg ? null : prev));
+      }, 3200);
+    } catch {
+      setExportProcessingBanner(null);
+      setExportStatusBanner('Could not share .likkho diary archive.');
+      window.setTimeout(() => setExportStatusBanner(null), 3000);
+    }
+  };
+
+  // Handle incoming .likkho files opened via Android Custom Intent (WhatsApp, Telegram, File Manager)
+  useEffect(() => {
+    const processIncomingLikkhoBase64 = async (base64Payload: string) => {
+      if (!base64Payload || !base64Payload.trim()) return;
+      setExportProcessingBanner('Unpacking received .likkho diary...');
+      try {
+        const unpackedLog = await unpackLikkhoBase64Payload(base64Payload);
+        setLogs((prev) => [unpackedLog, ...prev]);
+        setExportProcessingBanner(null);
+
+        if (unpackedLog.diaryLockPin) {
+          // Receiver receives locked diary in locked state!
+          setRoute('home');
+          setEditingLog(null);
+          setPendingUnlockDiary({ log: unpackedLog, action: 'open' });
+          setDiaryUnlockInput('');
+          setDiaryUnlockError(null);
+          setExportStatusBanner(
+            `Received locked diary "${unpackedLog.heading}". Enter passcode to view.`
+          );
+        } else {
+          // Open directly on canvas in exact order
+          setEditingLog(unpackedLog);
+          setRoute('workspace');
+          setExportStatusBanner(`Opened shared diary "${unpackedLog.heading}".`);
+        }
+        window.setTimeout(() => setExportStatusBanner(null), 3500);
+      } catch {
+        setExportProcessingBanner(null);
+        setExportStatusBanner('Unable to unpack .likkho file.');
+        window.setTimeout(() => setExportStatusBanner(null), 3000);
+      }
+    };
+
+    window.__onLikkhoIncomingArchive = (base64Archive: string) => {
+      processIncomingLikkhoBase64(base64Archive);
+    };
+
+    // Also poll once on startup in case Android launched the Activity with a .likkho intent before React mounted
+    const timer = window.setTimeout(() => {
+      try {
+        if (
+          window.LikkhoNative &&
+          typeof window.LikkhoNative.consumePendingIncomingLikkhoArchive ===
+            'function'
+        ) {
+          const pendingB64 =
+            window.LikkhoNative.consumePendingIncomingLikkhoArchive();
+          if (pendingB64 && pendingB64.trim().length > 0) {
+            processIncomingLikkhoBase64(pendingB64);
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }, 350);
+
+    return () => {
+      window.clearTimeout(timer);
+      window.__onLikkhoIncomingArchive = undefined;
+    };
+  }, []);
 
   const handleSelectExportFormat = async (format: ExportFormat) => {
     if (!exportingLog || exportProcessingBanner) return;
@@ -1174,7 +1267,7 @@ export default function App() {
                         <MoreVertical className="h-5 w-5" />
                       </button>
 
-                      {/* 3-Dots Dropdown Menu: Pin to Top, Export, Delete */}
+                      {/* 3-Dots Dropdown Menu: Pin to Top, Share (.likkho), Export, Delete */}
                       {isMenuOpen && (
                         <div className="absolute right-0 top-11 z-40 w-44 border border-[var(--wiki-border)] bg-[var(--wiki-bg)] py-1 shadow-xl">
                           <button
@@ -1184,6 +1277,16 @@ export default function App() {
                           >
                             <Pin className="h-4 w-4 text-[#3366cc]" />
                             <span>{log.pinned ? 'Unpin from Top' : 'Pin to Top'}</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            disabled={Boolean(exportProcessingBanner)}
+                            onClick={() => handleShareDiaryLog(log)}
+                            className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-xs font-medium text-[var(--wiki-text)] hover:bg-[var(--wiki-surface)] disabled:opacity-50"
+                          >
+                            <Share2 className="h-4 w-4 text-[#3366cc]" />
+                            <span>Share (.likkho)</span>
                           </button>
 
                           <button

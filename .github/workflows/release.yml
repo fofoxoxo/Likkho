@@ -2,9 +2,6 @@ name: Build & Release Signed Likkho Android App
 
 on:
   push:
-    branches:
-      - main
-      - master
     tags:
       - 'v*'
   workflow_dispatch:
@@ -82,6 +79,17 @@ jobs:
           fi
 
           sed -i 's/android:name=".MainActivity"/android:name=".MainActivity" android:windowSoftInputMode="adjustResize"/' "$MANIFEST" || true
+
+          if ! grep -q "pathSuffix=\"\.likkho\"" "$MANIFEST"; then
+            sed -i 's/<\/activity>/    <intent-filter>\n                <action android:name="android.intent.action.VIEW" \/>\n                <action android:name="android.intent.action.EDIT" \/>\n                <category android:name="android.intent.category.DEFAULT" \/>\n                <category android:name="android.intent.category.BROWSABLE" \/>\n                <data android:scheme="content" \/>\n                <data android:scheme="file" \/>\n                <data android:mimeType="*\/*" \/>\n                <data android:host="*" \/>\n                <data android:pathSuffix=".likkho" \/>\n                <data android:pathPattern=".*\\.likkho" \/>\n                <data android:pathPattern=".*\\..*\\.likkho" \/>\n                <data android:pathPattern=".*\\..*\\..*\\.likkho" \/>\n                <data android:pathPattern=".*\\..*\\..*\\..*\\.likkho" \/>\n            <\/intent-filter>\n            <intent-filter>\n                <action android:name="android.intent.action.VIEW" \/>\n                <category android:name="android.intent.category.DEFAULT" \/>\n                <category android:name="android.intent.category.BROWSABLE" \/>\n                <data android:scheme="content" \/>\n                <data android:scheme="file" \/>\n                <data android:mimeType="application\/octet-stream" \/>\n                <data android:mimeType="application\/zip" \/>\n                <data android:mimeType="application\/vnd.likkho.diary" \/>\n                <data android:pathSuffix=".likkho" \/>\n                <data android:pathPattern=".*\\.likkho" \/>\n            <\/intent-filter>\n        <\/activity>/' "$MANIFEST"
+          fi
+
+          mkdir -p android/app/src/main/res/xml
+          if [ -f android/app/src/main/res/xml/file_paths.xml ]; then
+            if ! grep -q "likkho_shared_cache" android/app/src/main/res/xml/file_paths.xml; then
+              sed -i 's/<\/paths>/    <cache-path name="likkho_shared_cache" path="." \/>\n<\/paths>/' android/app/src/main/res/xml/file_paths.xml || true
+            fi
+          fi
 
           rm -rf android/app/src/main/res/values-night android/app/src/main/res/values-night-v* || true
           cat << 'EOF' > android/app/src/main/res/values/styles.xml

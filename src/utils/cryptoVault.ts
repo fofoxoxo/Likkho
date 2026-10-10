@@ -75,6 +75,12 @@ declare global {
         filename: string,
         mimeType: string
       ) => void;
+      shareLikkhoDiaryArchive?: (
+        base64Data: string,
+        filename: string,
+        shareMessage: string
+      ) => void;
+      consumePendingIncomingLikkhoArchive?: () => string;
     };
     __handleLikkhoAndroidBack?: () => string;
     __onLikkhoBiometricResult?: (success: boolean, msg?: string) => void;
@@ -82,6 +88,7 @@ declare global {
     __onLikkhoSafBackupResult?: (success: boolean, msg: string) => void;
     __onLikkhoSafRestoreResult?: (success: boolean, payload: string) => void;
     __onLikkhoSafFolderSelected?: (folderName: string) => void;
+    __onLikkhoIncomingArchive?: (base64Archive: string) => void;
   }
 }
 
