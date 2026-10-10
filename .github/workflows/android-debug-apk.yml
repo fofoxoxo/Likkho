@@ -697,26 +697,24 @@ jobs:
 
               @Override
               public void onPause() {
-                  if (isAppPasscodeProtected && !isSystemFilePickerOpen) {
+                  if (isAppPasscodeProtected && !isSystemFilePickerOpen && isFinishing()) {
                       showRecentsPrivacyShield();
                   }
                   super.onPause();
               }
 
               @Override
+              public void onStop() {
+                  if (isAppPasscodeProtected && !isSystemFilePickerOpen) {
+                      showRecentsPrivacyShield();
+                  }
+                  super.onStop();
+              }
+
+              @Override
               public void onWindowFocusChanged(boolean hasFocus) {
                   super.onWindowFocusChanged(hasFocus);
                   if (hasFocus) {
-                      applyWindowSystemBarsColor(currentStatusBarHex, currentNavBarHex, currentDarkIconsOnLightBar);
-                      applyWindowFullScreenMode(isFullScreenEnabled);
-                  }
-                  if (isAppPasscodeProtected && !isSystemFilePickerOpen) {
-                      if (!hasFocus) {
-                          showRecentsPrivacyShield();
-                      } else {
-                          hideRecentsPrivacyShield();
-                      }
-                  } else {
                       hideRecentsPrivacyShield();
                   }
               }

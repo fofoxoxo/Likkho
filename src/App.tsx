@@ -440,10 +440,8 @@ export default function App() {
     };
 
     syncNativeBars();
-    window.addEventListener('focus', syncNativeBars);
     document.addEventListener('visibilitychange', syncNativeBars);
     return () => {
-      window.removeEventListener('focus', syncNativeBars);
       document.removeEventListener('visibilitychange', syncNativeBars);
     };
   }, [darkMode, fullScreenMode]);

@@ -836,7 +836,8 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     } else if (
       range.collapsed &&
       inputType.startsWith('insert') &&
-      !nativeEv.isComposing
+      !nativeEv.isComposing &&
+      nativeEv.data !== ' '
     ) {
       escapeColorOrHighlightEdgeIfAtBoundary(sel, range);
     }
@@ -1527,6 +1528,8 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
               type="text"
               value={heading}
               readOnly={isReadingMode}
+              spellCheck={false}
+              autoCorrect="on"
               onChange={(e) => {
                 setHeading(e.target.value);
                 scheduleTextHistorySnapshot();
@@ -2271,7 +2274,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
               ref={editorRef}
               contentEditable={!isReadingMode}
               inputMode="text"
-              spellCheck={true}
+              spellCheck={false}
               autoCorrect="on"
               autoCapitalize="sentences"
               suppressContentEditableWarning

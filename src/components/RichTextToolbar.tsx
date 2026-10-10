@@ -383,7 +383,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
       const isH2 = !!findAncestorTag(anchor, ['H2']);
       const isH3 = !!findAncestorTag(anchor, ['H3']);
 
-      setActiveFormats({
+      const nextFormats: ActiveFormats = {
         bold: document.queryCommandState('bold'),
         italic: document.queryCommandState('italic'),
         underline: document.queryCommandState('underline'),
@@ -403,6 +403,17 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
         h1: isH1,
         h2: isH2,
         h3: isH3,
+      };
+
+      setActiveFormats((prev) => {
+        const keys = Object.keys(nextFormats) as (keyof ActiveFormats)[];
+        for (let i = 0; i < keys.length; i++) {
+          const k = keys[i];
+          if (prev[k] !== nextFormats[k]) {
+            return nextFormats;
+          }
+        }
+        return prev;
       });
     } catch {
       // Ignore query errors when editor not focused
