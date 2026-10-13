@@ -111,8 +111,8 @@ function applyConvolution3x3(
   kernel: number[],
   divisor: number = 1,
   bias: number = 0
-): Uint8ClampedArray {
-  const out = new Uint8ClampedArray(src.length);
+): ImageData['data'] {
+  const out = new Uint8ClampedArray(src.length) as unknown as ImageData['data'];
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       let r = 0,
@@ -365,7 +365,7 @@ export const MediaImageStudioModal: React.FC<MediaImageStudioModalProps> = ({
       } else if (selectedFilter === 'edge') {
         const gxKernel = [-1, 0, 1, -2, 0, 2, -1, 0, 1];
         const gyKernel = [-1, -2, -1, 0, 0, 0, 1, 2, 1];
-        const edgeOut = new Uint8ClampedArray(data.length);
+        const edgeOut = new Uint8ClampedArray(data.length) as unknown as ImageData['data'];
         for (let y = 0; y < targetH; y++) {
           for (let x = 0; x < targetW; x++) {
             let rx = 0,

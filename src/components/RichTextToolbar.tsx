@@ -61,6 +61,7 @@ import {
   finalizeRecordedAudioToDataUrl,
   getMimeTypeForFormat,
 } from '../utils/audioRecorder';
+import { persistAudioAttachment } from '../utils/audioStorage';
 import { parseImportedFileToHtml } from '../utils/importFileToCanvas';
 import {
   buildSpoilerMaskString,
@@ -107,6 +108,7 @@ interface RichTextToolbarProps {
   diaryLockPin?: string | null;
   onChangeDiaryLockPin?: (pin: string | null) => void;
   onImportDocument?: (title: string, html: string, editableImages?: string[]) => void;
+  currentLogId?: string;
 }
 
 interface ActiveFormats {
@@ -203,6 +205,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
   diaryLockPin,
   onChangeDiaryLockPin,
   onImportDocument,
+  currentLogId,
 }) => {
   const [showColorPicker, setShowColorPicker] = useState<'text' | 'highlight' | null>(null);
   const [showLinkInput, setShowLinkInput] = useState<boolean>(false);
@@ -1634,58 +1637,62 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
 
   // Start or Stop Microphone Voice Recording — Uses Native Android MicForegroundService (AudioRecord + Overlay) so recording continues even if app is cleared from Recent Apps!
   useEffect(() => {
-    window.__onLikkhoNativeMicFinished = async (base64Wav: string, durationSec: number) => {
+    window.__onLikkhoNativeMicFinished = async (audioPayload: string, durationSec: number) => {
       if (recordTimerRef.current) {
         window.clearInterval(recordTimerRef.current);
         recordTimerRef.current = null;
       }
       setIsRecording(false);
-      if (!base64Wav) return;
+      if (!audioPayload) return;
 
-      try {
-        const binary = atob(base64Wav);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) {
-          bytes[i] = binary.charCodeAt(i);
-        }
-        const wavBlob = new Blob([bytes], { type: 'audio/wav' });
-        const dataUrl = await finalizeRecordedAudioToDataUrl(wavBlob, micSettings);
+      const nowMs = Date.now();
+      const stampLabel = new Date(nowMs).toLocaleString('en-IN', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true,
+      });
 
-        const nowMs = Date.now();
-        const stampLabel = new Date(nowMs).toLocaleString('en-IN', {
-          day: '2-digit',
-          month: 'short',
-          year: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit',
-          hour12: true,
-        });
+      const isNative =
+        audioPayload.startsWith('http://') ||
+        audioPayload.startsWith('https://') ||
+        audioPayload.startsWith('file://') ||
+        audioPayload.startsWith('/data/');
 
+      if (isNative) {
         onAddAudioAttachment({
           id: `rec_${nowMs}`,
-          name: `Voice (${stampLabel}).${micSettings.format}`,
-          format: micSettings.format,
-          dataUrl,
+          name: `Voice (${stampLabel}).${micSettings.format || 'wav'}`,
+          format: micSettings.format || 'wav',
+          audioUri: audioPayload,
+          dataUrl: '',
           durationSec: Math.max(1, durationSec || 1),
           createdAt: nowMs,
         });
-        showBriefHint(`Saved voice recording (.${micSettings.format})`);
-      } catch {
-        // fallback direct wav data url
-        const nowMs = Date.now();
-        const stampLabel = new Date(nowMs).toLocaleString('en-IN', {
-          day: '2-digit',
-          month: 'short',
-          year: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit',
-          hour12: true,
+        showBriefHint(`Saved voice recording (.${micSettings.format || 'wav'})`);
+        return;
+      }
+
+      try {
+        const persisted = await persistAudioAttachment(`rec_${nowMs}`, audioPayload);
+        onAddAudioAttachment({
+          id: `rec_${nowMs}`,
+          name: `Voice (${stampLabel}).${micSettings.format || 'wav'}`,
+          format: micSettings.format || 'wav',
+          audioUri: persisted.audioUri,
+          dataUrl: persisted.dataUrl,
+          durationSec: Math.max(1, durationSec || 1),
+          createdAt: nowMs,
         });
+        showBriefHint(`Saved voice recording (.${micSettings.format || 'wav'})`);
+      } catch {
         onAddAudioAttachment({
           id: `rec_${nowMs}`,
           name: `Voice (${stampLabel}).wav`,
           format: 'wav',
-          dataUrl: `data:audio/wav;base64,${base64Wav}`,
+          dataUrl: audioPayload.startsWith('data:') ? audioPayload : `data:audio/wav;base64,${audioPayload}`,
           durationSec: Math.max(1, durationSec || 1),
           createdAt: nowMs,
         });
@@ -1751,9 +1758,17 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     if (recordTimerRef.current) window.clearInterval(recordTimerRef.current);
 
     // Use Native Android Foreground Service AudioRecord when running in APK (survives Recent Apps clear + shows persistent Notification Bell)
-    if (window.LikkhoNative && typeof window.LikkhoNative.startNativeMicRecording === 'function') {
+    if (window.LikkhoNative && (typeof window.LikkhoNative.startNativeMicRecordingWithLogId === 'function' || typeof window.LikkhoNative.startNativeMicRecording === 'function')) {
       const invokedAt = Date.now();
-      window.LikkhoNative.startNativeMicRecording(micSettings.sampleRate, micSettings.bitRate);
+      if (window.LikkhoNative.startNativeMicRecordingWithLogId) {
+        window.LikkhoNative.startNativeMicRecordingWithLogId(
+          micSettings.sampleRate,
+          micSettings.bitRate,
+          currentLogId || ''
+        );
+      } else if (window.LikkhoNative.startNativeMicRecording) {
+        window.LikkhoNative.startNativeMicRecording(micSettings.sampleRate, micSettings.bitRate);
+      }
       recordTimerRef.current = window.setInterval(() => {
         // Give the Android ForegroundService a 2.5s grace window to spin up (or prompt permission) before checking active state
         if (
@@ -1828,8 +1843,6 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
         const rawBlob = new Blob(recordedChunksRef.current, {
           type: recorder.mimeType || 'audio/webm',
         });
-        const dataUrl = await finalizeRecordedAudioToDataUrl(rawBlob, micSettings);
-
         const nowMs = Date.now();
         const stampLabel = new Date(nowMs).toLocaleString('en-IN', {
           day: '2-digit',
@@ -1840,11 +1853,14 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
           hour12: true,
         });
 
+        const persisted = await persistAudioAttachment(`rec_${nowMs}`, rawBlob);
+
         onAddAudioAttachment({
           id: `rec_${nowMs}`,
           name: `Voice (${stampLabel}).${micSettings.format}`,
           format: micSettings.format,
-          dataUrl,
+          audioUri: persisted.audioUri,
+          dataUrl: persisted.dataUrl,
           durationSec,
           createdAt: nowMs,
         });

@@ -52,9 +52,17 @@ declare global {
       requestFilesAndMediaPermission?: () => void;
       requestMicPermission?: () => void;
       startNativeMicRecording?: (sampleRate: number, bitRate: number) => void;
+      startNativeMicRecordingWithLogId?: (
+        sampleRate: number,
+        bitRate: number,
+        logId: string
+      ) => void;
       stopNativeMicRecording?: () => void;
       isNativeMicRecordingActive?: () => boolean;
       getNativeMicRecordingSeconds?: () => number;
+      getPendingFinishedNativeRecording?: () => string;
+      clearPendingFinishedNativeRecording?: () => void;
+      clearNativeSelectionAndActionMode?: () => void;
       startForegroundMicService?: () => void;
       stopForegroundMicService?: () => void;
       cancelBiometricPrompt?: () => void;
@@ -81,10 +89,29 @@ declare global {
         shareMessage: string
       ) => void;
       consumePendingIncomingLikkhoArchive?: () => string;
+      writePersistentVaultBackup?: (envelope: string) => boolean;
+      readPersistentVaultBackup?: () => string;
+      pickVaultBackupFile?: () => void;
+      authenticateDeviceLockForBackup?: () => void;
+      getNativeAudioFileUri?: (filePath: string) => string;
+      deleteNativeAudioFile?: (filePath: string) => void;
     };
     __handleLikkhoAndroidBack?: () => string;
     __onLikkhoBiometricResult?: (success: boolean, msg?: string) => void;
+    __onLikkhoDeviceLockBackupResult?: (success: boolean, message?: string) => void;
+    __onLikkhoVaultFilePicked?: (envelope: string) => void;
     __onLikkhoNativeMicFinished?: (base64Wav: string, durationSec: number) => void;
+    __onLikkhoGlobalNativeMicFinished?: (
+      base64Wav: string,
+      durationSec: number,
+      targetLogId?: string
+    ) => void;
+    __onLikkhoNativeAudioFileReady?: (
+      audioUri: string,
+      nativePath: string,
+      durationSec: number,
+      targetLogId?: string
+    ) => void;
     __onLikkhoSafBackupResult?: (success: boolean, msg: string) => void;
     __onLikkhoSafRestoreResult?: (success: boolean, payload: string) => void;
     __onLikkhoSafFolderSelected?: (folderName: string) => void;
@@ -108,7 +135,8 @@ export interface CanvasAudioAttachment {
   id: string;
   name: string;
   format: string;
-  dataUrl: string;
+  dataUrl?: string;
+  audioUri?: string;
   durationSec?: number;
   createdAt: number;
   x?: number;
@@ -338,7 +366,7 @@ async function deriveAesKey(
   return crypto.subtle.deriveKey(
     {
       name: 'PBKDF2',
-      salt,
+      salt: salt as unknown as BufferSource,
       iterations: cfg.kdfIterations,
       hash: cfg.kdfHash,
     },
@@ -368,7 +396,7 @@ async function deriveLegacyPrimaryAesKey(
   return crypto.subtle.deriveKey(
     {
       name: 'PBKDF2',
-      salt,
+      salt: salt as unknown as BufferSource,
       iterations: 100000,
       hash: 'SHA-256',
     },
@@ -494,9 +522,9 @@ export async function decryptVaultBundle(
   for (const aesKey of candidateKeys) {
     try {
       const decryptedBuffer = await crypto.subtle.decrypt(
-        { name: 'AES-GCM', iv, tagLength: 128 },
+        { name: 'AES-GCM', iv: iv as unknown as BufferSource, tagLength: 128 },
         aesKey,
-        combinedCipherAndTag
+        combinedCipherAndTag as unknown as BufferSource
       );
       const dec = new TextDecoder();
       const parsed = JSON.parse(dec.decode(decryptedBuffer));

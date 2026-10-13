@@ -5,6 +5,7 @@ import {
   markExternalFilePickerPending,
 } from './cryptoVault';
 import { buildZipArchiveBlob, ZipEntryFile } from './zipDataExporter';
+import { getAudioBinaryBytes, saveAudioBlobToStore } from './audioStorage';
 
 export const LIKKHO_GITHUB_DOWNLOAD_URL = 'https://github.com/Likkho/Likkho/releases';
 
@@ -38,7 +39,7 @@ async function deriveUniversalShareAesKey(salt: Uint8Array): Promise<CryptoKey> 
   return crypto.subtle.deriveKey(
     {
       name: 'PBKDF2',
-      salt,
+      salt: salt as unknown as BufferSource,
       iterations: 64000,
       hash: 'SHA-256',
     },
@@ -67,7 +68,7 @@ async function encryptWithUniversalLikkhoShareKey(
   const encryptedBuffer = await crypto.subtle.encrypt(
     { name: 'AES-GCM', iv, tagLength: 128 },
     aesKey,
-    plainArchiveBytes
+    plainArchiveBytes as unknown as BufferSource
   );
   const cipherBytes = new Uint8Array(encryptedBuffer);
 
@@ -304,7 +305,7 @@ async function compressDataPipe(bytes: Uint8Array): Promise<Uint8Array | null> {
     if (typeof CompressionStream === 'undefined') return null;
     const cs = new CompressionStream('gzip');
     const writer = cs.writable.getWriter();
-    writer.write(bytes).catch(() => {});
+    writer.write(bytes as unknown as BufferSource).catch(() => {});
     writer.close().catch(() => {});
     const compressedBuffer = await new Response(cs.readable).arrayBuffer();
     return new Uint8Array(compressedBuffer);
@@ -318,7 +319,7 @@ async function decompressDataPipe(bytes: Uint8Array): Promise<Uint8Array | null>
     if (typeof DecompressionStream === 'undefined') return null;
     const ds = new DecompressionStream('gzip');
     const writer = ds.writable.getWriter();
-    writer.write(bytes).catch(() => {});
+    writer.write(bytes as unknown as BufferSource).catch(() => {});
     writer.close().catch(() => {});
     const decompressedBuffer = await new Response(ds.readable).arrayBuffer();
     return new Uint8Array(decompressedBuffer);
@@ -435,23 +436,39 @@ export async function packDiaryToLikkhoBlob(
 
   // 5. Extract Audio Recordings / Attachments in exact order and format
   const audioMeta: LikkhoArchiveManifest['diary']['audioAttachments'] = [];
-  (log.audioAttachments || []).forEach((aud, idx) => {
+  const logAudios = log.audioAttachments || [];
+  for (let idx = 0; idx < logAudios.length; idx++) {
+    const aud = logAudios[idx];
     const preferredExt = (aud.format || 'wav').replace(/^\.+/, '').toLowerCase();
-    const parsedAud = parseDataUrlToBytesAndMeta(
-      aud.dataUrl,
-      preferredExt,
-      `audio/${preferredExt}`
-    );
-    if (parsedAud) {
-      const finalExt = preferredExt || parsedAud.ext;
+    let bytes: Uint8Array | null = null;
+    let mimeType = `audio/${preferredExt}`;
+
+    if (aud.dataUrl && aud.dataUrl.startsWith('data:')) {
+      const parsedAud = parseDataUrlToBytesAndMeta(
+        aud.dataUrl,
+        preferredExt,
+        `audio/${preferredExt}`
+      );
+      if (parsedAud) {
+        bytes = parsedAud.bytes;
+        mimeType = parsedAud.mimeType;
+      }
+    }
+
+    if (!bytes) {
+      bytes = await getAudioBinaryBytes(aud);
+    }
+
+    if (bytes) {
+      const finalExt = preferredExt || 'wav';
       const archivePath = `audio/audio_${idx + 1}.${finalExt}`;
-      zipEntries.push({ path: archivePath, data: parsedAud.bytes });
+      zipEntries.push({ path: archivePath, data: bytes });
       audioMeta.push({
         id: aud.id,
         name: aud.name,
         format: aud.format,
         archivePath,
-        mimeType: parsedAud.mimeType,
+        mimeType,
         durationSec: aud.durationSec,
         createdAt: aud.createdAt,
         x: aud.x,
@@ -469,7 +486,7 @@ export async function packDiaryToLikkhoBlob(
         format: aud.format,
         archivePath: '',
         mimeType: 'audio/wav',
-        dataUrlFallback: aud.dataUrl,
+        dataUrlFallback: aud.dataUrl || '',
         durationSec: aud.durationSec,
         createdAt: aud.createdAt,
         x: aud.x,
@@ -481,7 +498,7 @@ export async function packDiaryToLikkhoBlob(
         layer: aud.layer,
       });
     }
-  });
+  }
 
   // 6. Include Markdown representation (`diary.md`) inside archive
   const markdownText = convertHtmlToReadableMarkdown(log);
@@ -540,7 +557,7 @@ export async function packDiaryToLikkhoBlob(
   // so shared `.likkho` files are readable ONLY by the Likkho app (isolated from user's Backup & Restore key).
   const encryptedLikkhoBytes = await encryptWithUniversalLikkhoShareKey(plainZipBytes);
 
-  const likkhoBlob = new Blob([encryptedLikkhoBytes], {
+  const likkhoBlob = new Blob([encryptedLikkhoBytes as unknown as BlobPart], {
     type: 'application/x-likkho',
   });
 
@@ -598,7 +615,7 @@ export async function unpackLikkhoArchiveBuffer(
         try {
           const ds = new DecompressionStream('deflate-raw');
           const writer = ds.writable.getWriter();
-          writer.write(rawSlice).catch(() => {});
+          writer.write(rawSlice as unknown as BufferSource).catch(() => {});
           writer.close().catch(() => {});
           const decompressedBuf = await new Response(ds.readable).arrayBuffer();
           fileMap.set(fileName, new Uint8Array(decompressedBuf));
@@ -714,20 +731,37 @@ export async function unpackLikkhoArchiveBuffer(
 
   // 5. Reconstruct Audio Recordings / Player Cards in exact order
   const audioAttachments: CanvasAudioAttachment[] = [];
-  (d.audioAttachments || []).forEach((aud) => {
-    let dataUrl = aud.dataUrlFallback || '';
+  const unpackedAudios = d.audioAttachments || [];
+  for (let i = 0; i < unpackedAudios.length; i++) {
+    const aud = unpackedAudios[i];
+    let rawBytes: Uint8Array | null = null;
     if (aud.archivePath && fileMap.has(aud.archivePath)) {
-      dataUrl = bytesToDataUrl(
-        fileMap.get(aud.archivePath)!,
-        aud.mimeType || 'audio/wav'
-      );
+      rawBytes = fileMap.get(aud.archivePath)!;
     }
-    if (dataUrl) {
+    if (rawBytes) {
+      const blob = new Blob([rawBytes as unknown as BlobPart], { type: aud.mimeType || 'audio/wav' });
+      await saveAudioBlobToStore(aud.id, blob);
       audioAttachments.push({
         id: aud.id,
         name: aud.name,
         format: aud.format,
-        dataUrl,
+        dataUrl: '',
+        durationSec: aud.durationSec,
+        createdAt: aud.createdAt,
+        x: aud.x,
+        y: aud.y,
+        width: aud.width,
+        height: aud.height,
+        rotation: aud.rotation,
+        playbackRate: aud.playbackRate,
+        layer: aud.layer,
+      });
+    } else if (aud.dataUrlFallback) {
+      audioAttachments.push({
+        id: aud.id,
+        name: aud.name,
+        format: aud.format,
+        dataUrl: aud.dataUrlFallback,
         durationSec: aud.durationSec,
         createdAt: aud.createdAt,
         x: aud.x,
@@ -739,7 +773,7 @@ export async function unpackLikkhoArchiveBuffer(
         layer: aud.layer,
       });
     }
-  });
+  }
 
   return {
     id: `log_shared_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,

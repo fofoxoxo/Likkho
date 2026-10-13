@@ -1,6 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Play, Pause } from 'lucide-react';
+import { Play, Pause, Loader2 } from 'lucide-react';
 import { CanvasAudioAttachment } from '../utils/cryptoVault';
+import {
+  acquireAudioPlaybackUrl,
+  releaseAudioPlaybackUrl,
+} from '../utils/audioStorage';
 
 interface CanvasAudioPlayerCardProps {
   audio: CanvasAudioAttachment;
@@ -41,11 +45,65 @@ export const CanvasAudioPlayerCard: React.FC<CanvasAudioPlayerCardProps> = ({
 }) => {
   const audioElRef = useRef<HTMLAudioElement | null>(null);
   const lastTapTimeRef = useRef<number>(0);
+  const activeBlobUrlRef = useRef<string | null>(null);
+
+  // Solution 2: Lazy Loading (On-Demand Initialization)
+  // Initially false so NO audio element, buffers, or decoders are created in RAM!
+  const [isAudioLoaded, setIsAudioLoaded] = useState<boolean>(false);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
   const [currentTime, setCurrentTime] = useState<number>(0);
   const [duration, setDuration] = useState<number>(audio.durationSec || 0);
 
+  // Sync playbackRate when changed from toolbar
   useEffect(() => {
+    const el = audioElRef.current;
+    if (el) {
+      el.playbackRate = audio.playbackRate || 1;
+    }
+  }, [audio.playbackRate]);
+
+  // Solution 3: Proper Memory Cleanup and Revoking Blob URLs
+  // Cleanup audio element and revoke object URL helper
+  const teardownAudioPlayback = () => {
+    const el = audioElRef.current;
+    if (el) {
+      try {
+        el.pause();
+        el.removeAttribute('src');
+        el.load();
+      } catch {
+        // ignore
+      }
+    }
+    if (activeBlobUrlRef.current) {
+      releaseAudioPlaybackUrl(audio.id, activeBlobUrlRef.current);
+      activeBlobUrlRef.current = null;
+    }
+    setIsPlaying(false);
+    setIsAudioLoaded(false);
+    setIsLoading(false);
+  };
+
+  // Listen to single active audio event: if another card starts playing, immediately unload this one
+  useEffect(() => {
+    const handleExclusivePlay = (e: Event) => {
+      const customEvent = e as CustomEvent<{ activeId: string }>;
+      if (customEvent.detail && customEvent.detail.activeId !== audio.id) {
+        teardownAudioPlayback();
+      }
+    };
+
+    window.addEventListener('likkho-audio-exclusive-play', handleExclusivePlay as EventListener);
+    return () => {
+      window.removeEventListener('likkho-audio-exclusive-play', handleExclusivePlay as EventListener);
+      teardownAudioPlayback();
+    };
+  }, [audio.id]);
+
+  // Bind audio element lifecycle listeners once loaded on-demand
+  useEffect(() => {
+    if (!isAudioLoaded) return;
     const el = audioElRef.current;
     if (!el) return;
 
@@ -60,15 +118,20 @@ export const CanvasAudioPlayerCard: React.FC<CanvasAudioPlayerCardProps> = ({
     const onEnded = () => {
       setIsPlaying(false);
       setCurrentTime(0);
+      teardownAudioPlayback();
     };
     const onPause = () => setIsPlaying(false);
     const onPlay = () => setIsPlaying(true);
+    const onError = () => {
+      teardownAudioPlayback();
+    };
 
     el.addEventListener('loadedmetadata', onLoadedMetadata);
     el.addEventListener('timeupdate', onTimeUpdate);
     el.addEventListener('ended', onEnded);
     el.addEventListener('pause', onPause);
     el.addEventListener('play', onPlay);
+    el.addEventListener('error', onError);
 
     return () => {
       el.removeEventListener('loadedmetadata', onLoadedMetadata);
@@ -76,34 +139,85 @@ export const CanvasAudioPlayerCard: React.FC<CanvasAudioPlayerCardProps> = ({
       el.removeEventListener('ended', onEnded);
       el.removeEventListener('pause', onPause);
       el.removeEventListener('play', onPlay);
+      el.removeEventListener('error', onError);
     };
-  }, [audio.dataUrl]);
+  }, [isAudioLoaded, audio.id]);
 
-  // Sync playbackRate from toolbar state
-  useEffect(() => {
+  const togglePlayPause = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+
+    if (isPlaying) {
+      const el = audioElRef.current;
+      if (el) {
+        el.pause();
+      }
+      setIsPlaying(false);
+      return;
+    }
+
+    // Solution 2 & 3: On-demand load only when Play button is pressed!
+    if (!isAudioLoaded || !audioElRef.current?.src) {
+      setIsLoading(true);
+      // Stop all other audio cards first (guarantee at most 1 audio stream in memory)
+      window.dispatchEvent(
+        new CustomEvent('likkho-audio-exclusive-play', { detail: { activeId: audio.id } })
+      );
+
+      try {
+        const { url, isObjectUrl } = await acquireAudioPlaybackUrl(audio);
+        if (!url) {
+          setIsLoading(false);
+          return;
+        }
+
+        if (isObjectUrl) {
+          activeBlobUrlRef.current = url;
+        }
+
+        setIsAudioLoaded(true);
+
+        // Allow DOM to mount <audio> tag with the new src
+        setTimeout(() => {
+          const el = audioElRef.current;
+          if (el) {
+            el.src = url;
+            el.playbackRate = audio.playbackRate || 1;
+            if (currentTime > 0 && currentTime < (duration || audio.durationSec || 0)) {
+              el.currentTime = currentTime;
+            }
+            el.play()
+              .then(() => {
+                setIsPlaying(true);
+                setIsLoading(false);
+              })
+              .catch(() => {
+                setIsLoading(false);
+                setIsPlaying(false);
+              });
+          }
+        }, 10);
+      } catch (err) {
+        console.error('Audio on-demand playback initialization error:', err);
+        setIsLoading(false);
+      }
+      return;
+    }
+
+    // Already loaded, just resume
     const el = audioElRef.current;
     if (el) {
       el.playbackRate = audio.playbackRate || 1;
-    }
-  }, [audio.playbackRate]);
-
-  const togglePlayPause = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    const el = audioElRef.current;
-    if (!el) return;
-    el.playbackRate = audio.playbackRate || 1;
-    if (isPlaying) {
-      el.pause();
-    } else {
-      el.play().catch(() => {});
+      el.play()
+        .then(() => setIsPlaying(true))
+        .catch(() => setIsPlaying(false));
     }
   };
 
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
     e.stopPropagation();
-    const el = audioElRef.current;
     const nextTime = parseFloat(e.target.value);
     setCurrentTime(nextTime);
+    const el = audioElRef.current;
     if (el && Number.isFinite(nextTime)) {
       el.currentTime = nextTime;
     }
@@ -120,7 +234,6 @@ export const CanvasAudioPlayerCard: React.FC<CanvasAudioPlayerCardProps> = ({
   const createdAtLabel = formatAudioCreatedAtStamp(audio.createdAt);
 
   // Strictly ONLY Double-Tap activates editing tools on the Audio Player!
-  // Triggered on pointerUp so inserting the toolbar row above the canvas NEVER causes a synthetic click on the underlying editor that closes the toolbar!
   const handlePointerUpDoubleTap = (e: React.PointerEvent<HTMLDivElement>) => {
     const target = e.target as HTMLElement;
     if (target.closest('[data-audio-control="true"]')) {
@@ -187,8 +300,14 @@ export const CanvasAudioPlayerCard: React.FC<CanvasAudioPlayerCardProps> = ({
           : 'cursor-pointer pointer-events-auto'
       }`}
     >
-      {/* Hidden native HTML5 Audio Engine */}
-      <audio ref={audioElRef} src={audio.dataUrl} preload="metadata" className="hidden" />
+      {/* Solution 2: Hidden native HTML5 Audio Engine mounted only when loaded on-demand */}
+      {isAudioLoaded && (
+        <audio
+          ref={audioElRef}
+          preload="none"
+          className="hidden"
+        />
+      )}
 
       {/* Opaque Red Rectangular Body: Play/Pause Button BEFORE the Slider */}
       <div className="flex items-center gap-2.5 w-full">
@@ -197,11 +316,14 @@ export const CanvasAudioPlayerCard: React.FC<CanvasAudioPlayerCardProps> = ({
           data-audio-control="true"
           onPointerDown={(e) => e.stopPropagation()}
           onClick={togglePlayPause}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-none border border-white/40 bg-[#8e1b1b] text-white hover:bg-[#751515] active:scale-95 transition-transform"
+          disabled={isLoading}
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-none border border-white/40 bg-[#8e1b1b] text-white hover:bg-[#751515] active:scale-95 transition-transform disabled:opacity-75"
           title={isPlaying ? 'Pause' : 'Play'}
           aria-label={isPlaying ? 'Pause audio' : 'Play audio'}
         >
-          {isPlaying ? (
+          {isLoading ? (
+            <Loader2 className="h-4 w-4 animate-spin text-white" />
+          ) : isPlaying ? (
             <Pause className="h-4 w-4 fill-current" />
           ) : (
             <Play className="h-4 w-4 fill-current ml-0.5" />

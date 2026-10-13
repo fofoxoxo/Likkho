@@ -41,13 +41,33 @@ export const PasscodeScreen: React.FC<PasscodeScreenProps> = ({
 
   // Poll cooldown timer every 500ms while active
   useEffect(() => {
+    const clearLingeringSelection = () => {
+      try {
+        window.getSelection()?.removeAllRanges();
+        if (document.activeElement && 'blur' in document.activeElement) {
+          (document.activeElement as HTMLElement).blur();
+        }
+        if (window.LikkhoNative?.clearNativeSelectionAndActionMode) {
+          window.LikkhoNative.clearNativeSelectionAndActionMode();
+        }
+      } catch {
+        // ignore
+      }
+    };
+    clearLingeringSelection();
+    // Also re-clear after next event tick in case Android WebView resumed focus
+    const frameId = window.requestAnimationFrame(clearLingeringSelection);
+
     const syncCooldown = () => {
       const rem = getRemainingPasscodeCooldownSeconds();
       setCooldownSec(rem);
     };
     syncCooldown();
     const timer = window.setInterval(syncCooldown, 500);
-    return () => window.clearInterval(timer);
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      window.clearInterval(timer);
+    };
   }, []);
 
   const cancelActiveBiometricPromptIfAny = () => {
@@ -164,9 +184,9 @@ export const PasscodeScreen: React.FC<PasscodeScreenProps> = ({
 
     // Check if the entered PIN can still be a valid prefix of either savedPasscode or secondaryPasscode
     const couldMatchPrimary =
-      Boolean(savedPasscode) && next.length < savedPasscode.length;
+      Boolean(savedPasscode) && savedPasscode != null && next.length < savedPasscode.length;
     const couldMatchSecondary =
-      Boolean(secondaryPasscode) && next.length < secondaryPasscode.length;
+      Boolean(secondaryPasscode) && secondaryPasscode != null && next.length < secondaryPasscode.length;
 
     if (!couldMatchPrimary && !couldMatchSecondary) {
       setError(true);
@@ -191,7 +211,22 @@ export const PasscodeScreen: React.FC<PasscodeScreenProps> = ({
   const isCoolingDown = cooldownSec > 0;
 
   return (
-    <div className="flex h-full w-full flex-col items-center justify-between bg-[var(--wiki-bg)] px-6 py-10 text-[var(--wiki-text)] select-none">
+    <div
+      onPointerDown={() => {
+        try {
+          window.getSelection()?.removeAllRanges();
+          if (document.activeElement && 'blur' in document.activeElement) {
+            (document.activeElement as HTMLElement).blur();
+          }
+          if (window.LikkhoNative?.clearNativeSelectionAndActionMode) {
+            window.LikkhoNative.clearNativeSelectionAndActionMode();
+          }
+        } catch {
+          // ignore
+        }
+      }}
+      className="flex h-full w-full flex-col items-center justify-between bg-[var(--wiki-bg)] px-6 py-10 text-[var(--wiki-text)] select-none"
+    >
       {/* Top Identity */}
       <div className="flex flex-col items-center text-center mt-4">
         <div className="flex h-14 w-14 items-center justify-center border border-[var(--wiki-border)] bg-[var(--wiki-surface)]">

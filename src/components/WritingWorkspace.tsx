@@ -35,7 +35,7 @@ import {
   getRemainingPasscodeCooldownSeconds,
   recordPasscodeFailure,
   resetPasscodeFailures,
-  markExternalFilePickerPending,
+  isExternalFilePickerPending,
   clearExternalFilePickerPending,
 } from '../utils/cryptoVault';
 import { scheduleAndroidNativeReminder } from '../utils/notificationSound';
@@ -49,6 +49,11 @@ import {
 } from './MediaImageStudioModal';
 import { MediaAudioStudioModal } from './MediaAudioStudioModal';
 import { CanvasAudioPlayerCard } from './CanvasAudioPlayerCard';
+import {
+  persistAudioAttachment,
+  deleteAudioBlobFromStore,
+  releaseAudioPlaybackUrl,
+} from '../utils/audioStorage';
 import {
   buildSpoilerMaskString,
   decryptSpoilerSecretText,
@@ -301,6 +306,31 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     historyStackRef.current = [initialSnap];
     historyIndexRef.current = 0;
   }, [initialLog]);
+
+  // Dismiss native text selection handles and action bar whenever the workspace loses visibility
+  useEffect(() => {
+    const handleVisibilityDismiss = () => {
+      if (document.visibilityState === 'hidden') {
+        if (!isExternalFilePickerPending()) {
+          try {
+            window.getSelection()?.removeAllRanges();
+            if (document.activeElement && 'blur' in document.activeElement) {
+              (document.activeElement as HTMLElement).blur();
+            }
+            if (window.LikkhoNative?.clearNativeSelectionAndActionMode) {
+              window.LikkhoNative.clearNativeSelectionAndActionMode();
+            }
+          } catch {
+            // ignore
+          }
+        }
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityDismiss);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityDismiss);
+    };
+  }, []);
 
   const normalizeSpoilersAndSelectionForSave = (rawHtml: string): string => {
     const cleaned = normalizeSpoilersToLockedForSave(rawHtml);
@@ -602,7 +632,10 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
           if (prevSib) {
             return isNodeASpoilerSpan(prevSib);
           }
-          const parentEl = cur.parentElement;
+          const parentEl: HTMLElement | null =
+            cur instanceof HTMLElement
+              ? cur.parentElement
+              : (cur.parentNode as HTMLElement | null);
           if (
             !parentEl ||
             parentEl === editorRef.current ||
@@ -642,7 +675,10 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
           if (nextSib) {
             return isNodeASpoilerSpan(nextSib);
           }
-          const parentEl = cur.parentElement;
+          const parentEl: HTMLElement | null =
+            cur instanceof HTMLElement
+              ? cur.parentElement
+              : (cur.parentNode as HTMLElement | null);
           if (
             !parentEl ||
             parentEl === editorRef.current ||
@@ -1522,7 +1558,9 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
 
           <div className="flex flex-1 items-center gap-1.5 min-w-0">
             {diaryLockPin && (
-              <Lock className="h-4 w-4 shrink-0 text-[#b32424]" title="Diary Locked" />
+              <span title="Diary Locked" className="shrink-0 flex items-center">
+                <Lock className="h-4 w-4 text-[#b32424]" />
+              </span>
             )}
             <input
               type="text"
@@ -2112,10 +2150,16 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
               <button
                 type="button"
                 onClick={() => {
+                  const targetAudio = selectedCanvasAudio;
                   updateAudioAttachmentsWithHistory((prev) =>
-                    prev.filter((a) => a.id !== selectedCanvasAudio.id)
+                    prev.filter((a) => a.id !== targetAudio.id)
                   );
                   setSelectedCanvasAudioId(null);
+                  deleteAudioBlobFromStore(targetAudio.id);
+                  releaseAudioPlaybackUrl(targetAudio.id);
+                  if (targetAudio.audioUri && window.LikkhoNative?.deleteNativeAudioFile) {
+                    window.LikkhoNative.deleteNativeAudioFile(targetAudio.audioUri);
+                  }
                 }}
                 className="flex h-7 items-center gap-1 border border-[#b32424] bg-[#b32424] px-2.5 font-semibold text-white hover:bg-[#941d1d]"
                 title="Delete audio"
@@ -2437,12 +2481,18 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
               format: fmt,
             });
           }}
-          onAddAudioAttachment={(aud) => {
+          onAddAudioAttachment={async (aud) => {
+            let targetAud = { ...aud };
+            if (aud.dataUrl && aud.dataUrl.startsWith('data:')) {
+              const persisted = await persistAudioAttachment(aud.id, aud.dataUrl);
+              targetAud.audioUri = persisted.audioUri;
+              targetAud.dataUrl = persisted.dataUrl;
+            }
             setAudioAttachments((prev) => {
               const next: CanvasAudioAttachment[] = [
                 ...prev,
                 {
-                  ...aud,
+                  ...targetAud,
                   x: 24 + (prev.length * 18) % 90,
                   y: 120 + (prev.length * 76) % 260,
                   width: 270,
@@ -2462,6 +2512,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
           micSettings={micSettings}
           vaultMode={vaultMode}
           diaryLockPin={diaryLockPin}
+          currentLogId={stableLogIdRef.current}
           onChangeDiaryLockPin={(pin) => {
             setDiaryLockPin(pin);
             pushCanvasSnapshot({ diaryLockPin: pin });
@@ -2830,8 +2881,9 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
           audioFileName={rawMediaStudioAudio.fileName}
           initialFormat={rawMediaStudioAudio.format}
           onCancel={() => setRawMediaStudioAudio(null)}
-          onConfirm={(processedDataUrl, finalFileName, format, durationSec) => {
+          onConfirm={async (processedDataUrl, finalFileName, format, durationSec) => {
             const newId = `aud_${Date.now()}`;
+            const persisted = await persistAudioAttachment(newId, processedDataUrl);
             setAudioAttachments((prev) => {
               const next: CanvasAudioAttachment[] = [
                 ...prev,
@@ -2839,7 +2891,8 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
                   id: newId,
                   name: finalFileName,
                   format,
-                  dataUrl: processedDataUrl,
+                  audioUri: persisted.audioUri,
+                  dataUrl: persisted.dataUrl,
                   durationSec,
                   createdAt: Date.now(),
                   x: 24 + (prev.length * 18) % 90,

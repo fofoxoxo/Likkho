@@ -1,4 +1,4 @@
-name: Build Likkho Android Release APK
+name: Build Likkho Android Debug APK
 
 on:
   push:
@@ -13,8 +13,8 @@ permissions:
   contents: write
 
 jobs:
-  build-release-apk:
-    name: Build Android Release APK
+  build-debug-apk:
+    name: Build Android Debug APK
     runs-on: ubuntu-latest
 
     steps:
@@ -247,6 +247,7 @@ jobs:
               public static volatile long recordingStartedAtMs = 0;
               public static volatile String latestFinishedFilePath = null;
               public static volatile int latestDurationSec = 1;
+              public static volatile String currentRecordingLogId = "";
 
               private PowerManager.WakeLock wakeLock;
               private AudioRecord audioRecord;
@@ -272,6 +273,9 @@ jobs:
 
                   if (intent != null && intent.hasExtra("sampleRate")) {
                       sampleRate = intent.getIntExtra("sampleRate", 44100);
+                  }
+                  if (intent != null && intent.hasExtra("logId")) {
+                      currentRecordingLogId = intent.getStringExtra("logId");
                   }
 
                   NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
@@ -434,6 +438,28 @@ jobs:
                       }
                   } catch (Exception ignored) {}
 
+                  try {
+                      File wavFile = new File(getFilesDir(), "likkho_active_mic_recording.wav");
+                      File audioDir = new File(getFilesDir(), "likkho_audio");
+                      if (!audioDir.exists()) audioDir.mkdirs();
+                      File permFile = new File(audioDir, "audio_" + System.currentTimeMillis() + ".wav");
+                      if (wavFile.exists() && wavFile.length() > 44) {
+                          if (!wavFile.renameTo(permFile)) {
+                              permFile = wavFile;
+                          }
+                      } else {
+                          permFile = wavFile;
+                      }
+                      latestFinishedFilePath = permFile.getAbsolutePath();
+                      getSharedPreferences("likkho_recording_prefs", MODE_PRIVATE)
+                          .edit()
+                          .putString("pending_recording_path", permFile.getAbsolutePath())
+                          .putInt("pending_recording_duration", latestDurationSec)
+                          .putString("pending_recording_log_id", currentRecordingLogId != null ? currentRecordingLogId : "")
+                          .putLong("pending_recording_saved_at", System.currentTimeMillis())
+                          .apply();
+                  } catch (Exception ignored) {}
+
                   MainActivity.deliverFinishedNativeRecordingIfPossible(this);
                   stopForeground(true);
                   stopSelf();
@@ -575,6 +601,41 @@ jobs:
               private boolean isFullScreenEnabled = false;
               private android.view.View recentsPrivacyOverlayView = null;
               private volatile String pendingIncomingLikkhoBase64 = null;
+              private android.view.ActionMode currentActionMode = null;
+
+              @Override
+              public void onActionModeStarted(android.view.ActionMode mode) {
+                  super.onActionModeStarted(mode);
+                  currentActionMode = mode;
+              }
+
+              @Override
+              public void onActionModeFinished(android.view.ActionMode mode) {
+                  super.onActionModeFinished(mode);
+                  if (currentActionMode == mode) {
+                      currentActionMode = null;
+                  }
+              }
+
+              public void dismissActionModeAndClearSelection() {
+                  runOnUiThread(() -> {
+                      try {
+                          if (currentActionMode != null) {
+                              currentActionMode.finish();
+                              currentActionMode = null;
+                          }
+                          if (bridge != null && bridge.getWebView() != null) {
+                              WebView wv = bridge.getWebView();
+                              wv.clearFocus();
+                              wv.clearMatches();
+                              wv.evaluateJavascript(
+                                  "(function(){ try { if(window.getSelection){ window.getSelection().removeAllRanges(); } if(document.activeElement && document.activeElement.blur){ document.activeElement.blur(); } } catch(e){} })()",
+                                  null
+                              );
+                          }
+                      } catch (Exception ignored) {}
+                  });
+              }
 
               @Override
               public void onCreate(Bundle savedInstanceState) {
@@ -760,9 +821,10 @@ jobs:
                   hideRecentsPrivacyShield();
                   applyWindowSystemBarsColor(currentStatusBarHex, currentNavBarHex, currentDarkIconsOnLightBar);
                   applyWindowFullScreenMode(isFullScreenEnabled);
-                  if (!MicForegroundService.isRecording && MicForegroundService.latestFinishedFilePath != null) {
-                      deliverFinishedNativeRecordingIfPossible(this);
+                  if (isAppPasscodeProtected) {
+                      dismissActionModeAndClearSelection();
                   }
+                  deliverFinishedNativeRecordingIfPossible(this);
               }
 
               @Override
@@ -774,6 +836,7 @@ jobs:
 
               @Override
               public void onPause() {
+                  dismissActionModeAndClearSelection();
                   if (isAppPasscodeProtected && !isSystemFilePickerOpen && isFinishing()) {
                       showRecentsPrivacyShield();
                   }
@@ -782,6 +845,7 @@ jobs:
 
               @Override
               public void onStop() {
+                  dismissActionModeAndClearSelection();
                   if (isAppPasscodeProtected && !isSystemFilePickerOpen) {
                       showRecentsPrivacyShield();
                   }
@@ -856,33 +920,69 @@ jobs:
               }
 
               public static void deliverFinishedNativeRecordingIfPossible(Context ctx) {
-                  final String path = MicForegroundService.latestFinishedFilePath;
-                  final int duration = MicForegroundService.latestDurationSec;
-                  if (path == null || currentInstance == null) return;
+                  if (ctx == null) return;
+                  SharedPreferences prefs = ctx.getSharedPreferences("likkho_recording_prefs", MODE_PRIVATE);
+                  String path = prefs.getString("pending_recording_path", null);
+                  int duration = prefs.getInt("pending_recording_duration", 1);
+                  String logId = prefs.getString("pending_recording_log_id", "");
+                  if (path == null) {
+                      path = MicForegroundService.latestFinishedFilePath;
+                      duration = MicForegroundService.latestDurationSec;
+                      logId = MicForegroundService.currentRecordingLogId != null ? MicForegroundService.currentRecordingLogId : "";
+                  }
+                  if (path == null) return;
 
-                  File f = new File(path);
+                  final File f = new File(path);
                   if (!f.exists() || f.length() <= 44) return;
 
-                  try (FileInputStream fis = new FileInputStream(f)) {
-                      ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                      byte[] buf = new byte[8192];
-                      int r;
-                      while ((r = fis.read(buf)) != -1) {
-                          baos.write(buf, 0, r);
-                      }
-                      final String b64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP);
-                      MicForegroundService.latestFinishedFilePath = null;
-                      f.delete();
+                  if (currentInstance == null || currentInstance.bridge == null || currentInstance.bridge.getWebView() == null) {
+                      return;
+                  }
 
-                      currentInstance.runOnUiThread(() -> {
-                          if (currentInstance.bridge != null && currentInstance.bridge.getWebView() != null) {
-                              currentInstance.bridge.getWebView().evaluateJavascript(
-                                  "if(window.__onLikkhoNativeMicFinished) window.__onLikkhoNativeMicFinished('" + b64 + "', " + duration + ");",
-                                  null
-                              );
+                  File permFile = f;
+                  try {
+                      File audioDir = new File(ctx.getFilesDir(), "likkho_audio");
+                      if (!audioDir.exists()) audioDir.mkdirs();
+                      if (f.getParentFile() == null || !f.getParentFile().equals(audioDir)) {
+                          File dest = new File(audioDir, "audio_" + System.currentTimeMillis() + ".wav");
+                          if (f.renameTo(dest)) {
+                              permFile = dest;
                           }
-                      });
+                      }
                   } catch (Exception ignored) {}
+
+                  final String permanentPath = permFile.getAbsolutePath();
+                  final String audioUri = "http://localhost/_capacitor_file_" + permanentPath;
+                  final int finalDuration = duration;
+                  final String finalLogId = logId != null ? logId : "";
+
+                  currentInstance.runOnUiThread(() -> {
+                      if (currentInstance != null && currentInstance.bridge != null && currentInstance.bridge.getWebView() != null) {
+                          String safeUri = audioUri.replace("'", "\\'");
+                          String safePath = permanentPath.replace("'", "\\'");
+                          String safeLogId = finalLogId.replace("'", "\\'");
+                          currentInstance.bridge.getWebView().evaluateJavascript(
+                              "(function(){ if(window.__onLikkhoNativeAudioFileReady){ window.__onLikkhoNativeAudioFileReady('" + safeUri + "', '" + safePath + "', " + finalDuration + ", '" + safeLogId + "'); return 'OK'; } else if(window.__onLikkhoGlobalNativeMicFinished){ window.__onLikkhoGlobalNativeMicFinished('" + safeUri + "', " + finalDuration + ", '" + safeLogId + "'); return 'OK'; } return 'WAIT'; })()",
+                              val -> {
+                                  if (val != null && val.contains("OK")) {
+                                      clearPendingRecordingStorage(ctx);
+                                  }
+                              }
+                          );
+                      }
+                  });
+              }
+
+              public static void clearPendingRecordingStorage(Context ctx) {
+                  if (ctx != null) {
+                      try {
+                          ctx.getSharedPreferences("likkho_recording_prefs", MODE_PRIVATE)
+                              .edit()
+                              .clear()
+                              .apply();
+                      } catch (Exception ignored) {}
+                  }
+                  MicForegroundService.latestFinishedFilePath = null;
               }
 
               private void requestNotificationPermissionOnStart() {
@@ -1289,9 +1389,14 @@ jobs:
               }
 
               private void startNativeMicServiceInternal(int sampleRate) {
+                  startNativeMicServiceInternal(sampleRate, "");
+              }
+
+              private void startNativeMicServiceInternal(int sampleRate, String logId) {
                   Intent serviceIntent = new Intent(MainActivity.this, MicForegroundService.class);
                   serviceIntent.setAction(MicForegroundService.ACTION_START);
                   serviceIntent.putExtra("sampleRate", sampleRate);
+                  serviceIntent.putExtra("logId", logId != null ? logId : "");
                   if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                       startForegroundService(serviceIntent);
                   } else {
@@ -1300,6 +1405,11 @@ jobs:
               }
 
               public class LikkhoAndroidBridge {
+                  @JavascriptInterface
+                  public void clearNativeSelectionAndActionMode() {
+                      dismissActionModeAndClearSelection();
+                  }
+
                   @JavascriptInterface
                   public void setAppPasscodeProtectionEnabled(boolean enabled) {
                       applyAppPasscodeProtection(enabled);
@@ -1332,13 +1442,58 @@ jobs:
 
                   @JavascriptInterface
                   public void startNativeMicRecording(int sampleRate, int bitRate) {
+                      startNativeMicRecordingWithLogId(sampleRate, bitRate, "");
+                  }
+
+                  @JavascriptInterface
+                  public void startNativeMicRecordingWithLogId(int sampleRate, int bitRate, String logId) {
                       pendingMicSampleRate = sampleRate > 0 ? sampleRate : 44100;
+                      final String targetLog = logId != null ? logId : "";
                       runOnUiThread(() -> {
                           if (ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
                               ActivityCompat.requestPermissions(MainActivity.this, new String[]{Manifest.permission.RECORD_AUDIO}, MIC_PERMISSION_REQUEST_CODE);
                               return;
                           }
-                          startNativeMicServiceInternal(pendingMicSampleRate);
+                          startNativeMicServiceInternal(pendingMicSampleRate, targetLog);
+                      });
+                  }
+
+                  @JavascriptInterface
+                  public String getPendingFinishedNativeRecording() {
+                      SharedPreferences prefs = getSharedPreferences("likkho_recording_prefs", MODE_PRIVATE);
+                      String path = prefs.getString("pending_recording_path", null);
+                      if (path == null) return "";
+                      File f = new File(path);
+                      if (!f.exists() || f.length() <= 44) return "";
+                      int duration = prefs.getInt("pending_recording_duration", 1);
+                      String logId = prefs.getString("pending_recording_log_id", "");
+                      String uri = "http://localhost/_capacitor_file_" + f.getAbsolutePath();
+                      String safePath = f.getAbsolutePath().replace("\\", "\\\\").replace("\"", "\\\"");
+                      String safeLog = (logId != null ? logId : "").replace("\"", "\\\"");
+                      return "{\"audioUri\":\"" + uri + "\",\"filePath\":\"" + safePath + "\",\"duration\":" + duration + ",\"logId\":\"" + safeLog + "\"}";
+                  }
+
+                  @JavascriptInterface
+                  public String getNativeAudioFileUri(String filePath) {
+                      if (filePath == null || filePath.isEmpty()) return "";
+                      return "http://localhost/_capacitor_file_" + filePath;
+                  }
+
+                  @JavascriptInterface
+                  public void deleteNativeAudioFile(String filePath) {
+                      if (filePath == null || filePath.isEmpty()) return;
+                      try {
+                          File f = new File(filePath);
+                          if (f.exists() && f.getAbsolutePath().startsWith(getFilesDir().getAbsolutePath())) {
+                              f.delete();
+                          }
+                      } catch (Exception ignored) {}
+                  }
+
+                  @JavascriptInterface
+                  public void clearPendingFinishedNativeRecording() {
+                      runOnUiThread(() -> {
+                          clearPendingRecordingStorage(MainActivity.this);
                       });
                   }
 
@@ -1721,38 +1876,16 @@ jobs:
           }
           EOF
 
-      - name: Build Signed Release APK & AAB
+      - name: Build Android Debug APK
         working-directory: ./android
-        env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           chmod +x ./gradlew
-          ./gradlew assembleRelease bundleRelease
-          mv app/build/outputs/apk/release/app-release.apk app/build/outputs/apk/release/likkho-release.apk
-          mv app/build/outputs/bundle/release/app-release.aab app/build/outputs/bundle/release/likkho-release.aab
+          ./gradlew assembleDebug
+          mv app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/likkho-debug.apk
 
-      - name: Upload Signed Release APK Artifact
+      - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: likkho-release-apk
-          path: android/app/build/outputs/apk/release/likkho-release.apk
+          name: likkho-debug-apk
+          path: android/app/build/outputs/apk/debug/likkho-debug.apk
           retention-days: 30
-
-      - name: Upload Signed Release AAB Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: likkho-release-aab
-          path: android/app/build/outputs/bundle/release/likkho-release.aab
-          retention-days: 30
-
-      - name: Create GitHub Release on Version Tag
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          generate_release_notes: true
-          files: |
-            android/app/build/outputs/apk/release/likkho-release.apk
-            android/app/build/outputs/bundle/release/likkho-release.aab

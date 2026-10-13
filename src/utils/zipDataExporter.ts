@@ -1,5 +1,6 @@
 import { CustomFontItem, DiaryLog, VaultMode } from './cryptoVault';
 import { getSavedWordAnalyses } from './wordAnalysisEngine';
+import { getAudioBinaryBytes } from './audioStorage';
 
 export interface ZipEntryFile {
   path: string;
@@ -114,7 +115,7 @@ export function buildZipArchiveBlob(entries: ZipEntryFile[]): Blob {
   ev.setUint32(16, localOffset, true);
   ev.setUint16(20, 0, true); // Comment length
 
-  return new Blob([...localChunks, ...centralChunks, eocd], {
+  return new Blob([...localChunks, ...centralChunks, eocd] as unknown as BlobPart[], {
     type: 'application/zip',
   });
 }
@@ -172,11 +173,11 @@ function sanitizeFileSlug(input: string, fallback: string): string {
   return cleaned || fallback;
 }
 
-function convertHtmlToMarkdownWithExtractedMedia(
+async function convertHtmlToMarkdownWithExtractedMedia(
   log: DiaryLog,
   entrySlug: string,
   zipFiles: ZipEntryFile[]
-): string {
+): Promise<string> {
   const enc = new TextEncoder();
   let md = `# ${log.heading || 'Untitled Entry'}\n\n`;
   md += `- **Created:** ${log.dateStamp} · ${log.timeStamp}\n`;
@@ -282,21 +283,28 @@ function convertHtmlToMarkdownWithExtractedMedia(
   const audioAttachments = log.audioAttachments || [];
   if (audioAttachments.length > 0) {
     md += `\n\n## Attached Audio Recordings\n\n`;
-    audioAttachments.forEach((aud, idx) => {
+    for (let idx = 0; idx < audioAttachments.length; idx++) {
+      const aud = audioAttachments[idx];
       const preferredExt = (aud.format || 'wav').replace(/^\.+/, '').toLowerCase();
-      const parsedAud = parseDataUrlToBytesAndExt(aud.dataUrl, preferredExt);
-      if (parsedAud) {
-        // Keep the user's configured audio format extension if specified
-        const finalExt = preferredExt || parsedAud.ext;
+      let bytes: Uint8Array | null = null;
+      if (aud.dataUrl && aud.dataUrl.startsWith('data:')) {
+        const parsedAud = parseDataUrlToBytesAndExt(aud.dataUrl, preferredExt);
+        if (parsedAud) bytes = parsedAud.bytes;
+      }
+      if (!bytes) {
+        bytes = await getAudioBinaryBytes(aud);
+      }
+      if (bytes) {
+        const finalExt = preferredExt || 'wav';
         const audSlug = sanitizeFileSlug(
           aud.name.replace(/\.[^.]+$/, ''),
           `audio_${idx + 1}`
         );
         const audPath = `audio/${entrySlug}_${idx + 1}_${audSlug}.${finalExt}`;
-        zipFiles.push({ path: audPath, data: parsedAud.bytes });
+        zipFiles.push({ path: audPath, data: bytes });
         md += `- **${aud.name}** — [../${audPath}](../${audPath})\n`;
       }
-    });
+    }
   }
 
   zipFiles.push({
@@ -338,11 +346,12 @@ export async function exportAllAppDataAsZip(
   const zipFiles: ZipEntryFile[] = [];
   const enc = new TextEncoder();
 
-  logs.forEach((log, idx) => {
+  for (let idx = 0; idx < logs.length; idx++) {
+    const log = logs[idx];
     const numPrefix = String(idx + 1).padStart(2, '0');
     const slug = `${numPrefix}_${sanitizeFileSlug(log.heading, `diary_${idx + 1}`)}`;
-    convertHtmlToMarkdownWithExtractedMedia(log, slug, zipFiles);
-  });
+    await convertHtmlToMarkdownWithExtractedMedia(log, slug, zipFiles);
+  }
 
   // Include Saved Offline Word Analyses as a Markdown reference if present
   const savedWords = getSavedWordAnalyses(vaultMode);

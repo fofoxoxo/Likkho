@@ -1,43 +1,5 @@
 import { CanvasAudioAttachment, CanvasDraggableImage, DiaryLog } from './cryptoVault';
 
-declare global {
-  interface Window {
-    LikkhoNative?: {
-      requestFilesAndMediaPermission?: () => void;
-      requestMicPermission?: () => void;
-      saveExportedFile?: (base64Data: string, filename: string, mimeType: string) => void;
-      writePersistentVaultBackup?: (envelope: string) => boolean;
-      readPersistentVaultBackup?: () => string;
-      saveBackupViaSaf?: (envelope: string, vaultMode?: string) => void;
-      restoreBackupViaSaf?: (vaultMode?: string) => void;
-      chooseSafBaseFolder?: () => void;
-      getSafBaseFolderName?: () => string;
-      pickVaultBackupFile?: () => void;
-      authenticateBiometric?: () => void;
-      cancelBiometricPrompt?: () => void;
-      authenticateDeviceLockForBackup?: () => void;
-      scheduleNativeReminder?: (logId: string, title: string, body: string, triggerAtMs: number) => void;
-      cancelNativeReminder?: (logId: string) => void;
-      startForegroundMicService?: () => void;
-      stopForegroundMicService?: () => void;
-      startNativeMicRecording?: (sampleRate: number, bitRate: number) => void;
-      stopNativeMicRecording?: () => void;
-      isNativeMicRecordingActive?: () => boolean;
-      getNativeMicRecordingSeconds?: () => number;
-      setSystemBarsTheme?: (statusBarHex: string, navBarHex: string, isLightIcons: boolean) => void;
-      setAppPasscodeProtectionEnabled?: (enabled: boolean) => void;
-    };
-    __handleLikkhoAndroidBack?: () => string;
-    __onLikkhoBiometricResult?: (success: boolean, message?: string) => void;
-    __onLikkhoDeviceLockBackupResult?: (success: boolean, message?: string) => void;
-    __onLikkhoNativeMicFinished?: (base64Wav: string, durationSec: number) => void;
-    __onLikkhoVaultFilePicked?: (envelope: string) => void;
-    __onLikkhoSafBackupResult?: (success: boolean, message?: string) => void;
-    __onLikkhoSafRestoreResult?: (success: boolean, payload?: string) => void;
-    __onLikkhoSafFolderSelected?: (folderName: string) => void;
-  }
-}
-
 export type ExportFormat =
   | 'txt'
   | 'md'
@@ -1010,7 +972,7 @@ async function buildVisualCanvasPdfBlob(log: DiaryLog): Promise<Blob> {
     } /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF`
   );
 
-  return new Blob(chunks, { type: 'application/pdf' });
+  return new Blob(chunks as unknown as BlobPart[], { type: 'application/pdf' });
 }
 
 /**

@@ -20,6 +20,7 @@ import {
   Share2,
 } from 'lucide-react';
 import {
+  CanvasAudioAttachment,
   CustomFontItem,
   DiaryLog,
   MicRecordingSettings,
@@ -47,6 +48,7 @@ import { WritingWorkspace } from './components/WritingWorkspace';
 import { SettingsPage } from './components/SettingsPage';
 import { BackupRestorePage } from './components/BackupRestorePage';
 import { PasscodeScreen } from './components/PasscodeScreen';
+import { persistAudioAttachment } from './utils/audioStorage';
 import { buildWelcomeStarterLogs } from './utils/starterDiaryGuide';
 import {
   shareDiaryAsLikkhoArchive,
@@ -298,6 +300,17 @@ export default function App() {
         if (isExternalFilePickerPending()) {
           return;
         }
+        try {
+          window.getSelection()?.removeAllRanges();
+          if (document.activeElement && 'blur' in document.activeElement) {
+            (document.activeElement as HTMLElement).blur();
+          }
+          if (window.LikkhoNative?.clearNativeSelectionAndActionMode) {
+            window.LikkhoNative.clearNativeSelectionAndActionMode();
+          }
+        } catch {
+          // ignore
+        }
         setIsLocked(true);
       } else if (document.visibilityState === 'visible') {
         window.setTimeout(() => {
@@ -309,6 +322,17 @@ export default function App() {
     const handlePageHide = () => {
       if (isExternalFilePickerPending()) {
         return;
+      }
+      try {
+        window.getSelection()?.removeAllRanges();
+        if (document.activeElement && 'blur' in document.activeElement) {
+          (document.activeElement as HTMLElement).blur();
+        }
+        if (window.LikkhoNative?.clearNativeSelectionAndActionMode) {
+          window.LikkhoNative.clearNativeSelectionAndActionMode();
+        }
+      } catch {
+        // ignore
       }
       setIsLocked(true);
     };
@@ -451,6 +475,204 @@ export default function App() {
       document.removeEventListener('visibilitychange', syncNativeBars);
     };
   }, [darkMode, fullScreenMode]);
+
+  // Global listener for background native microphone recording completion
+  // Ensures voice recording stopped from notification is ALWAYS saved to the diary even if app was backgrounded, locked, or reopened
+  useEffect(() => {
+    const handleGlobalAudioPayload = async (
+      audioPayloadOrUri: string,
+      durationSec: number,
+      targetLogId?: string,
+      nativePath?: string
+    ) => {
+      if (!audioPayloadOrUri) return;
+
+      // Also notify active canvas toolbar if mounted
+      if (typeof window.__onLikkhoNativeMicFinished === 'function') {
+        try {
+          window.__onLikkhoNativeMicFinished(audioPayloadOrUri, durationSec);
+        } catch {
+          // ignore
+        }
+      }
+
+      const nowMs = Date.now();
+      const stampLabel = new Date(nowMs).toLocaleString('en-IN', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true,
+      });
+
+      const audioFormat = micSettings.format || 'wav';
+      const isNative =
+        Boolean(nativePath) ||
+        audioPayloadOrUri.startsWith('http://') ||
+        audioPayloadOrUri.startsWith('https://') ||
+        audioPayloadOrUri.startsWith('file://') ||
+        audioPayloadOrUri.startsWith('/data/');
+
+      let finalAudioUri: string | undefined = undefined;
+      let finalDataUrl: string = '';
+
+      if (isNative) {
+        finalAudioUri = nativePath || audioPayloadOrUri;
+        finalDataUrl = '';
+      } else {
+        const persisted = await persistAudioAttachment(`rec_${nowMs}`, audioPayloadOrUri);
+        finalAudioUri = persisted.audioUri;
+        finalDataUrl = persisted.dataUrl;
+      }
+
+      const audioAttachment: CanvasAudioAttachment = {
+        id: `rec_${nowMs}`,
+        name: `Voice (${stampLabel}).${audioFormat}`,
+        format: audioFormat,
+        audioUri: finalAudioUri,
+        dataUrl: finalDataUrl,
+        durationSec: Math.max(1, durationSec || 1),
+        createdAt: nowMs,
+        x: 24,
+        y: 120,
+        width: 270,
+        height: 56,
+        rotation: 0,
+        playbackRate: 1,
+        layer: 'foreground',
+      };
+
+      const resolvedLogId =
+        targetLogId ||
+        editingLog?.id ||
+        (logs.length > 0 ? logs[0].id : null);
+
+      let updatedList: DiaryLog[];
+      let updatedLog: DiaryLog;
+
+      const existingIndex = resolvedLogId
+        ? logs.findIndex((l) => l.id === resolvedLogId)
+        : -1;
+
+      if (existingIndex >= 0) {
+        const cur = logs[existingIndex];
+        const alreadyHas = (cur.audioAttachments || []).some(
+          (a) =>
+            (finalAudioUri && a.audioUri === finalAudioUri) ||
+            (finalDataUrl && a.dataUrl === finalDataUrl)
+        );
+        if (alreadyHas) {
+          window.LikkhoNative?.clearPendingFinishedNativeRecording?.();
+          return;
+        }
+        updatedLog = {
+          ...cur,
+          audioAttachments: [...(cur.audioAttachments || []), audioAttachment],
+          updatedAt: nowMs,
+        };
+        updatedList = [...logs];
+        updatedList[existingIndex] = updatedLog;
+      } else if (editingLog) {
+        updatedLog = {
+          ...editingLog,
+          audioAttachments: [
+            ...(editingLog.audioAttachments || []),
+            audioAttachment,
+          ],
+          updatedAt: nowMs,
+        };
+        updatedList = [updatedLog, ...logs];
+      } else {
+        updatedLog = {
+          id: resolvedLogId || `log_${nowMs}`,
+          heading: `Voice Entry (${stampLabel})`,
+          contentHtml: '',
+          plainPreview: 'Voice recording attached.',
+          pfpDataUrl: null,
+          createdAt: nowMs,
+          updatedAt: nowMs,
+          dateStamp: new Date(nowMs).toLocaleDateString('en-IN', {
+            day: '2-digit',
+            month: 'short',
+            year: 'numeric',
+          }),
+          timeStamp: new Date(nowMs).toLocaleTimeString('en-IN', {
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: true,
+          }),
+          reminderAt: null,
+          audioAttachments: [audioAttachment],
+        };
+        updatedList = [updatedLog, ...logs];
+      }
+
+      setLogs(updatedList);
+      if (editingLog && editingLog.id === updatedLog.id) {
+        setEditingLog(updatedLog);
+      }
+
+      const storageLogsKey =
+        vaultMode === 'decoy' ? STORAGE_DECOY_LOGS_KEY : STORAGE_LOGS_KEY;
+      const idbLogsKey =
+        vaultMode === 'decoy' ? IDB_DECOY_LOGS_KEY : IDB_LOGS_KEY;
+
+      await saveActiveAppStateToIDB(idbLogsKey, updatedList, vaultMode);
+      try {
+        localStorage.setItem(storageLogsKey, JSON.stringify(updatedList));
+      } catch {
+        // ignore
+      }
+
+      if (window.LikkhoNative?.clearPendingFinishedNativeRecording) {
+        window.LikkhoNative.clearPendingFinishedNativeRecording();
+      }
+
+      setExportStatusBanner('Voice recording saved to diary.');
+      window.setTimeout(() => setExportStatusBanner(null), 3200);
+    };
+
+    window.__onLikkhoNativeAudioFileReady = (audioUri, nativePath, duration, targetLog) => {
+      handleGlobalAudioPayload(audioUri, duration, targetLog, nativePath);
+    };
+
+    window.__onLikkhoGlobalNativeMicFinished = (payload, duration, targetLog) => {
+      handleGlobalAudioPayload(payload, duration, targetLog);
+    };
+
+    const pollPendingRecording = () => {
+      try {
+        if (window.LikkhoNative?.getPendingFinishedNativeRecording) {
+          const raw = window.LikkhoNative.getPendingFinishedNativeRecording();
+          if (raw && raw.trim().startsWith('{')) {
+            const parsed = JSON.parse(raw);
+            if (parsed.audioUri || parsed.filePath || parsed.base64) {
+              handleGlobalAudioPayload(
+                parsed.audioUri || parsed.filePath || parsed.base64,
+                parsed.duration || 1,
+                parsed.logId,
+                parsed.filePath
+              );
+            }
+          }
+        }
+      } catch {
+        // ignore
+      }
+    };
+
+    pollPendingRecording();
+    const timer = window.setTimeout(pollPendingRecording, 1000);
+    document.addEventListener('visibilitychange', pollPendingRecording);
+
+    return () => {
+      window.__onLikkhoGlobalNativeMicFinished = undefined;
+      window.__onLikkhoNativeAudioFileReady = undefined;
+      window.clearTimeout(timer);
+      document.removeEventListener('visibilitychange', pollPendingRecording);
+    };
+  }, [logs, editingLog, micSettings, vaultMode]);
 
   const handleToggleFullScreenMode = async () => {
     const next = !fullScreenMode;
@@ -1168,10 +1390,9 @@ export default function App() {
                           <Pin className="h-3.5 w-3.5 shrink-0 text-[#3366cc] fill-[#3366cc]" />
                         )}
                         {log.diaryLockPin && (
-                          <Lock
-                            className="h-3.5 w-3.5 shrink-0 text-[#b32424]"
-                            title="Locked Diary"
-                          />
+                          <span title="Locked Diary">
+                            <Lock className="h-3.5 w-3.5 shrink-0 text-[#b32424]" />
+                          </span>
                         )}
                         <h2 className="font-wiki-serif text-lg font-bold leading-snug text-[var(--wiki-text)] group-hover:text-[#3366cc] truncate">
                           {log.heading}
