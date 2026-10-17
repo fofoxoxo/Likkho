@@ -55,6 +55,11 @@ import {
   releaseAudioPlaybackUrl,
 } from '../utils/audioStorage';
 import {
+  getImageObjectUrl,
+  ensureImageObjectUrl,
+  processImageFileToBlob,
+} from '../utils/imageStorage';
+import {
   buildSpoilerMaskString,
   decryptSpoilerSecretText,
   lockAndMaskSpoilerElement,
@@ -215,7 +220,39 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     dataUrl: string;
     fileName: string;
     format: AudioFormatOption;
+    blob?: Blob;
   } | null>(null);
+
+  // Trigger re-render whenever an image Object URL is resolved from IndexedDB
+  const [, setMediaResolveTick] = useState<number>(0);
+
+  useEffect(() => {
+    let active = true;
+    const resolveImages = async () => {
+      let needsRerender = false;
+      if (pfpDataUrl && !getImageObjectUrl(pfpDataUrl)) {
+        await ensureImageObjectUrl(pfpDataUrl);
+        needsRerender = true;
+      }
+      if (canvasBgDataUrl && !getImageObjectUrl(canvasBgDataUrl)) {
+        await ensureImageObjectUrl(canvasBgDataUrl);
+        needsRerender = true;
+      }
+      for (const im of canvasImages) {
+        if (im.dataUrl && !getImageObjectUrl(im.dataUrl)) {
+          await ensureImageObjectUrl(im.dataUrl);
+          needsRerender = true;
+        }
+      }
+      if (active && needsRerender) {
+        setMediaResolveTick((t) => t + 1);
+      }
+    };
+    resolveImages();
+    return () => {
+      active = false;
+    };
+  }, [pfpDataUrl, canvasBgDataUrl, canvasImages]);
 
   // Free-dragging + 2-finger pinch resize & rotate state for Canvas Images
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
@@ -1193,18 +1230,19 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     setTimeout(() => setSavedIndicator(false), 1800);
   };
 
-  const handleImageFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     clearExternalFilePickerPending();
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        setRawSelectedImage(reader.result);
-        setShowPfpStudioModal(true);
-      }
-    };
-    reader.readAsDataURL(file);
+    try {
+      const processed = await processImageFileToBlob(file, 2560);
+      setRawSelectedImage(processed.id);
+      setShowPfpStudioModal(true);
+    } catch {
+      const tempUrl = URL.createObjectURL(file);
+      setRawSelectedImage(tempUrl);
+      setShowPfpStudioModal(true);
+    }
     e.target.value = '';
   };
 
@@ -1546,7 +1584,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
           >
             {pfpDataUrl ? (
               <img
-                src={pfpDataUrl}
+                src={getImageObjectUrl(pfpDataUrl) || pfpDataUrl}
                 alt="Diary PFP"
                 referrerPolicy="no-referrer"
                 className="h-full w-full object-cover"
@@ -2222,7 +2260,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
           <div
             className="pointer-events-none absolute inset-0 z-0 bg-cover bg-center bg-no-repeat"
             style={{
-              backgroundImage: `url(${canvasBgDataUrl})`,
+              backgroundImage: `url(${getImageObjectUrl(canvasBgDataUrl) || canvasBgDataUrl})`,
               opacity: canvasBgOpacity,
             }}
           />
@@ -2289,7 +2327,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
                 }`}
               >
                 <img
-                  src={img.dataUrl}
+                  src={getImageObjectUrl(img.dataUrl) || img.dataUrl}
                   alt="Canvas media"
                   referrerPolicy="no-referrer"
                   draggable={false}
@@ -2460,9 +2498,9 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
               setSelectedCanvasImgId(newId);
               setSelectedCanvasAudioId(null);
             };
-            tempImg.src = rawDataUrl;
+            tempImg.src = getImageObjectUrl(rawDataUrl) || rawDataUrl;
           }}
-          onOpenMediaAudioStudio={(rawAudioDataUrl, fileName, ext) => {
+          onOpenMediaAudioStudio={(rawAudioDataUrl, fileName, ext, blob) => {
             const validExts: AudioFormatOption[] = [
               'wav',
               'flac',
@@ -2479,6 +2517,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
               dataUrl: rawAudioDataUrl,
               fileName,
               format: fmt,
+              blob,
             });
           }}
           onAddAudioAttachment={async (aud) => {
@@ -2877,13 +2916,20 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
       {/* Media Picker Audio Studio Modal (Bitrate, Audio Codec, Mono/Stereo Channels, Sampling Rate) */}
       {rawMediaStudioAudio && (
         <MediaAudioStudioModal
+          audioBlob={rawMediaStudioAudio.blob}
           audioDataUrl={rawMediaStudioAudio.dataUrl}
           audioFileName={rawMediaStudioAudio.fileName}
           initialFormat={rawMediaStudioAudio.format}
           onCancel={() => setRawMediaStudioAudio(null)}
-          onConfirm={async (processedDataUrl, finalFileName, format, durationSec) => {
-            const newId = `aud_${Date.now()}`;
-            const persisted = await persistAudioAttachment(newId, processedDataUrl);
+          onConfirm={async (attachmentIdOrDataUrl, finalFileName, format, durationSec) => {
+            const newId = attachmentIdOrDataUrl.startsWith('aud_')
+              ? attachmentIdOrDataUrl
+              : `aud_${Date.now()}`;
+            let audioDataUrl = '';
+            if (attachmentIdOrDataUrl.startsWith('data:')) {
+              const persisted = await persistAudioAttachment(newId, attachmentIdOrDataUrl);
+              audioDataUrl = persisted.dataUrl;
+            }
             setAudioAttachments((prev) => {
               const next: CanvasAudioAttachment[] = [
                 ...prev,
@@ -2891,8 +2937,8 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
                   id: newId,
                   name: finalFileName,
                   format,
-                  audioUri: persisted.audioUri,
-                  dataUrl: persisted.dataUrl,
+                  audioUri: undefined,
+                  dataUrl: audioDataUrl,
                   durationSec,
                   createdAt: Date.now(),
                   x: 24 + (prev.length * 18) % 90,

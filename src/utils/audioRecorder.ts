@@ -111,13 +111,20 @@ export function getMimeTypeForFormat(format: AudioFormatOption): string {
   return '';
 }
 
-export async function processAudioDataUrlWithStudioSettings(
-  sourceDataUrl: string,
-  settings: AudioStudioSettings
-): Promise<{ dataUrl: string; durationSec: number }> {
+export async function processAudioBlobWithStudioSettings(
+  sourceBlob: Blob,
+  settings: AudioStudioSettings,
+  originalFormat?: AudioFormatOption,
+  hasCustomized: boolean = true
+): Promise<{ blob: Blob; durationSec: number }> {
+  // 1. Guard: Only process if file is smaller than 20MB AND user customized settings
+  const MAX_PROCESS_BYTES = 20 * 1024 * 1024; // 20 MB
+  if (sourceBlob.size >= MAX_PROCESS_BYTES || !hasCustomized) {
+    return { blob: sourceBlob, durationSec: 1 };
+  }
+
   try {
-    const res = await fetch(sourceDataUrl);
-    const arrayBuf = await res.arrayBuffer();
+    const arrayBuf = await sourceBlob.arrayBuffer();
     const AudioCtx =
       window.AudioContext ||
       (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
@@ -125,24 +132,32 @@ export async function processAudioDataUrlWithStudioSettings(
     const decoded = await audioCtx.decodeAudioData(arrayBuf);
     const durationSec = Math.max(1, Math.round(decoded.duration || 1));
 
-    // Encode with exact chosen Sampling Rate & Number of Channels (Mono/Stereo)
     const wavBlob = encodeWavFromAudioBuffer(
       decoded,
       settings.sampleRate,
       settings.channels
     );
     await audioCtx.close();
+    return { blob: wavBlob, durationSec };
+  } catch {
+    return { blob: sourceBlob, durationSec: 1 };
+  }
+}
 
-    // If user selected WAV or FLAC, return the resampled/channel-mapped lossless PCM WAV
-    if (settings.format === 'wav' || settings.format === 'flac') {
-      const dataUrl = await blobToDataUrl(wavBlob);
-      return { dataUrl, durationSec };
+export async function processAudioDataUrlWithStudioSettings(
+  sourceDataUrl: string,
+  settings: AudioStudioSettings,
+  hasCustomized: boolean = true
+): Promise<{ dataUrl: string; durationSec: number }> {
+  try {
+    const res = await fetch(sourceDataUrl);
+    const blob = await res.blob();
+    const resBlob = await processAudioBlobWithStudioSettings(blob, settings, undefined, hasCustomized);
+    if (resBlob.blob === blob) {
+      return { dataUrl: sourceDataUrl, durationSec: resBlob.durationSec };
     }
-
-    // For compressed codecs (MP3, AAC, M4A, OGG, WEBM), if MediaRecorder supports the target MIME,
-    // use the resampled WAV buffer so playback works universally across Android WebView & desktop
-    const dataUrl = await blobToDataUrl(wavBlob);
-    return { dataUrl, durationSec };
+    const dataUrl = await blobToDataUrl(resBlob.blob);
+    return { dataUrl, durationSec: resBlob.durationSec };
   } catch {
     return { dataUrl: sourceDataUrl, durationSec: 1 };
   }

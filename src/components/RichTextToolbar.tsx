@@ -61,7 +61,8 @@ import {
   finalizeRecordedAudioToDataUrl,
   getMimeTypeForFormat,
 } from '../utils/audioRecorder';
-import { persistAudioAttachment } from '../utils/audioStorage';
+import { persistAudioAttachment, saveAudioBlobToStore } from '../utils/audioStorage';
+import { processImageFileToBlob } from '../utils/imageStorage';
 import { parseImportedFileToHtml } from '../utils/importFileToCanvas';
 import {
   buildSpoilerMaskString,
@@ -98,7 +99,8 @@ interface RichTextToolbarProps {
   onOpenMediaAudioStudio?: (
     rawAudioDataUrl: string,
     fileName: string,
-    ext: string
+    ext: string,
+    audioBlob?: Blob
   ) => void;
   onAddAudioAttachment: (audio: CanvasAudioAttachment) => void;
   customFonts: CustomFontItem[];
@@ -1894,24 +1896,23 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     }
   };
 
-  const handleMediaImagePicked = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleMediaImagePicked = async (e: React.ChangeEvent<HTMLInputElement>) => {
     clearExternalFilePickerPending();
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        setShowMediaPickerMenu(false);
-        if (onInsertRawCanvasImage) {
-          onInsertRawCanvasImage(reader.result);
-          const sizeStr = formatByteSizeLabel(estimateDataUrlByteSize(reader.result));
-          showBriefHint(`Image added (${sizeStr}). Tap "Compress / Edit" if needed.`);
-        } else {
-          onOpenMediaImageStudio(reader.result);
-        }
+    setShowMediaPickerMenu(false);
+    try {
+      const processed = await processImageFileToBlob(file, 2560);
+      if (onInsertRawCanvasImage) {
+        onInsertRawCanvasImage(processed.id);
+        const sizeStr = formatByteSizeLabel(processed.blob.size);
+        showBriefHint(`Image added (${sizeStr}). Tap "Compress / Edit" if needed.`);
+      } else {
+        onOpenMediaImageStudio(processed.id);
       }
-    };
-    reader.readAsDataURL(file);
+    } catch (err) {
+      console.error('Failed to process image:', err);
+    }
     e.target.value = '';
   };
 
@@ -1919,26 +1920,23 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     clearExternalFilePickerPending();
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        const ext = (file.name.split('.').pop() || 'wav').toLowerCase();
-        setShowMediaPickerMenu(false);
-        if (onOpenMediaAudioStudio) {
-          onOpenMediaAudioStudio(reader.result, file.name, ext);
-        } else {
-          onAddAudioAttachment({
-            id: `aud_${Date.now()}`,
-            name: file.name,
-            format: ext,
-            dataUrl: reader.result,
-            createdAt: Date.now(),
-          });
-          showBriefHint(`Attached audio: ${file.name}`);
-        }
-      }
-    };
-    reader.readAsDataURL(file);
+    const ext = (file.name.split('.').pop() || 'wav').toLowerCase();
+    setShowMediaPickerMenu(false);
+
+    if (onOpenMediaAudioStudio) {
+      onOpenMediaAudioStudio('', file.name, ext, file);
+    } else {
+      const newId = `aud_${Date.now()}`;
+      saveAudioBlobToStore(newId, file);
+      onAddAudioAttachment({
+        id: newId,
+        name: file.name,
+        format: ext,
+        dataUrl: '',
+        createdAt: Date.now(),
+      });
+      showBriefHint(`Attached audio: ${file.name}`);
+    }
     e.target.value = '';
   };
 
@@ -1991,19 +1989,18 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     onContentChange();
   };
 
-  const handleBgFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleBgFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     clearExternalFilePickerPending();
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        onChangeCanvasBg(reader.result, canvasBgOpacity);
-        const sizeStr = formatByteSizeLabel(estimateDataUrlByteSize(reader.result));
-        showBriefHint(`Background set (${sizeStr}). Tap "Compress / Edit" if needed.`);
-      }
-    };
-    reader.readAsDataURL(file);
+    try {
+      const processed = await processImageFileToBlob(file, 2560);
+      onChangeCanvasBg(processed.id, canvasBgOpacity);
+      const sizeStr = formatByteSizeLabel(processed.blob.size);
+      showBriefHint(`Background set (${sizeStr}). Tap "Compress / Edit" if needed.`);
+    } catch (err) {
+      console.error('Failed to process background image:', err);
+    }
     e.target.value = '';
   };
 

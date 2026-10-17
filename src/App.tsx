@@ -54,6 +54,10 @@ import {
   shareDiaryAsLikkhoArchive,
   unpackLikkhoBase64Payload,
 } from './utils/likkhoShareArchive';
+import {
+  getImageObjectUrl,
+  migrateLogsMediaToBlobStore,
+} from './utils/imageStorage';
 
 type PageRoute = 'home' | 'workspace' | 'settings' | 'backup';
 
@@ -399,14 +403,27 @@ export default function App() {
       loadActiveAppStateFromIDB<DiaryLog[]>(idbLogsKey, vaultMode),
       loadActiveAppStateFromIDB<CustomFontItem[]>(idbFontsKey, vaultMode),
     ])
-      .then(([idbLogs, idbFonts]) => {
-        if (idbLogs && Array.isArray(idbLogs)) {
-          if (idbLogs.length > 0 || vaultMode === 'decoy') {
-            setLogs(
-              vaultMode === 'primary'
-                ? upgradeLegacyStarterLogsIfNeeded(idbLogs)
-                : idbLogs
-            );
+      .then(async ([idbLogs, idbFonts]) => {
+        const candidateLogs =
+          idbLogs && Array.isArray(idbLogs) && (idbLogs.length > 0 || vaultMode === 'decoy')
+            ? idbLogs
+            : initialLocalLogs;
+
+        if (candidateLogs && Array.isArray(candidateLogs)) {
+          // Automatic migration of legacy dataURLs to IndexedDB Blob store
+          const { logs: migratedLogs, migratedCount } = await migrateLogsMediaToBlobStore(candidateLogs);
+          const finalLogs =
+            vaultMode === 'primary'
+              ? upgradeLegacyStarterLogsIfNeeded(migratedLogs)
+              : migratedLogs;
+          setLogs(finalLogs);
+          if (migratedCount > 0) {
+            await saveActiveAppStateToIDB(idbLogsKey, finalLogs, vaultMode);
+            try {
+              localStorage.setItem(logsStorageKey, JSON.stringify(finalLogs));
+            } catch {
+              // ignore
+            }
           }
         }
         if (idbFonts && Array.isArray(idbFonts)) {
@@ -1356,7 +1373,10 @@ export default function App() {
               </div>
             ) : (
               sortedLogs.map((log) => {
-                const avatarSrc = log.pfpDataUrl || getFallbackMonographPfp();
+                const avatarSrc =
+                  getImageObjectUrl(log.pfpDataUrl) ||
+                  log.pfpDataUrl ||
+                  getFallbackMonographPfp();
                 const isMenuOpen = openMenuLogId === log.id;
 
                 return (

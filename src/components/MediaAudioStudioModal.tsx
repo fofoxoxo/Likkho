@@ -3,16 +3,19 @@ import { Check, X, Volume2, Sliders, RotateCcw } from 'lucide-react';
 import { AudioFormatOption } from '../utils/cryptoVault';
 import {
   AudioStudioSettings,
+  processAudioBlobWithStudioSettings,
   processAudioDataUrlWithStudioSettings,
 } from '../utils/audioRecorder';
+import { saveAudioBlobToStore } from '../utils/audioStorage';
 
 interface MediaAudioStudioModalProps {
-  audioDataUrl: string;
+  audioBlob?: Blob;
+  audioDataUrl?: string;
   audioFileName: string;
   initialFormat?: AudioFormatOption;
   onCancel: () => void;
   onConfirm: (
-    processedDataUrl: string,
+    attachmentIdOrDataUrl: string,
     finalFileName: string,
     format: AudioFormatOption,
     durationSec: number
@@ -46,6 +49,7 @@ const SAMPLE_RATE_OPTIONS: { value: 8000 | 16000 | 22050 | 44100 | 48000; label:
 ];
 
 export const MediaAudioStudioModal: React.FC<MediaAudioStudioModalProps> = ({
+  audioBlob,
   audioDataUrl,
   audioFileName,
   initialFormat = 'wav',
@@ -63,39 +67,54 @@ export const MediaAudioStudioModal: React.FC<MediaAudioStudioModalProps> = ({
     origChannels: number;
   } | null>(null);
 
+  // Extract duration via <audio> loadedmetadata without decoding full file into RAM
   useEffect(() => {
     let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch(audioDataUrl);
-        const buf = await res.arrayBuffer();
-        const AudioCtx =
-          window.AudioContext ||
-          (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-        const ctx = new AudioCtx();
-        const decoded = await ctx.decodeAudioData(buf);
-        if (!cancelled) {
-          setSourceInfo({
-            duration: Math.max(1, Math.round(decoded.duration || 1)),
-            origRate: decoded.sampleRate,
-            origChannels: decoded.numberOfChannels,
-          });
-          setChannels(decoded.numberOfChannels >= 2 ? 2 : 1);
-        }
-        await ctx.close();
-      } catch {
-        // ignore
+    let tempUrl = '';
+
+    if (audioBlob) {
+      tempUrl = URL.createObjectURL(audioBlob);
+    } else if (audioDataUrl) {
+      tempUrl = audioDataUrl;
+    }
+
+    if (!tempUrl) return;
+
+    const audioEl = document.createElement('audio');
+    audioEl.preload = 'metadata';
+    audioEl.src = tempUrl;
+
+    const handleLoadedMetadata = () => {
+      if (!cancelled) {
+        const dur = Math.max(1, Math.round(audioEl.duration || 1));
+        setSourceInfo({
+          duration: dur,
+          origRate: 44100,
+          origChannels: 2,
+        });
       }
-    })();
+    };
+
+    audioEl.addEventListener('loadedmetadata', handleLoadedMetadata);
+    audioEl.load();
+
     return () => {
       cancelled = true;
+      audioEl.removeEventListener('loadedmetadata', handleLoadedMetadata);
+      if (tempUrl.startsWith('blob:')) {
+        try {
+          URL.revokeObjectURL(tempUrl);
+        } catch {
+          // ignore
+        }
+      }
     };
-  }, [audioDataUrl]);
+  }, [audioBlob, audioDataUrl]);
 
   const resetDefaults = () => {
     setFormat(initialFormat);
     setBitRate(128000);
-    setChannels(sourceInfo?.origChannels === 1 ? 1 : 2);
+    setChannels(2);
     setSampleRate(44100);
   };
 
@@ -107,14 +126,56 @@ export const MediaAudioStudioModal: React.FC<MediaAudioStudioModalProps> = ({
       channels,
       sampleRate,
     };
-    const { dataUrl, durationSec } = await processAudioDataUrlWithStudioSettings(
-      audioDataUrl,
-      settings
-    );
+
+    const hasCustomized =
+      format !== initialFormat ||
+      bitRate !== 128000 ||
+      channels !== 2 ||
+      sampleRate !== 44100;
+
+    const newId = `aud_${Date.now()}`;
     const baseName = audioFileName.replace(/\.[a-z0-9]+$/i, '') || 'Audio';
     const finalName = `${baseName}.${format}`;
+    const durationSec = sourceInfo?.duration || 1;
+
+    try {
+      if (audioBlob) {
+        // If file is >= 20MB or settings were not changed, save original blob directly without decode
+        if (audioBlob.size >= 20 * 1024 * 1024 || !hasCustomized) {
+          await saveAudioBlobToStore(newId, audioBlob);
+          setIsProcessing(false);
+          onConfirm(newId, finalName, format, durationSec);
+          return;
+        }
+
+        // Small file (< 20MB) and settings changed: process audio
+        const res = await processAudioBlobWithStudioSettings(
+          audioBlob,
+          settings,
+          initialFormat,
+          true
+        );
+        await saveAudioBlobToStore(newId, res.blob);
+        setIsProcessing(false);
+        onConfirm(newId, finalName, format, res.durationSec || durationSec);
+        return;
+      }
+
+      if (audioDataUrl) {
+        const { dataUrl, durationSec: procDur } = await processAudioDataUrlWithStudioSettings(
+          audioDataUrl,
+          settings,
+          hasCustomized
+        );
+        setIsProcessing(false);
+        onConfirm(dataUrl, finalName, format, procDur || durationSec);
+        return;
+      }
+    } catch (err) {
+      console.error('Audio insertion error:', err);
+    }
+
     setIsProcessing(false);
-    onConfirm(dataUrl, finalName, format, durationSec);
   };
 
   return (

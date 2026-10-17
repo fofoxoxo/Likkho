@@ -10,6 +10,11 @@ import {
   Settings2,
   FileArchive,
 } from 'lucide-react';
+import {
+  ensureImageObjectUrl,
+  saveImageBlobAndGetRef,
+  dataUrlToBlob,
+} from '../utils/imageStorage';
 
 export type ImageFilterPreset =
   | 'none'
@@ -194,17 +199,27 @@ export const MediaImageStudioModal: React.FC<MediaImageStudioModalProps> = ({
   const [panY, setPanY] = useState<number>(0);
 
   useEffect(() => {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => {
-      setImgEl(img);
-      setOriginalWidth(img.width);
-      setOriginalHeight(img.height);
-      const scale = Math.min(720 / img.width, 720 / img.height, 1);
-      setResolutionWidth(Math.max(64, Math.round(img.width * scale)));
-      setResolutionHeight(Math.max(64, Math.round(img.height * scale)));
+    let cancelled = false;
+    (async () => {
+      const resolvedSrc = (await ensureImageObjectUrl(imageSrc)) || imageSrc;
+      if (cancelled) return;
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        if (!cancelled) {
+          setImgEl(img);
+          setOriginalWidth(img.width);
+          setOriginalHeight(img.height);
+          const scale = Math.min(720 / img.width, 720 / img.height, 1);
+          setResolutionWidth(Math.max(64, Math.round(img.width * scale)));
+          setResolutionHeight(Math.max(64, Math.round(img.height * scale)));
+        }
+      };
+      img.src = resolvedSrc;
+    })();
+    return () => {
+      cancelled = true;
     };
-    img.src = imageSrc;
   }, [imageSrc]);
 
   const hasVisualEdits =
@@ -649,7 +664,7 @@ export const MediaImageStudioModal: React.FC<MediaImageStudioModalProps> = ({
     panY,
   ]);
 
-  const handlePlaceOnCanvas = () => {
+  const handlePlaceOnCanvas = async () => {
     // If compression is NOT enabled and no visual filter/crop/adjustment was made,
     // use the original imageSrc directly without re-encoding or compressing!
     if (!isCompressionEnabled && !hasVisualEdits) {
@@ -658,6 +673,18 @@ export const MediaImageStudioModal: React.FC<MediaImageStudioModalProps> = ({
         originalWidth > 0
           ? Math.round((displayW * originalHeight) / originalWidth)
           : 240;
+
+      if (imageSrc.startsWith('data:image/')) {
+        try {
+          const blob = await dataUrlToBlob(imageSrc);
+          const { id } = await saveImageBlobAndGetRef(blob);
+          onConfirm(id, opacity, displayW, displayH);
+          return;
+        } catch {
+          // ignore
+        }
+      }
+
       onConfirm(imageSrc, opacity, displayW, displayH);
       return;
     }
@@ -669,12 +696,20 @@ export const MediaImageStudioModal: React.FC<MediaImageStudioModalProps> = ({
     const qualityRatio = isCompressionEnabled
       ? Math.min(1, Math.max(0.05, qualityPercent / 100))
       : 0.96;
-    const dataUrl = previewCanvasRef.current.toDataURL(outFmt, qualityRatio);
     const w = Math.min(240, previewCanvasRef.current.width);
     const h = Math.round(
       (w * previewCanvasRef.current.height) / previewCanvasRef.current.width
     );
-    onConfirm(dataUrl, opacity, w, h);
+
+    previewCanvasRef.current.toBlob(
+      async (blob) => {
+        if (!blob) return;
+        const { id } = await saveImageBlobAndGetRef(blob);
+        onConfirm(id, opacity, w, h);
+      },
+      outFmt,
+      qualityRatio
+    );
   };
 
   return (

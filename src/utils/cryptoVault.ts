@@ -8,6 +8,9 @@
  *   - Every subsequent wrong attempt (6th, 7th, ...) multiplies 30 seconds by the attempt count (e.g., 5 -> 30s, 6 -> 180s, 7 -> 210s, ...)
  */
 
+import { getImageBlobFromStore, saveImageBlobToStore, preloadLogImages } from './imageStorage';
+import { getAudioBlobFromStore, saveAudioBlobToStore } from './audioStorage';
+
 export type VaultMode = 'primary' | 'decoy';
 
 // ==================== External OS File Picker / SAF Grace Window ====================
@@ -195,10 +198,18 @@ export interface EncryptedVaultMetadata {
   keyHintHash: string | null;
 }
 
+export interface MediaArchiveItem {
+  id: string;
+  type: 'image' | 'audio';
+  mimeType: string;
+  base64: string;
+}
+
 export interface VaultBackupBundle {
   logs: DiaryLog[];
   customFonts?: CustomFontItem[];
   micSettings?: MicRecordingSettings;
+  mediaArchive?: MediaArchiveItem[];
 }
 
 export interface VaultDomainConfig {
@@ -435,6 +446,68 @@ export async function encryptVaultBundle(
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const aesKey = await deriveAesKey(encryptionKey.trim(), salt, vaultMode);
 
+  // Extract media blobs from IndexedDB stores to bundle into encrypted backup
+  const mediaArchive: MediaArchiveItem[] = [];
+  const processedImageIds = new Set<string>();
+  const processedAudioIds = new Set<string>();
+
+  for (const log of bundle.logs) {
+    // Images: PFP, background, canvas images
+    const imageCandidates = [
+      log.pfpDataUrl,
+      log.canvasBgDataUrl,
+      ...(log.canvasImages || []).map((img) => img.dataUrl),
+    ];
+
+    for (const ref of imageCandidates) {
+      if (
+        ref &&
+        !ref.startsWith('data:') &&
+        !ref.startsWith('blob:') &&
+        !ref.startsWith('http://') &&
+        !ref.startsWith('https://') &&
+        !processedImageIds.has(ref)
+      ) {
+        processedImageIds.add(ref);
+        try {
+          const blob = await getImageBlobFromStore(ref);
+          if (blob) {
+            const arr = await blob.arrayBuffer();
+            mediaArchive.push({
+              id: ref,
+              type: 'image',
+              mimeType: blob.type || 'image/jpeg',
+              base64: bufferToBase64(arr),
+            });
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }
+
+    // Audio attachments
+    for (const aud of log.audioAttachments || []) {
+      if (aud.id && !processedAudioIds.has(aud.id)) {
+        processedAudioIds.add(aud.id);
+        try {
+          const blob = await getAudioBlobFromStore(aud.id);
+          if (blob) {
+            const arr = await blob.arrayBuffer();
+            mediaArchive.push({
+              id: aud.id,
+              type: 'audio',
+              mimeType: blob.type || 'audio/wav',
+              base64: bufferToBase64(arr),
+            });
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }
+  }
+
   const plaintext = JSON.stringify({
     magic: 'WIKILOG_VAULT_V1',
     dbTarget: cfg.dbFilename,
@@ -442,6 +515,7 @@ export async function encryptVaultBundle(
     logs: bundle.logs,
     customFonts: bundle.customFonts || [],
     micSettings: bundle.micSettings,
+    mediaArchive,
   });
 
   const enc = new TextEncoder();
@@ -531,6 +605,25 @@ export async function decryptVaultBundle(
       if (parsed.magic !== 'WIKILOG_VAULT_V1' || !Array.isArray(parsed.logs)) {
         continue;
       }
+
+      // Restore media archive items into IndexedDB
+      if (Array.isArray(parsed.mediaArchive)) {
+        for (const item of parsed.mediaArchive as MediaArchiveItem[]) {
+          try {
+            const bytes = base64ToBytes(item.base64);
+            const blob = new Blob([bytes as unknown as BlobPart], { type: item.mimeType });
+            if (item.type === 'image') {
+              await saveImageBlobToStore(item.id, blob);
+            } else if (item.type === 'audio') {
+              await saveAudioBlobToStore(item.id, blob);
+            }
+          } catch {
+            // ignore
+          }
+        }
+        await preloadLogImages(parsed.logs as DiaryLog[]);
+      }
+
       return {
         logs: parsed.logs as DiaryLog[],
         customFonts: Array.isArray(parsed.customFonts) ? parsed.customFonts : [],

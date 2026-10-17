@@ -1,11 +1,17 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Check, ImagePlus, RotateCcw, Smile, Trash2, Upload, X, ZoomIn, ZoomOut } from 'lucide-react';
 
+import {
+  ensureImageObjectUrl,
+  processImageFileToBlob,
+  saveImageBlobAndGetRef,
+} from '../utils/imageStorage';
+
 interface ImageCropperModalProps {
   imageSrc?: string | null;
   currentPfpDataUrl?: string | null;
   onCancel: () => void;
-  onCropComplete: (croppedDataUrl: string | null) => void;
+  onCropComplete: (croppedDataUrlOrId: string | null) => void;
 }
 
 const PFP_BG_COLORS: { label: string; value: string; textColor: string }[] = [
@@ -81,14 +87,24 @@ export const ImageCropperModal: React.FC<ImageCropperModalProps> = ({
       setImgElement(null);
       return;
     }
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => {
-      setImgElement(img);
-      setZoom(1);
-      setOffset({ x: 0, y: 0 });
+    let cancelled = false;
+    (async () => {
+      const resolvedSrc = (await ensureImageObjectUrl(localImageSrc)) || localImageSrc;
+      if (cancelled) return;
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        if (!cancelled) {
+          setImgElement(img);
+          setZoom(1);
+          setOffset({ x: 0, y: 0 });
+        }
+      };
+      img.src = resolvedSrc;
+    })();
+    return () => {
+      cancelled = true;
     };
-    img.src = localImageSrc;
   }, [localImageSrc]);
 
   // Render Image Cropper Canvas
@@ -231,17 +247,18 @@ export const ImageCropperModal: React.FC<ImageCropperModalProps> = ({
     }
   };
 
-  const handleInternalFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleInternalFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        setLocalImageSrc(reader.result);
-        setActiveTab('image');
-      }
-    };
-    reader.readAsDataURL(file);
+    try {
+      const processed = await processImageFileToBlob(file, 2560);
+      setLocalImageSrc(processed.objectUrl);
+      setActiveTab('image');
+    } catch {
+      const temp = URL.createObjectURL(file);
+      setLocalImageSrc(temp);
+      setActiveTab('image');
+    }
     e.target.value = '';
   };
 
@@ -260,8 +277,11 @@ export const ImageCropperModal: React.FC<ImageCropperModalProps> = ({
         textColor,
         fontScale
       );
-      const dataUrl = outCanvas.toDataURL('image/png');
-      onCropComplete(dataUrl);
+      outCanvas.toBlob(async (blob) => {
+        if (!blob) return;
+        const { id } = await saveImageBlobAndGetRef(blob);
+        onCropComplete(id);
+      }, 'image/png');
       return;
     }
 
@@ -283,8 +303,11 @@ export const ImageCropperModal: React.FC<ImageCropperModalProps> = ({
     outCtx.fillRect(0, 0, OUTPUT_RES, OUTPUT_RES);
     outCtx.drawImage(imgElement, drawX, drawY, drawWidth, drawHeight);
 
-    const dataUrl = outCanvas.toDataURL('image/jpeg', 0.88);
-    onCropComplete(dataUrl);
+    outCanvas.toBlob(async (blob) => {
+      if (!blob) return;
+      const { id } = await saveImageBlobAndGetRef(blob);
+      onCropComplete(id);
+    }, 'image/jpeg', 0.88);
   };
 
   return (

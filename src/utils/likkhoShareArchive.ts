@@ -6,6 +6,11 @@ import {
 } from './cryptoVault';
 import { buildZipArchiveBlob, ZipEntryFile } from './zipDataExporter';
 import { getAudioBinaryBytes, saveAudioBlobToStore } from './audioStorage';
+import {
+  getImageBlobFromStore,
+  saveImageBlobToStore as saveImageBlobToImageStore,
+  ensureImageObjectUrl,
+} from './imageStorage';
 
 export const LIKKHO_GITHUB_DOWNLOAD_URL = 'https://github.com/Likkho/Likkho/releases';
 
@@ -240,6 +245,32 @@ function parseDataUrlToBytesAndMeta(
   }
 }
 
+async function getImageBinaryBytesAndMeta(
+  refOrDataUrl: string,
+  fallbackExt: string,
+  fallbackMime: string
+): Promise<{ bytes: Uint8Array; ext: string; mimeType: string } | null> {
+  if (!refOrDataUrl) return null;
+  if (!refOrDataUrl.startsWith('data:')) {
+    try {
+      const blob = await getImageBlobFromStore(refOrDataUrl);
+      if (!blob) return null;
+      const arrayBuffer = await blob.arrayBuffer();
+      const mimeType = blob.type || fallbackMime;
+      let ext = fallbackExt;
+      if (mimeType.includes('png')) ext = 'png';
+      else if (mimeType.includes('jpeg') || mimeType.includes('jpg')) ext = 'jpg';
+      else if (mimeType.includes('webp')) ext = 'webp';
+      else if (mimeType.includes('gif')) ext = 'gif';
+      else if (mimeType.includes('svg')) ext = 'svg';
+      return { bytes: new Uint8Array(arrayBuffer), ext, mimeType };
+    } catch {
+      return null;
+    }
+  }
+  return parseDataUrlToBytesAndMeta(refOrDataUrl, fallbackExt, fallbackMime);
+}
+
 function bytesToDataUrl(bytes: Uint8Array, mimeType: string): string {
   let binary = '';
   const chunkSize = 0x8000;
@@ -342,7 +373,7 @@ export async function packDiaryToLikkhoBlob(
   // 1. Extract Profile Picture (PFP)
   let pfpPath: string | null = null;
   if (log.pfpDataUrl) {
-    const parsedPfp = parseDataUrlToBytesAndMeta(
+    const parsedPfp = await getImageBinaryBytesAndMeta(
       log.pfpDataUrl,
       'png',
       'image/png'
@@ -356,7 +387,7 @@ export async function packDiaryToLikkhoBlob(
   // 2. Extract Canvas Background Image
   let canvasBgPath: string | null = null;
   if (log.canvasBgDataUrl) {
-    const parsedBg = parseDataUrlToBytesAndMeta(
+    const parsedBg = await getImageBinaryBytesAndMeta(
       log.canvasBgDataUrl,
       'png',
       'image/png'
@@ -373,10 +404,11 @@ export async function packDiaryToLikkhoBlob(
   const inlineImagesMeta: LikkhoArchiveManifest['diary']['inlineImages'] = [];
   const inlineImgElements = Array.from(tempDiv.querySelectorAll('img'));
 
-  inlineImgElements.forEach((imgEl, index) => {
+  for (let index = 0; index < inlineImgElements.length; index++) {
+    const imgEl = inlineImgElements[index];
     const src = imgEl.getAttribute('src') || '';
     const alt = imgEl.getAttribute('alt') || `inline_${index + 1}`;
-    const parsedInline = parseDataUrlToBytesAndMeta(src, 'png', 'image/png');
+    const parsedInline = await getImageBinaryBytesAndMeta(src, 'png', 'image/png');
     if (parsedInline) {
       const placeholderId = `__LIKKHO_INLINE_IMG_${index + 1}__`;
       const archivePath = `images/inline_${index + 1}.${parsedInline.ext}`;
@@ -390,14 +422,15 @@ export async function packDiaryToLikkhoBlob(
       imgEl.setAttribute('data-likkho-inline-id', placeholderId);
       imgEl.removeAttribute('src');
     }
-  });
+  }
 
   const tokenizedHtml = tempDiv.innerHTML;
 
   // 4. Extract Floating / Layered Canvas Images in exact order
   const canvasImagesMeta: LikkhoArchiveManifest['diary']['canvasImages'] = [];
-  (log.canvasImages || []).forEach((img, idx) => {
-    const parsed = parseDataUrlToBytesAndMeta(
+  for (let idx = 0; idx < (log.canvasImages || []).length; idx++) {
+    const img = log.canvasImages![idx];
+    const parsed = await getImageBinaryBytesAndMeta(
       img.dataUrl,
       'png',
       'image/png'
@@ -432,7 +465,7 @@ export async function packDiaryToLikkhoBlob(
         layer: img.layer,
       });
     }
-  });
+  }
 
   // 5. Extract Audio Recordings / Attachments in exact order and format
   const audioMeta: LikkhoArchiveManifest['diary']['audioAttachments'] = [];
@@ -670,7 +703,11 @@ export async function unpackLikkhoArchiveBuffer(
         : ext === 'webp'
         ? 'image/webp'
         : 'image/png';
-    pfpDataUrl = bytesToDataUrl(fileMap.get(d.pfpPath)!, mime);
+    const blob = new Blob([fileMap.get(d.pfpPath)! as unknown as BlobPart], { type: mime });
+    const pfpId = `img_blob_pfp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    await saveImageBlobToImageStore(pfpId, blob);
+    await ensureImageObjectUrl(pfpId);
+    pfpDataUrl = pfpId;
   }
 
   // 2. Reconstruct Canvas Background Image
@@ -683,41 +720,48 @@ export async function unpackLikkhoArchiveBuffer(
         : ext === 'webp'
         ? 'image/webp'
         : 'image/png';
-    canvasBgDataUrl = bytesToDataUrl(fileMap.get(d.canvasBgPath)!, mime);
+    const blob = new Blob([fileMap.get(d.canvasBgPath)! as unknown as BlobPart], { type: mime });
+    const bgId = `img_blob_bg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    await saveImageBlobToImageStore(bgId, blob);
+    await ensureImageObjectUrl(bgId);
+    canvasBgDataUrl = bgId;
   }
 
   // 3. Reconstruct Inline Images inside `contentHtml` in exact order
   const tempDiv = document.createElement('div');
   tempDiv.innerHTML = d.contentHtml || '';
-  (d.inlineImages || []).forEach((inl) => {
+  for (const inl of d.inlineImages || []) {
     const imgEl = tempDiv.querySelector(
       `img[data-likkho-inline-id="${inl.placeholderId}"]`
     );
     if (imgEl && inl.archivePath && fileMap.has(inl.archivePath)) {
-      const dataUrl = bytesToDataUrl(
-        fileMap.get(inl.archivePath)!,
-        inl.mimeType || 'image/png'
-      );
-      imgEl.setAttribute('src', dataUrl);
+      const mime = inl.mimeType || 'image/png';
+      const blob = new Blob([fileMap.get(inl.archivePath)! as unknown as BlobPart], { type: mime });
+      const inlId = `img_blob_inl_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      await saveImageBlobToImageStore(inlId, blob);
+      const objUrl = await ensureImageObjectUrl(inlId);
+      imgEl.setAttribute('src', objUrl);
       imgEl.removeAttribute('data-likkho-inline-id');
     }
-  });
+  }
   const restoredContentHtml = tempDiv.innerHTML;
 
   // 4. Reconstruct Floating / Layered Canvas Images in exact order
   const canvasImages: CanvasDraggableImage[] = [];
-  (d.canvasImages || []).forEach((cImg) => {
-    let dataUrl = cImg.dataUrlFallback || '';
+  for (const cImg of d.canvasImages || []) {
+    let imgRef = cImg.dataUrlFallback || '';
     if (cImg.archivePath && fileMap.has(cImg.archivePath)) {
-      dataUrl = bytesToDataUrl(
-        fileMap.get(cImg.archivePath)!,
-        cImg.mimeType || 'image/png'
-      );
+      const mime = cImg.mimeType || 'image/png';
+      const blob = new Blob([fileMap.get(cImg.archivePath)! as unknown as BlobPart], { type: mime });
+      const imgId = `img_blob_cnv_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      await saveImageBlobToImageStore(imgId, blob);
+      await ensureImageObjectUrl(imgId);
+      imgRef = imgId;
     }
-    if (dataUrl) {
+    if (imgRef) {
       canvasImages.push({
         id: cImg.id,
-        dataUrl,
+        dataUrl: imgRef,
         x: cImg.x,
         y: cImg.y,
         width: cImg.width,
@@ -727,7 +771,7 @@ export async function unpackLikkhoArchiveBuffer(
         layer: cImg.layer,
       });
     }
-  });
+  }
 
   // 5. Reconstruct Audio Recordings / Player Cards in exact order
   const audioAttachments: CanvasAudioAttachment[] = [];

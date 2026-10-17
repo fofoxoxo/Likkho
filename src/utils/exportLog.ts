@@ -1,4 +1,5 @@
 import { CanvasAudioAttachment, CanvasDraggableImage, DiaryLog } from './cryptoVault';
+import { ensureImageObjectUrl } from './imageStorage';
 
 export type ExportFormat =
   | 'txt'
@@ -111,13 +112,14 @@ function formatAudioStamp(ms?: number): string {
   return `${datePart} · ${timePart}`;
 }
 
-function loadImageElement(src: string): Promise<HTMLImageElement | null> {
+async function loadImageElement(src: string): Promise<HTMLImageElement | null> {
+  const resolved = (await ensureImageObjectUrl(src)) || src;
   return new Promise((resolve) => {
     const img = new Image();
     img.crossOrigin = 'anonymous';
     img.onload = () => resolve(img);
     img.onerror = () => resolve(null);
-    img.src = src;
+    img.src = resolved;
   });
 }
 
