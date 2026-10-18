@@ -20,9 +20,16 @@ android {
         }
     }
 
+    val isReleaseTaskRequested = gradle.startParameter.taskNames.any {
+        it.contains("Release", ignoreCase = true)
+    }
+
     signingConfigs {
         create("release") {
             val keystoreBase64 = System.getenv("KEYSTORE_BASE64")
+            if (isReleaseTaskRequested && keystoreBase64.isNullOrBlank()) {
+                throw GradleException("FATAL: KEYSTORE_BASE64 secret is missing. Release build cannot proceed without release keystore.")
+            }
             if (!keystoreBase64.isNullOrBlank()) {
                 val keystoreFile = file("release-keystore.jks")
                 keystoreFile.parentFile?.mkdirs()
@@ -30,8 +37,11 @@ android {
                 keystoreFile.writeBytes(decodedBytes)
                 storeFile = keystoreFile
                 storePassword = System.getenv("KEYSTORE_PASSWORD")
+                    ?: if (isReleaseTaskRequested) throw GradleException("FATAL: KEYSTORE_PASSWORD secret is missing.") else ""
                 keyAlias = System.getenv("KEY_ALIAS")
+                    ?: if (isReleaseTaskRequested) throw GradleException("FATAL: KEY_ALIAS secret is missing.") else ""
                 keyPassword = System.getenv("KEY_PASSWORD")
+                    ?: if (isReleaseTaskRequested) throw GradleException("FATAL: KEY_PASSWORD secret is missing.") else ""
             }
         }
     }
@@ -39,11 +49,10 @@ android {
     buildTypes {
         getByName("release") {
             val releaseSigning = signingConfigs.getByName("release")
-            if (releaseSigning.storeFile != null && releaseSigning.storeFile!!.exists()) {
-                signingConfig = releaseSigning
-            } else {
-                signingConfig = signingConfigs.getByName("debug")
+            if (isReleaseTaskRequested && (releaseSigning.storeFile == null || !releaseSigning.storeFile!!.exists())) {
+                throw GradleException("FATAL: Release keystore file does not exist. Debug fallback is disabled.")
             }
+            signingConfig = releaseSigning
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(

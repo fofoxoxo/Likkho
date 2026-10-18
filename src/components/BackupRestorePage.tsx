@@ -142,7 +142,7 @@ export const BackupRestorePage: React.FC<BackupRestorePageProps> = ({
       }
 
       resetPasscodeFailures();
-      await performStreamingVaultBackup(
+      const meta = await performStreamingVaultBackup(
         {
           logs,
           customFonts,
@@ -155,10 +155,17 @@ export const BackupRestorePage: React.FC<BackupRestorePageProps> = ({
       if (!savedKeyHash) {
         onSaveKeyHash(inputHash);
       }
-      setStatusBanner({
-        type: 'success',
-        text: 'Backup completed.',
-      });
+      if (meta.failedMediaCount && meta.failedMediaCount > 0) {
+        setStatusBanner({
+          type: 'error',
+          text: `Backup finished with issues: ${meta.failedMediaCount} media files backup me nahi aa payi.`,
+        });
+      } else {
+        setStatusBanner({
+          type: 'success',
+          text: 'Backup completed successfully.',
+        });
+      }
     } catch (err) {
       setStatusBanner({
         type: 'error',
@@ -200,10 +207,17 @@ export const BackupRestorePage: React.FC<BackupRestorePageProps> = ({
       onSaveKeyHash(keyHash);
       onRestoreBundle(bundle);
       setRestorePassphrase('');
-      setStatusBanner({
-        type: 'success',
-        text: 'Data restored.',
-      });
+      if (bundle.skippedMediaCount && bundle.skippedMediaCount > 0) {
+        setStatusBanner({
+          type: 'error',
+          text: `Data restored with warnings: ${bundle.skippedMediaCount} incomplete media items were skipped.`,
+        });
+      } else {
+        setStatusBanner({
+          type: 'success',
+          text: 'Data restored successfully.',
+        });
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Incorrect Encryption Key.';
       if (msg.includes('Incorrect Encryption Key')) {

@@ -15,6 +15,8 @@ import {
   restoreFromStreamSource,
   uint8ArrayToBase64Chunk,
   base64ToUint8ArrayChunk,
+  isChunkedStreamMagic,
+  StreamSliceReader,
 } from './chunkedVaultStream';
 
 export type VaultMode = 'primary' | 'decoy';
@@ -212,6 +214,8 @@ export interface EncryptedVaultMetadata {
   vaultPath: string;
   sizeBytes: number;
   keyHintHash: string | null;
+  failedMediaCount?: number;
+  failedMediaIds?: string[];
 }
 
 export interface MediaArchiveItem {
@@ -226,6 +230,8 @@ export interface VaultBackupBundle {
   customFonts?: CustomFontItem[];
   micSettings?: MicRecordingSettings;
   mediaArchive?: MediaArchiveItem[];
+  skippedMediaCount?: number;
+  skippedMediaIds?: string[];
 }
 
 export interface VaultDomainConfig {
@@ -622,6 +628,7 @@ export async function decryptVaultBundle(
         continue;
       }
 
+      const savedAudioIds = new Set<string>();
       // Restore media archive items into IndexedDB
       if (Array.isArray(parsed.mediaArchive)) {
         for (const item of parsed.mediaArchive as MediaArchiveItem[]) {
@@ -632,12 +639,23 @@ export async function decryptVaultBundle(
               await saveImageBlobToStore(item.id, blob);
             } else if (item.type === 'audio') {
               await saveAudioBlobToStore(item.id, blob);
+              savedAudioIds.add(item.id);
             }
           } catch {
             // ignore
           }
         }
         await preloadLogImages(parsed.logs as DiaryLog[]);
+      }
+
+      for (const log of parsed.logs as DiaryLog[]) {
+        if (log.audioAttachments && Array.isArray(log.audioAttachments)) {
+          for (const att of log.audioAttachments) {
+            if (savedAudioIds.has(att.id)) {
+              att.audioUri = undefined;
+            }
+          }
+        }
       }
 
       return {
@@ -745,81 +763,93 @@ export async function performStreamingVaultBackup(
   const cfg = getVaultConfig(vaultMode);
   const now = Date.now();
   let totalBytesWritten = 0;
+  let failedMediaCount = 0;
+  let failedMediaIds: string[] = [];
 
   // 1. Native Android SAF Streaming
   if (window.LikkhoNative && typeof window.LikkhoNative.beginSafBackupStream === 'function') {
     const started = window.LikkhoNative.beginSafBackupStream(vaultMode);
-    if (started) {
-      try {
-        await new Promise<void>(async (resolve, reject) => {
-          window.__onLikkhoSafBackupResult = (success: boolean, msg?: string) => {
-            window.__onLikkhoSafBackupResult = undefined;
-            if (success) resolve();
-            else reject(new Error(msg || 'SAF backup failed.'));
-          };
-          const normalizedBundle = {
-            logs: bundle.logs,
-            customFonts: bundle.customFonts || [],
-            micSettings: bundle.micSettings,
-          };
-          try {
-            const res = await streamBackupChunks(
-              normalizedBundle,
-              passphrase,
-              vaultMode,
-              async (chunk) => {
-                const b64 = uint8ArrayToBase64Chunk(chunk);
-                window.LikkhoNative?.appendSafBackupChunk?.(b64);
-              }
-            );
-            totalBytesWritten = res.totalBytes;
-            window.LikkhoNative?.finishSafBackupStream?.();
-          } catch (err) {
-            window.LikkhoNative?.cancelSafBackupStream?.();
-            reject(err);
-          }
-        });
-      } catch (err) {
-        console.warn('Native SAF streaming backup failed, falling back:', err);
-      }
+    if (!started) {
+      throw new Error('Backup folder is not selected or cannot be accessed. Please choose a backup folder in Settings.');
     }
+    await new Promise<void>(async (resolve, reject) => {
+      window.__onLikkhoSafBackupResult = (success: boolean, msg?: string) => {
+        window.__onLikkhoSafBackupResult = undefined;
+        if (success) resolve();
+        else reject(new Error(msg || 'SAF backup failed.'));
+      };
+      const normalizedBundle = {
+        logs: bundle.logs,
+        customFonts: bundle.customFonts || [],
+        micSettings: bundle.micSettings,
+      };
+      try {
+        const res = await streamBackupChunks(
+          normalizedBundle,
+          passphrase,
+          vaultMode,
+          async (chunk) => {
+            const b64 = uint8ArrayToBase64Chunk(chunk);
+            const ok = window.LikkhoNative?.appendSafBackupChunk?.(b64);
+            if (ok === false) {
+              window.LikkhoNative?.cancelSafBackupStream?.();
+              throw new Error('Failed to write backup chunk to SAF storage.');
+            }
+          }
+        );
+        totalBytesWritten = res.totalBytes;
+        failedMediaCount = res.failedMediaCount;
+        failedMediaIds = res.failedMediaIds;
+        window.LikkhoNative?.finishSafBackupStream?.();
+      } catch (err) {
+        window.LikkhoNative?.cancelSafBackupStream?.();
+        reject(err);
+      }
+    });
   } else if (window.LikkhoNative && typeof window.LikkhoNative.saveBackupViaSaf === 'function') {
     // Legacy fallback for native without streaming
     const envelope = await encryptVaultBundle(bundle, passphrase, vaultMode);
     return writeToPrivateSpecialFolder(envelope, bundle.logs.length, keyHintHash, vaultMode);
-  }
-
-  // 2. OPFS Streaming (Chromium / Web)
-  try {
-    if (navigator.storage && typeof navigator.storage.getDirectory === 'function') {
-      const rootDir = await navigator.storage.getDirectory();
-      const specialFolder = await rootDir.getDirectoryHandle(cfg.safFolderName, { create: true });
-      const fileHandle = await specialFolder.getFileHandle(cfg.dbFilename, { create: true });
-      if ('createWritable' in fileHandle) {
-        const writable = await (fileHandle as any).createWritable();
-        try {
-          const res = await streamBackupChunks(
-            {
-              logs: bundle.logs,
-              customFonts: bundle.customFonts || [],
-              micSettings: bundle.micSettings,
-            },
-            passphrase,
-            vaultMode,
-            async (chunk) => {
-              await writable.write(chunk);
-            }
-          );
-          if (totalBytesWritten === 0) {
+  } else {
+    // 2. OPFS Streaming (Chromium / Web)
+    try {
+      if (navigator.storage && typeof navigator.storage.getDirectory === 'function') {
+        const rootDir = await navigator.storage.getDirectory();
+        const specialFolder = await rootDir.getDirectoryHandle(cfg.safFolderName, { create: true });
+        const fileHandle = await specialFolder.getFileHandle(cfg.dbFilename, { create: true });
+        if ('createWritable' in fileHandle) {
+          const writable = await (fileHandle as any).createWritable();
+          try {
+            const res = await streamBackupChunks(
+              {
+                logs: bundle.logs,
+                customFonts: bundle.customFonts || [],
+                micSettings: bundle.micSettings,
+              },
+              passphrase,
+              vaultMode,
+              async (chunk) => {
+                await writable.write(chunk);
+              }
+            );
             totalBytesWritten = res.totalBytes;
+            failedMediaCount = res.failedMediaCount;
+            failedMediaIds = res.failedMediaIds;
+            await writable.close();
+          } catch (opfsErr) {
+            try {
+              await writable.abort();
+            } catch {
+              // ignore
+            }
+            throw opfsErr;
           }
-        } finally {
-          await writable.close();
         }
       }
+    } catch (err) {
+      console.warn('OPFS chunked streaming write error:', err);
+      throw err;
     }
-  } catch (err) {
-    console.warn('OPFS chunked streaming write error:', err);
   }
 
   // 3. Mirror ONLY lightweight metadata to IndexedDB (zero 200MB string)
@@ -836,6 +866,8 @@ export async function performStreamingVaultBackup(
           sizeBytes: totalBytesWritten,
           keyHintHash,
           isChunkedStream: true,
+          failedMediaCount,
+          failedMediaIds,
         },
         cfg.dbFilename
       );
@@ -853,13 +885,15 @@ export async function performStreamingVaultBackup(
     vaultPath: `SAF/${cfg.safFolderName}/${cfg.dbFilename}`,
     sizeBytes: totalBytesWritten,
     keyHintHash,
+    failedMediaCount,
+    failedMediaIds,
   };
 }
 
 /**
  * Restores vault backup without loading 200MB file into memory at once:
- * - Detects chunked streaming format and decrypts slice-by-slice into IndexedDB stores.
- * - Automatically falls back to legacy v1/v2 single-envelope restore if older backup is loaded.
+ * - Low-RAM StreamSliceReader: reads frame-by-frame on demand via native SAF or OPFS/Blob slices.
+ * - Automatically falls back to legacy single-envelope restore if older backup is loaded.
  */
 export async function performStreamingVaultRestore(
   passphrase: string,
@@ -875,34 +909,27 @@ export async function performStreamingVaultRestore(
     ) {
       const fileSize = window.LikkhoNative.getSafBackupFileSize(vaultMode);
       if (fileSize > 0) {
-        // Read first 42 bytes to check if it's chunked stream
-        const firstSliceB64 = window.LikkhoNative.readSafBackupSlice(0, 42, vaultMode);
-        if (firstSliceB64) {
+        // Read first 44 bytes to check if it's chunked stream
+        const firstSliceB64 = window.LikkhoNative.readSafBackupSlice(0, 44, vaultMode);
+        if (firstSliceB64 && !firstSliceB64.startsWith('ERROR:') && !firstSliceB64.startsWith('__ERROR')) {
           const firstBytes = base64ToUint8ArrayChunk(firstSliceB64);
-          let isStream = true;
-          const magic = [0x4c, 0x4b, 0x53, 0x54, 0x52, 0x4d, 0x30, 0x31];
-          for (let i = 0; i < magic.length; i++) {
-            if (firstBytes[i] !== magic[i]) {
-              isStream = false;
-              break;
-            }
-          }
-
-          if (isStream) {
-            // Read in 2MB slices and build Blob
-            const slices: Uint8Array[] = [];
-            const SLICE_SIZE = 2 * 1024 * 1024;
-            for (let offset = 0; offset < fileSize; offset += SLICE_SIZE) {
-              const reqLen = Math.min(SLICE_SIZE, fileSize - offset);
-              const b64 = window.LikkhoNative.readSafBackupSlice(offset, reqLen, vaultMode);
-              if (b64) {
-                slices.push(base64ToUint8ArrayChunk(b64));
-              }
-            }
-            const blob = new Blob(slices as unknown as BlobPart[]);
-            const res = await restoreFromStreamSource(blob, passphrase, vaultMode);
+          if (isChunkedStreamMagic(firstBytes)) {
+            // Low-RAM StreamSliceReader: frame-by-frame reads directly through SAF ParcelFileDescriptor
+            const safReader: StreamSliceReader = {
+              size: fileSize,
+              async readSlice(offset: number, length: number): Promise<Uint8Array> {
+                const b64 = window.LikkhoNative!.readSafBackupSlice!(offset, length, vaultMode);
+                if (!b64 || b64.startsWith('ERROR:') || b64.startsWith('__ERROR')) {
+                  throw new Error(`SAF storage read failed at offset ${offset}: ${b64 || 'empty response'}`);
+                }
+                return base64ToUint8ArrayChunk(b64);
+              },
+            };
+            const res = await restoreFromStreamSource(safReader, passphrase, vaultMode);
             if (res) return res;
           }
+        } else if (firstSliceB64 && (firstSliceB64.startsWith('ERROR:') || firstSliceB64.startsWith('__ERROR'))) {
+          throw new Error(`SAF storage read error: ${firstSliceB64}`);
         }
       }
     }

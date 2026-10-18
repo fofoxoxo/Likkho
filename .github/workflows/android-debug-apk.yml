@@ -547,13 +547,18 @@ jobs:
           import com.getcapacitor.BridgeActivity;
           import java.io.ByteArrayOutputStream;
           import java.io.File;
+          import android.os.ParcelFileDescriptor;
           import java.io.FileInputStream;
           import java.io.FileOutputStream;
           import java.io.InputStream;
           import java.io.OutputStream;
+          import java.nio.ByteBuffer;
+          import java.nio.channels.FileChannel;
           import java.nio.charset.StandardCharsets;
           import java.util.ArrayList;
           import java.util.List;
+          import java.util.Map;
+          import java.util.concurrent.ConcurrentHashMap;
 
           public class MainActivity extends BridgeActivity {
               private static final int MIC_PERMISSION_REQUEST_CODE = 1001;
@@ -594,7 +599,12 @@ jobs:
               private String pendingBackupEnvelope = null;
               private String pendingVaultMode = "primary";
               private OutputStream activeSafBackupStream = null;
+              private Uri activeSafTmpUri = null;
               private String activeSafVaultMode = "primary";
+              private String activeSafTargetFilename = null;
+              private Uri activeSafTreeUri = null;
+              private String activeSafBackupDirDocId = null;
+              private final Map<String, Uri> cachedSafBackupUriMap = new ConcurrentHashMap<>();
               private boolean isAppPasscodeProtected = false;
               private volatile boolean isSystemFilePickerOpen = false;
               private String currentStatusBarHex = "#f8f9fa";
@@ -1693,31 +1703,44 @@ jobs:
                       try {
                           final String targetSubfolder = getSubfolderForMode(pendingVaultMode);
                           final String targetFilename = getVaultFilenameForMode(pendingVaultMode);
+                          final String tmpFilename = targetFilename + ".tmp";
                           ContentResolver resolver = getContentResolver();
                           String rootDocId = DocumentsContract.getTreeDocumentId(treeUri);
                           String backupDirDocId = getOrCreateChildDirectory(treeUri, rootDocId, targetSubfolder);
                           ensureNomediaInSafFolder(treeUri, backupDirDocId);
 
-                          String existingFileDocId = findChildDocumentId(treeUri, backupDirDocId, targetFilename);
-                          Uri targetFileUri;
-                          if (existingFileDocId != null) {
-                              targetFileUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, existingFileDocId);
-                          } else {
-                              Uri backupDirUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, backupDirDocId);
-                              targetFileUri = DocumentsContract.createDocument(
-                                  resolver,
-                                  backupDirUri,
-                                  "application/octet-stream",
-                                  targetFilename
-                              );
+                          // Delete previous interrupted .tmp file if it exists
+                          String oldTmpDocId = findChildDocumentId(treeUri, backupDirDocId, tmpFilename);
+                          if (oldTmpDocId != null) {
+                              try {
+                                  DocumentsContract.deleteDocument(resolver, DocumentsContract.buildDocumentUriUsingTree(treeUri, oldTmpDocId));
+                              } catch (Exception ignored) {}
                           }
-                          if (targetFileUri == null) return false;
+
+                          Uri backupDirUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, backupDirDocId);
+                          Uri tmpFileUri = DocumentsContract.createDocument(
+                              resolver,
+                              backupDirUri,
+                              "application/octet-stream",
+                              tmpFilename
+                          );
+                          if (tmpFileUri == null) return false;
+
                           if (activeSafBackupStream != null) {
                               try { activeSafBackupStream.close(); } catch (Exception ignored) {}
                           }
-                          activeSafBackupStream = resolver.openOutputStream(targetFileUri, "wt");
+                          activeSafBackupStream = resolver.openOutputStream(tmpFileUri, "wt");
+                          if (activeSafBackupStream == null) {
+                              try { DocumentsContract.deleteDocument(resolver, tmpFileUri); } catch (Exception ignored) {}
+                              return false;
+                          }
+
+                          activeSafTmpUri = tmpFileUri;
                           activeSafVaultMode = pendingVaultMode;
-                          return activeSafBackupStream != null;
+                          activeSafTargetFilename = targetFilename;
+                          activeSafTreeUri = treeUri;
+                          activeSafBackupDirDocId = backupDirDocId;
+                          return true;
                       } catch (Exception e) {
                           return false;
                       }
@@ -1731,22 +1754,98 @@ jobs:
                           activeSafBackupStream.write(bytes);
                           return true;
                       } catch (Exception e) {
+                          cancelSafBackupStream();
                           return false;
                       }
                   }
 
                   @JavascriptInterface
                   public void finishSafBackupStream() {
-                      if (activeSafBackupStream != null) {
-                          try {
-                              activeSafBackupStream.flush();
-                              activeSafBackupStream.close();
-                          } catch (Exception ignored) {}
-                          activeSafBackupStream = null;
-                          Uri treeUri = getPersistedSafTreeUri(activeSafVaultMode);
-                          String folder = treeUri != null ? extractSafFolderDisplayName(treeUri) : "SAF";
-                          notifySafBackupResult(true, "Backup saved in " + folder + "/" + getSubfolderForMode(activeSafVaultMode) + "/" + getVaultFilenameForMode(activeSafVaultMode));
+                      if (activeSafBackupStream == null) {
+                          notifySafBackupResult(false, "No active backup stream to finish.");
+                          return;
                       }
+
+                      ContentResolver resolver = getContentResolver();
+
+                      // 1. Check flush() and close() errors
+                      try {
+                          activeSafBackupStream.flush();
+                          activeSafBackupStream.close();
+                      } catch (Exception closeEx) {
+                          activeSafBackupStream = null;
+                          if (activeSafTmpUri != null) {
+                              try {
+                                  DocumentsContract.deleteDocument(resolver, activeSafTmpUri);
+                              } catch (Exception ignored) {}
+                              activeSafTmpUri = null;
+                          }
+                          notifySafBackupResult(false, "Failed to flush/close backup stream: " + closeEx.getMessage());
+                          return;
+                      }
+                      activeSafBackupStream = null;
+
+                      // 2. Safe replace: rename old to .bak, rename .tmp to final, then delete .bak
+                      if (activeSafTmpUri != null && activeSafTreeUri != null && activeSafBackupDirDocId != null && activeSafTargetFilename != null) {
+                          final String bakFilename = activeSafTargetFilename + ".bak";
+                          Uri bakUri = null;
+
+                          try {
+                              // If an old .bak exists from any previous crashed attempt, clean it up
+                              String oldBakDocId = findChildDocumentId(activeSafTreeUri, activeSafBackupDirDocId, bakFilename);
+                              if (oldBakDocId != null) {
+                                  try {
+                                      DocumentsContract.deleteDocument(resolver, DocumentsContract.buildDocumentUriUsingTree(activeSafTreeUri, oldBakDocId));
+                                  } catch (Exception ignored) {}
+                              }
+
+                              // Find existing old backup file
+                              String existingDocId = findChildDocumentId(activeSafTreeUri, activeSafBackupDirDocId, activeSafTargetFilename);
+                              if (existingDocId != null) {
+                                  Uri existingUri = DocumentsContract.buildDocumentUriUsingTree(activeSafTreeUri, existingDocId);
+                                  bakUri = DocumentsContract.renameDocument(resolver, existingUri, bakFilename);
+                              }
+
+                              // Rename .tmp to final target backup filename
+                              Uri finalUri = DocumentsContract.renameDocument(resolver, activeSafTmpUri, activeSafTargetFilename);
+
+                              if (finalUri != null) {
+                                  // Success! Delete .bak now
+                                  if (bakUri != null) {
+                                      try {
+                                          DocumentsContract.deleteDocument(resolver, bakUri);
+                                      } catch (Exception ignored) {}
+                                  }
+                                  cachedSafBackupUriMap.put(activeSafVaultMode, finalUri);
+                                  activeSafTmpUri = null;
+
+                                  Uri treeUri = getPersistedSafTreeUri(activeSafVaultMode);
+                                  String folder = treeUri != null ? extractSafFolderDisplayName(treeUri) : "SAF";
+                                  notifySafBackupResult(true, "Backup saved in " + folder + "/" + getSubfolderForMode(activeSafVaultMode) + "/" + getVaultFilenameForMode(activeSafVaultMode));
+                                  return;
+                              } else {
+                                  throw new Exception("DocumentsContract.renameDocument returned null for tmp file");
+                              }
+                          } catch (Exception renameEx) {
+                              // Rollback: restore .bak to original filename, delete .tmp, notify failure
+                              if (bakUri != null) {
+                                  try {
+                                      DocumentsContract.renameDocument(resolver, bakUri, activeSafTargetFilename);
+                                  } catch (Exception ignored) {}
+                              }
+                              if (activeSafTmpUri != null) {
+                                  try {
+                                      DocumentsContract.deleteDocument(resolver, activeSafTmpUri);
+                                  } catch (Exception ignored) {}
+                                  activeSafTmpUri = null;
+                              }
+                              cachedSafBackupUriMap.remove(activeSafVaultMode);
+                              notifySafBackupResult(false, "Failed to finalize backup file: " + renameEx.getMessage());
+                              return;
+                          }
+                      }
+
+                      notifySafBackupResult(false, "Backup state invalid during finish.");
                   }
 
                   @JavascriptInterface
@@ -1755,13 +1854,26 @@ jobs:
                           try { activeSafBackupStream.close(); } catch (Exception ignored) {}
                           activeSafBackupStream = null;
                       }
+                      if (activeSafTmpUri != null) {
+                          try {
+                              DocumentsContract.deleteDocument(getContentResolver(), activeSafTmpUri);
+                          } catch (Exception ignored) {}
+                          activeSafTmpUri = null;
+                      }
                   }
 
-                  @JavascriptInterface
-                  public long getSafBackupFileSize(String vaultMode) {
-                      String mode = (vaultMode != null && !vaultMode.isEmpty()) ? vaultMode : "primary";
+                  private synchronized Uri resolveSafBackupFileUri(String mode) {
+                      Uri cached = cachedSafBackupUriMap.get(mode);
+                      if (cached != null) {
+                          try (android.content.res.AssetFileDescriptor afd = getContentResolver().openAssetFileDescriptor(cached, "r")) {
+                              if (afd != null) return cached;
+                          } catch (Exception e) {
+                              cachedSafBackupUriMap.remove(mode);
+                          }
+                      }
+
                       Uri treeUri = getPersistedSafTreeUri(mode);
-                      if (treeUri == null) return -1;
+                      if (treeUri == null) return null;
                       try {
                           String targetSubfolder = getSubfolderForMode(mode);
                           String[] candidateFileNames = "decoy".equalsIgnoreCase(mode)
@@ -1776,14 +1888,23 @@ jobs:
                                   String fileDocId = findChildDocumentId(treeUri, dirDocId, fname);
                                   if (fileDocId != null) {
                                       Uri fileUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, fileDocId);
-                                      android.content.res.AssetFileDescriptor afd = resolver.openAssetFileDescriptor(fileUri, "r");
-                                      if (afd != null) {
-                                          long len = afd.getLength();
-                                          afd.close();
-                                          return len;
-                                      }
+                                      cachedSafBackupUriMap.put(mode, fileUri);
+                                      return fileUri;
                                   }
                               }
+                          }
+                      } catch (Exception ignored) {}
+                      return null;
+                  }
+
+                  @JavascriptInterface
+                  public long getSafBackupFileSize(String vaultMode) {
+                      String mode = (vaultMode != null && !vaultMode.isEmpty()) ? vaultMode : "primary";
+                      Uri fileUri = resolveSafBackupFileUri(mode);
+                      if (fileUri == null) return -1;
+                      try (android.content.res.AssetFileDescriptor afd = getContentResolver().openAssetFileDescriptor(fileUri, "r")) {
+                          if (afd != null) {
+                              return afd.getLength();
                           }
                       } catch (Exception ignored) {}
                       return -1;
@@ -1792,42 +1913,66 @@ jobs:
                   @JavascriptInterface
                   public String readSafBackupSlice(long offset, int length, String vaultMode) {
                       String mode = (vaultMode != null && !vaultMode.isEmpty()) ? vaultMode : "primary";
-                      Uri treeUri = getPersistedSafTreeUri(mode);
-                      if (treeUri == null) return "";
+                      Uri fileUri = resolveSafBackupFileUri(mode);
+                      if (fileUri == null) {
+                          return "ERROR:FILE_NOT_FOUND";
+                      }
+                      ContentResolver resolver = getContentResolver();
                       try {
-                          String targetSubfolder = getSubfolderForMode(mode);
-                          String[] candidateFileNames = "decoy".equalsIgnoreCase(mode)
-                              ? new String[]{DECOY_VAULT_FILENAME}
-                              : new String[]{PRIMARY_VAULT_FILENAME, LEGACY_JSON_FILENAME, LEGACY_VAULT_FILENAME};
-                          ContentResolver resolver = getContentResolver();
-                          String rootDocId = DocumentsContract.getTreeDocumentId(treeUri);
-                          String backupDirDocId = findChildDocumentId(treeUri, rootDocId, targetSubfolder);
-                          String[] searchDirs = backupDirDocId != null ? new String[]{backupDirDocId, rootDocId} : new String[]{rootDocId};
-                          for (String dirDocId : searchDirs) {
-                              for (String fname : candidateFileNames) {
-                                  String fileDocId = findChildDocumentId(treeUri, dirDocId, fname);
-                                  if (fileDocId != null) {
-                                      Uri fileUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, fileDocId);
-                                      try (InputStream is = resolver.openInputStream(fileUri)) {
-                                          if (is != null) {
-                                              long skipped = is.skip(offset);
-                                              byte[] buf = new byte[length];
-                                              int totalRead = 0;
-                                              while (totalRead < length) {
-                                                  int r = is.read(buf, totalRead, length - totalRead);
-                                                  if (r == -1) break;
-                                                  totalRead += r;
-                                              }
-                                              if (totalRead > 0) {
-                                                  return Base64.encodeToString(buf, 0, totalRead, Base64.NO_WRAP);
-                                              }
-                                          }
-                                      }
+                          // Fast path: ParcelFileDescriptor and FileChannel direct offset position
+                          ParcelFileDescriptor pfd = resolver.openFileDescriptor(fileUri, "r");
+                          if (pfd != null) {
+                              try (FileInputStream fis = new FileInputStream(pfd.getFileDescriptor());
+                                   FileChannel channel = fis.getChannel()) {
+                                  channel.position(offset);
+                                  byte[] buf = new byte[length];
+                                  ByteBuffer bb = ByteBuffer.wrap(buf);
+                                  int totalRead = 0;
+                                  while (bb.hasRemaining()) {
+                                      int r = channel.read(bb);
+                                      if (r == -1) break;
+                                      totalRead += r;
                                   }
+                                  if (totalRead <= 0) {
+                                      return "ERROR:EOF_REACHED";
+                                  }
+                                  return Base64.encodeToString(buf, 0, totalRead, Base64.NO_WRAP);
+                              } finally {
+                                  try { pfd.close(); } catch (Exception ignored) {}
                               }
                           }
-                      } catch (Exception ignored) {}
-                      return "";
+                      } catch (Exception e1) {
+                          // Fallback: InputStream with robust skip loop
+                          try (InputStream is = resolver.openInputStream(fileUri)) {
+                              if (is == null) return "ERROR:OPEN_FAILED";
+                              long remainingSkip = offset;
+                              while (remainingSkip > 0) {
+                                  long skipped = is.skip(remainingSkip);
+                                  if (skipped <= 0) {
+                                      if (is.read() == -1) {
+                                          return "ERROR:SKIP_FAILED_EOF";
+                                      }
+                                      remainingSkip--;
+                                  } else {
+                                      remainingSkip -= skipped;
+                                  }
+                              }
+                              byte[] buf = new byte[length];
+                              int totalRead = 0;
+                              while (totalRead < length) {
+                                  int r = is.read(buf, totalRead, length - totalRead);
+                                  if (r == -1) break;
+                                  totalRead += r;
+                              }
+                              if (totalRead <= 0) {
+                                  return "ERROR:READ_FAILED_EOF";
+                              }
+                              return Base64.encodeToString(buf, 0, totalRead, Base64.NO_WRAP);
+                          } catch (Exception e2) {
+                              return "ERROR:READ_EXCEPTION:" + e2.getMessage();
+                          }
+                      }
+                      return "ERROR:UNKNOWN";
                   }
 
                   @JavascriptInterface
@@ -1982,6 +2127,7 @@ jobs:
                                   .edit()
                                   .putString(getSafPrefKeyForMode(pendingVaultMode), treeUri.toString())
                                   .apply();
+                              cachedSafBackupUriMap.clear();
                           } catch (Exception ignored) {}
 
                           String folderName = extractSafFolderDisplayName(treeUri);
@@ -2034,22 +2180,29 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
+          if [ -z "${KEYSTORE_BASE64}" ]; then
+            echo "::error::FATAL: KEYSTORE_BASE64 secret is missing. Release APK and AAB build cannot proceed without release keystore."
+            exit 1
+          fi
+
           chmod +x ./gradlew
           ./gradlew assembleRelease assembleDebug bundleRelease
 
           mkdir -p release-apks
-          # Find and package Release APK (v1.2.0)
+          # Find and package Release APK (v1.2.0) - STRICTLY SIGNED ONLY
           if [ -f app/build/outputs/apk/release/app-release.apk ]; then
             cp app/build/outputs/apk/release/app-release.apk release-apks/likkho-release-v1.2.0.apk
-          elif [ -f app/build/outputs/apk/release/app-release-unsigned.apk ]; then
-            cp app/build/outputs/apk/release/app-release-unsigned.apk release-apks/likkho-release-v1.2.0.apk
+          else
+            echo "::error::FATAL: Signed release APK (app-release.apk) not found. Unsigned APK will not be uploaded."
+            exit 1
           fi
 
-          # Find and package Release AAB (Android App Bundle v1.2.0)
+          # Find and package Release AAB (Android App Bundle v1.2.0) - STRICTLY SIGNED ONLY
           if [ -f app/build/outputs/bundle/release/app-release.aab ]; then
             cp app/build/outputs/bundle/release/app-release.aab release-apks/likkho-release-v1.2.0.aab
-          elif [ -f app/build/outputs/bundle/release/app-release-unsigned.aab ]; then
-            cp app/build/outputs/bundle/release/app-release-unsigned.aab release-apks/likkho-release-v1.2.0.aab
+          else
+            echo "::error::FATAL: Signed release AAB (app-release.aab) not found. Unsigned AAB will not be uploaded."
+            exit 1
           fi
 
           # Find and package Debug APK (v1.2.0)

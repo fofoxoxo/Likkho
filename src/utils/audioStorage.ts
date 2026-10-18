@@ -137,15 +137,9 @@ export function convertNativeFileToWebUri(filePath: string): string {
 export async function acquireAudioPlaybackUrl(
   attachment: CanvasAudioAttachment
 ): Promise<{ url: string; isObjectUrl: boolean }> {
-  // 1. Direct native file path / Capacitor stream (Zero JS heap memory!)
-  if (attachment.audioUri) {
-    const webUri = convertNativeFileToWebUri(attachment.audioUri);
-    return { url: webUri, isObjectUrl: false };
-  }
-
-  // 2. Fetch binary Blob from IndexedDB on-demand
+  // 1. Fetch binary Blob from IndexedDB on-demand (Primary & Restored source)
   const storedBlob = await getAudioBlobFromStore(attachment.id);
-  if (storedBlob) {
+  if (storedBlob && storedBlob.size > 0) {
     // Revoke any previous object URL for this attachment to prevent memory leak
     const existingUrl = activeObjectUrls.get(attachment.id);
     if (existingUrl) {
@@ -158,6 +152,12 @@ export async function acquireAudioPlaybackUrl(
     const newObjectUrl = URL.createObjectURL(storedBlob);
     activeObjectUrls.set(attachment.id, newObjectUrl);
     return { url: newObjectUrl, isObjectUrl: true };
+  }
+
+  // 2. If no Blob stored, check native file path / Capacitor stream
+  if (attachment.audioUri) {
+    const webUri = convertNativeFileToWebUri(attachment.audioUri);
+    return { url: webUri, isObjectUrl: false };
   }
 
   // 3. If dataUrl exists (legacy logs or imported smaller voice notes)
