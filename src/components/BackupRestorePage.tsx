@@ -19,6 +19,8 @@ import {
   VaultMode,
   encryptVaultBundle,
   decryptVaultBundle,
+  performStreamingVaultBackup,
+  performStreamingVaultRestore,
   hashPassphrase,
   writeToPrivateSpecialFolder,
   readFromPrivateSpecialFolder,
@@ -140,18 +142,13 @@ export const BackupRestorePage: React.FC<BackupRestorePageProps> = ({
       }
 
       resetPasscodeFailures();
-      const encryptedEnvelope = await encryptVaultBundle(
+      await performStreamingVaultBackup(
         {
           logs,
           customFonts,
           micSettings,
         },
         backupPassphrase.trim(),
-        vaultMode
-      );
-      await writeToPrivateSpecialFolder(
-        encryptedEnvelope,
-        logs.length,
         inputHash,
         vaultMode
       );
@@ -194,20 +191,7 @@ export const BackupRestorePage: React.FC<BackupRestorePageProps> = ({
 
     setIsBusy(true);
     try {
-      const { metadata, encryptedEnvelope } = await readFromPrivateSpecialFolder(
-        vaultMode
-      );
-      if (!metadata.exists || !encryptedEnvelope) {
-        setStatusBanner({
-          type: 'error',
-          text: 'No backup found to restore.',
-        });
-        setIsBusy(false);
-        return;
-      }
-
-      const bundle = await decryptVaultBundle(
-        encryptedEnvelope,
+      const bundle = await performStreamingVaultRestore(
         restorePassphrase.trim(),
         vaultMode
       );

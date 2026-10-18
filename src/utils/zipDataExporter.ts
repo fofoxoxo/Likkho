@@ -4,7 +4,7 @@ import { getAudioBinaryBytes } from './audioStorage';
 
 export interface ZipEntryFile {
   path: string;
-  data: Uint8Array;
+  data: Uint8Array | Blob;
 }
 
 const CRC32_TABLE = (() => {
@@ -19,12 +19,119 @@ const CRC32_TABLE = (() => {
   return table;
 })();
 
-function crc32(bytes: Uint8Array): number {
+export function crc32(bytes: Uint8Array): number {
   let crc = 0xffffffff;
   for (let i = 0; i < bytes.length; i++) {
     crc = CRC32_TABLE[(crc ^ bytes[i]) & 0xff] ^ (crc >>> 8);
   }
   return (crc ^ 0xffffffff) >>> 0;
+}
+
+export async function calculateBlobCrc32(blob: Blob): Promise<number> {
+  let crc = 0xffffffff;
+  const CHUNK = 1024 * 1024; // 1MB slice to avoid memory bloat
+  for (let offset = 0; offset < blob.size; offset += CHUNK) {
+    const slice = blob.slice(offset, Math.min(blob.size, offset + CHUNK));
+    const buf = new Uint8Array(await slice.arrayBuffer());
+    for (let i = 0; i < buf.length; i++) {
+      crc = CRC32_TABLE[(crc ^ buf[i]) & 0xff] ^ (crc >>> 8);
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+/**
+ * Builds a standard PKZIP (.zip) binary archive asynchronously supporting Blobs
+ * without duplicating heavy multimedia files in RAM.
+ */
+export async function buildZipArchiveBlobAsync(entries: ZipEntryFile[]): Promise<Blob> {
+  const enc = new TextEncoder();
+  const localChunks: (Uint8Array | Blob)[] = [];
+  const centralChunks: Uint8Array[] = [];
+  let localOffset = 0;
+
+  const now = new Date();
+  const dosTime =
+    ((now.getHours() & 0x1f) << 11) |
+    ((now.getMinutes() & 0x3f) << 5) |
+    ((now.getSeconds() >> 1) & 0x1f);
+  const dosDate =
+    (((now.getFullYear() - 1980) & 0x7f) << 9) |
+    (((now.getMonth() + 1) & 0x0f) << 5) |
+    (now.getDate() & 0x1f);
+
+  for (const entry of entries) {
+    const nameBytes = enc.encode(entry.path.replace(/^\/+/, ''));
+    const entryData = entry.data;
+    const isBlob = entryData instanceof Blob;
+    const size = entryData instanceof Blob ? entryData.size : entryData.length;
+    const crc = entryData instanceof Blob ? await calculateBlobCrc32(entryData) : crc32(entryData);
+
+    // Local File Header (30 bytes + filename)
+    const localHeader = new Uint8Array(30 + nameBytes.length);
+    const lv = new DataView(localHeader.buffer);
+    lv.setUint32(0, 0x04034b50, true);
+    lv.setUint16(4, 20, true);
+    lv.setUint16(6, 0x0800, true);
+    lv.setUint16(8, 0, true);
+    lv.setUint16(10, dosTime, true);
+    lv.setUint16(12, dosDate, true);
+    lv.setUint32(14, crc, true);
+    lv.setUint32(18, size, true);
+    lv.setUint32(22, size, true);
+    lv.setUint16(26, nameBytes.length, true);
+    lv.setUint16(28, 0, true);
+    localHeader.set(nameBytes, 30);
+
+    localChunks.push(localHeader);
+    localChunks.push(entry.data);
+
+    // Central Directory File Header (46 bytes + filename)
+    const centralHeader = new Uint8Array(46 + nameBytes.length);
+    const cv = new DataView(centralHeader.buffer);
+    cv.setUint32(0, 0x02014b50, true);
+    cv.setUint16(4, 20, true);
+    cv.setUint16(6, 20, true);
+    cv.setUint16(8, 0x0800, true);
+    cv.setUint16(10, 0, true);
+    cv.setUint16(12, dosTime, true);
+    cv.setUint16(14, dosDate, true);
+    cv.setUint32(16, crc, true);
+    cv.setUint32(20, size, true);
+    cv.setUint32(24, size, true);
+    cv.setUint16(28, nameBytes.length, true);
+    cv.setUint16(30, 0, true);
+    cv.setUint16(32, 0, true);
+    cv.setUint16(34, 0, true);
+    cv.setUint16(36, 0, true);
+    cv.setUint32(38, 0, true);
+    cv.setUint32(42, localOffset, true);
+    centralHeader.set(nameBytes, 46);
+
+    centralChunks.push(centralHeader);
+    localOffset += localHeader.length + size;
+  }
+
+  let centralSize = 0;
+  for (const ch of centralChunks) {
+    centralSize += ch.length;
+  }
+
+  // End of Central Directory Record (22 bytes)
+  const eocd = new Uint8Array(22);
+  const ev = new DataView(eocd.buffer);
+  ev.setUint32(0, 0x06054b50, true);
+  ev.setUint16(4, 0, true);
+  ev.setUint16(6, 0, true);
+  ev.setUint16(8, entries.length, true);
+  ev.setUint16(10, entries.length, true);
+  ev.setUint32(12, centralSize, true);
+  ev.setUint32(16, localOffset, true);
+  ev.setUint16(20, 0, true);
+
+  return new Blob([...localChunks, ...centralChunks, eocd] as unknown as BlobPart[], {
+    type: 'application/zip',
+  });
 }
 
 /**
@@ -49,7 +156,7 @@ export function buildZipArchiveBlob(entries: ZipEntryFile[]): Blob {
 
   for (const entry of entries) {
     const nameBytes = enc.encode(entry.path.replace(/^\/+/, ''));
-    const dataBytes = entry.data;
+    const dataBytes: Uint8Array = entry.data instanceof Blob ? new Uint8Array() : entry.data;
     const crc = crc32(dataBytes);
     const size = dataBytes.length;
 
@@ -397,7 +504,7 @@ export async function exportAllAppDataAsZip(
     data: enc.encode(readmeMd),
   });
 
-  const zipBlob = buildZipArchiveBlob(zipFiles);
+  const zipBlob = await buildZipArchiveBlobAsync(zipFiles);
   const dateTag = new Date().toISOString().slice(0, 10);
   const filename = `likkho_all_data_${dateTag}.zip`;
   const mimeType = 'application/zip';

@@ -60,7 +60,7 @@ jobs:
             sed -i 's/compileSdkVersion = [0-9][0-9]*/compileSdkVersion = 35/g' android/variables.gradle || true
             sed -i 's/targetSdkVersion = [0-9][0-9]*/targetSdkVersion = 34/g' android/variables.gradle || true
           fi
-          # Copy Kotlin DSL app/build.gradle.kts (versionCode = 4, versionName = "1.1.1", release signingConfig) into android/app/build.gradle.kts
+          # Copy Kotlin DSL app/build.gradle.kts (versionCode = 5, versionName = "1.2.0", release signingConfig) into android/app/build.gradle.kts
           cp app/build.gradle.kts android/app/build.gradle.kts
           rm -f android/app/build.gradle
 
@@ -593,6 +593,8 @@ jobs:
               private int pendingSafOperation = SAF_OP_NONE;
               private String pendingBackupEnvelope = null;
               private String pendingVaultMode = "primary";
+              private OutputStream activeSafBackupStream = null;
+              private String activeSafVaultMode = "primary";
               private boolean isAppPasscodeProtected = false;
               private volatile boolean isSystemFilePickerOpen = false;
               private String currentStatusBarHex = "#f8f9fa";
@@ -1681,6 +1683,154 @@ jobs:
                   }
 
                   @JavascriptInterface
+                  public boolean beginSafBackupStream(String vaultMode) {
+                      pendingVaultMode = (vaultMode != null && !vaultMode.isEmpty()) ? vaultMode : "primary";
+                      Uri treeUri = getPersistedSafTreeUri(pendingVaultMode);
+                      if (treeUri == null) {
+                          launchSafDirectoryPicker(SAF_OP_BACKUP);
+                          return false;
+                      }
+                      try {
+                          final String targetSubfolder = getSubfolderForMode(pendingVaultMode);
+                          final String targetFilename = getVaultFilenameForMode(pendingVaultMode);
+                          ContentResolver resolver = getContentResolver();
+                          String rootDocId = DocumentsContract.getTreeDocumentId(treeUri);
+                          String backupDirDocId = getOrCreateChildDirectory(treeUri, rootDocId, targetSubfolder);
+                          ensureNomediaInSafFolder(treeUri, backupDirDocId);
+
+                          String existingFileDocId = findChildDocumentId(treeUri, backupDirDocId, targetFilename);
+                          Uri targetFileUri;
+                          if (existingFileDocId != null) {
+                              targetFileUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, existingFileDocId);
+                          } else {
+                              Uri backupDirUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, backupDirDocId);
+                              targetFileUri = DocumentsContract.createDocument(
+                                  resolver,
+                                  backupDirUri,
+                                  "application/octet-stream",
+                                  targetFilename
+                              );
+                          }
+                          if (targetFileUri == null) return false;
+                          if (activeSafBackupStream != null) {
+                              try { activeSafBackupStream.close(); } catch (Exception ignored) {}
+                          }
+                          activeSafBackupStream = resolver.openOutputStream(targetFileUri, "wt");
+                          activeSafVaultMode = pendingVaultMode;
+                          return activeSafBackupStream != null;
+                      } catch (Exception e) {
+                          return false;
+                      }
+                  }
+
+                  @JavascriptInterface
+                  public boolean appendSafBackupChunk(String base64Chunk) {
+                      if (activeSafBackupStream == null || base64Chunk == null) return false;
+                      try {
+                          byte[] bytes = Base64.decode(base64Chunk, Base64.NO_WRAP);
+                          activeSafBackupStream.write(bytes);
+                          return true;
+                      } catch (Exception e) {
+                          return false;
+                      }
+                  }
+
+                  @JavascriptInterface
+                  public void finishSafBackupStream() {
+                      if (activeSafBackupStream != null) {
+                          try {
+                              activeSafBackupStream.flush();
+                              activeSafBackupStream.close();
+                          } catch (Exception ignored) {}
+                          activeSafBackupStream = null;
+                          Uri treeUri = getPersistedSafTreeUri(activeSafVaultMode);
+                          String folder = treeUri != null ? extractSafFolderDisplayName(treeUri) : "SAF";
+                          notifySafBackupResult(true, "Backup saved in " + folder + "/" + getSubfolderForMode(activeSafVaultMode) + "/" + getVaultFilenameForMode(activeSafVaultMode));
+                      }
+                  }
+
+                  @JavascriptInterface
+                  public void cancelSafBackupStream() {
+                      if (activeSafBackupStream != null) {
+                          try { activeSafBackupStream.close(); } catch (Exception ignored) {}
+                          activeSafBackupStream = null;
+                      }
+                  }
+
+                  @JavascriptInterface
+                  public long getSafBackupFileSize(String vaultMode) {
+                      String mode = (vaultMode != null && !vaultMode.isEmpty()) ? vaultMode : "primary";
+                      Uri treeUri = getPersistedSafTreeUri(mode);
+                      if (treeUri == null) return -1;
+                      try {
+                          String targetSubfolder = getSubfolderForMode(mode);
+                          String[] candidateFileNames = "decoy".equalsIgnoreCase(mode)
+                              ? new String[]{DECOY_VAULT_FILENAME}
+                              : new String[]{PRIMARY_VAULT_FILENAME, LEGACY_JSON_FILENAME, LEGACY_VAULT_FILENAME};
+                          ContentResolver resolver = getContentResolver();
+                          String rootDocId = DocumentsContract.getTreeDocumentId(treeUri);
+                          String backupDirDocId = findChildDocumentId(treeUri, rootDocId, targetSubfolder);
+                          String[] searchDirs = backupDirDocId != null ? new String[]{backupDirDocId, rootDocId} : new String[]{rootDocId};
+                          for (String dirDocId : searchDirs) {
+                              for (String fname : candidateFileNames) {
+                                  String fileDocId = findChildDocumentId(treeUri, dirDocId, fname);
+                                  if (fileDocId != null) {
+                                      Uri fileUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, fileDocId);
+                                      android.content.res.AssetFileDescriptor afd = resolver.openAssetFileDescriptor(fileUri, "r");
+                                      if (afd != null) {
+                                          long len = afd.getLength();
+                                          afd.close();
+                                          return len;
+                                      }
+                                  }
+                              }
+                          }
+                      } catch (Exception ignored) {}
+                      return -1;
+                  }
+
+                  @JavascriptInterface
+                  public String readSafBackupSlice(long offset, int length, String vaultMode) {
+                      String mode = (vaultMode != null && !vaultMode.isEmpty()) ? vaultMode : "primary";
+                      Uri treeUri = getPersistedSafTreeUri(mode);
+                      if (treeUri == null) return "";
+                      try {
+                          String targetSubfolder = getSubfolderForMode(mode);
+                          String[] candidateFileNames = "decoy".equalsIgnoreCase(mode)
+                              ? new String[]{DECOY_VAULT_FILENAME}
+                              : new String[]{PRIMARY_VAULT_FILENAME, LEGACY_JSON_FILENAME, LEGACY_VAULT_FILENAME};
+                          ContentResolver resolver = getContentResolver();
+                          String rootDocId = DocumentsContract.getTreeDocumentId(treeUri);
+                          String backupDirDocId = findChildDocumentId(treeUri, rootDocId, targetSubfolder);
+                          String[] searchDirs = backupDirDocId != null ? new String[]{backupDirDocId, rootDocId} : new String[]{rootDocId};
+                          for (String dirDocId : searchDirs) {
+                              for (String fname : candidateFileNames) {
+                                  String fileDocId = findChildDocumentId(treeUri, dirDocId, fname);
+                                  if (fileDocId != null) {
+                                      Uri fileUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, fileDocId);
+                                      try (InputStream is = resolver.openInputStream(fileUri)) {
+                                          if (is != null) {
+                                              long skipped = is.skip(offset);
+                                              byte[] buf = new byte[length];
+                                              int totalRead = 0;
+                                              while (totalRead < length) {
+                                                  int r = is.read(buf, totalRead, length - totalRead);
+                                                  if (r == -1) break;
+                                                  totalRead += r;
+                                              }
+                                              if (totalRead > 0) {
+                                                  return Base64.encodeToString(buf, 0, totalRead, Base64.NO_WRAP);
+                                              }
+                                          }
+                                      }
+                                  }
+                              }
+                          }
+                      } catch (Exception ignored) {}
+                      return "";
+                  }
+
+                  @JavascriptInterface
                   public void restoreBackupViaSaf(String vaultMode) {
                       pendingVaultMode = (vaultMode != null && !vaultMode.isEmpty()) ? vaultMode : "primary";
                       Uri treeUri = getPersistedSafTreeUri(pendingVaultMode);
@@ -1876,7 +2026,7 @@ jobs:
           }
           EOF
 
-      - name: Build Android Release & Debug APK
+      - name: Build Android Release APK, Release AAB & Debug APK
         working-directory: ./android
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -1885,19 +2035,26 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           chmod +x ./gradlew
-          ./gradlew assembleRelease assembleDebug
+          ./gradlew assembleRelease assembleDebug bundleRelease
 
           mkdir -p release-apks
-          # Find and package Release APK
+          # Find and package Release APK (v1.2.0)
           if [ -f app/build/outputs/apk/release/app-release.apk ]; then
-            cp app/build/outputs/apk/release/app-release.apk release-apks/likkho-release-v1.1.1.apk
+            cp app/build/outputs/apk/release/app-release.apk release-apks/likkho-release-v1.2.0.apk
           elif [ -f app/build/outputs/apk/release/app-release-unsigned.apk ]; then
-            cp app/build/outputs/apk/release/app-release-unsigned.apk release-apks/likkho-release-v1.1.1.apk
+            cp app/build/outputs/apk/release/app-release-unsigned.apk release-apks/likkho-release-v1.2.0.apk
           fi
 
-          # Find and package Debug APK
+          # Find and package Release AAB (Android App Bundle v1.2.0)
+          if [ -f app/build/outputs/bundle/release/app-release.aab ]; then
+            cp app/build/outputs/bundle/release/app-release.aab release-apks/likkho-release-v1.2.0.aab
+          elif [ -f app/build/outputs/bundle/release/app-release-unsigned.aab ]; then
+            cp app/build/outputs/bundle/release/app-release-unsigned.aab release-apks/likkho-release-v1.2.0.aab
+          fi
+
+          # Find and package Debug APK (v1.2.0)
           if [ -f app/build/outputs/apk/debug/app-debug.apk ]; then
-            cp app/build/outputs/apk/debug/app-debug.apk release-apks/likkho-debug-v1.1.1.apk
+            cp app/build/outputs/apk/debug/app-debug.apk release-apks/likkho-debug-v1.2.0.apk
           fi
 
           ls -la release-apks/
@@ -1905,40 +2062,20 @@ jobs:
       - name: Upload Release APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: likkho-release-v1.1.1
-          path: android/release-apks/likkho-release-v1.1.1.apk
+          name: likkho-release-v1.2.0-apk
+          path: android/release-apks/likkho-release-v1.2.0.apk
+          retention-days: 30
+
+      - name: Upload Release AAB Bundle Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: likkho-release-v1.2.0-aab
+          path: android/release-apks/likkho-release-v1.2.0.aab
           retention-days: 30
 
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: likkho-debug-v1.1.1
-          path: android/release-apks/likkho-debug-v1.1.1.apk
+          name: likkho-debug-v1.2.0-apk
+          path: android/release-apks/likkho-debug-v1.2.0.apk
           retention-days: 30
-
-      - name: Publish GitHub Release
-        if: (startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || github.event_name == 'workflow_dispatch') && !contains(github.event.head_commit.message, '[skip release]')
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'v1.1.1' }}
-          name: "Likkho v1.1.1 (Release)"
-          draft: false
-          prerelease: false
-          body: |
-            ## Likkho Diary & Creative Canvas v1.1.1 (Build 4)
-
-            ### ✨ What's New in v1.1.1:
-            - **Native Audio File Streaming & Zero-OOM:** Direct file URIs (`_capacitor_file_`) prevent RAM exhaustion when handling multiple 5MB–10MB recordings.
-            - **Lazy Audio Player Loading:** Audio player cards initialize decoders and streams on-demand only when user taps Play.
-            - **Automatic Memory Cleanup:** Object URLs are revoked immediately upon stop/pause/unmount via `URL.revokeObjectURL`.
-            - **Exclusive Audio Stream:** Playing an audio card unloads any active track to ensure zero memory bloat.
-            - **Optimized Release APK:** Production-grade APK with ProGuard optimization and minification.
-
-            ### 📦 Downloads:
-            - **`likkho-release-v1.1.1.apk`** — Production Release APK (Minified, ProGuard optimized)
-            - **`likkho-debug-v1.1.1.apk`** — Debug APK for testing
-          files: |
-            android/release-apks/likkho-release-v1.1.1.apk
-            android/release-apks/likkho-debug-v1.1.1.apk
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -4,7 +4,7 @@ import {
   DiaryLog,
   markExternalFilePickerPending,
 } from './cryptoVault';
-import { buildZipArchiveBlob, ZipEntryFile } from './zipDataExporter';
+import { buildZipArchiveBlob, buildZipArchiveBlobAsync, ZipEntryFile } from './zipDataExporter';
 import { getAudioBinaryBytes, saveAudioBlobToStore } from './audioStorage';
 import {
   getImageBlobFromStore,
@@ -583,7 +583,7 @@ export async function packDiaryToLikkhoBlob(
     data: manifestBytes,
   });
 
-  const zipBlob = buildZipArchiveBlob(zipEntries);
+  const zipBlob = await buildZipArchiveBlobAsync(zipEntries);
   const plainZipBytes = new Uint8Array(await zipBlob.arrayBuffer());
 
   // Encrypt the entire `.likkho` container with Likkho's universal shared-diary AES-256-GCM key

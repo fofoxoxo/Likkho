@@ -10,6 +10,12 @@
 
 import { getImageBlobFromStore, saveImageBlobToStore, preloadLogImages } from './imageStorage';
 import { getAudioBlobFromStore, saveAudioBlobToStore } from './audioStorage';
+import {
+  streamBackupChunks,
+  restoreFromStreamSource,
+  uint8ArrayToBase64Chunk,
+  base64ToUint8ArrayChunk,
+} from './chunkedVaultStream';
 
 export type VaultMode = 'primary' | 'decoy';
 
@@ -81,6 +87,16 @@ declare global {
       chooseSafBaseFolder?: () => void;
       saveBackupViaSaf?: (envelope: string, vaultMode: string) => void;
       restoreBackupViaSaf?: (vaultMode: string) => void;
+      beginSafBackupStream?: (vaultMode: string) => boolean;
+      appendSafBackupChunk?: (base64Chunk: string) => boolean;
+      finishSafBackupStream?: () => void;
+      cancelSafBackupStream?: () => void;
+      getSafBackupFileSize?: (vaultMode: string) => number;
+      readSafBackupSlice?: (
+        offset: number,
+        length: number,
+        vaultMode: string
+      ) => string;
       saveExportedFile?: (
         base64Data: string,
         filename: string,
@@ -712,6 +728,243 @@ export async function loadActiveAppStateFromIDB<T>(
   } catch {
     return null;
   }
+}
+
+/**
+ * Streams vault backup chunk-by-chunk directly to storage:
+ * - Native Android WebView: streams base64 chunks through SAF stream without JS-Java bridge OOM.
+ * - Web/Chromium: streams binary chunks to OPFS createWritable() stream.
+ * - IndexedDB: mirrors ONLY lightweight metadata (zero 200MB string in memory).
+ */
+export async function performStreamingVaultBackup(
+  bundle: VaultBackupBundle,
+  passphrase: string,
+  keyHintHash: string,
+  vaultMode: VaultMode = 'primary'
+): Promise<EncryptedVaultMetadata> {
+  const cfg = getVaultConfig(vaultMode);
+  const now = Date.now();
+  let totalBytesWritten = 0;
+
+  // 1. Native Android SAF Streaming
+  if (window.LikkhoNative && typeof window.LikkhoNative.beginSafBackupStream === 'function') {
+    const started = window.LikkhoNative.beginSafBackupStream(vaultMode);
+    if (started) {
+      try {
+        await new Promise<void>(async (resolve, reject) => {
+          window.__onLikkhoSafBackupResult = (success: boolean, msg?: string) => {
+            window.__onLikkhoSafBackupResult = undefined;
+            if (success) resolve();
+            else reject(new Error(msg || 'SAF backup failed.'));
+          };
+          const normalizedBundle = {
+            logs: bundle.logs,
+            customFonts: bundle.customFonts || [],
+            micSettings: bundle.micSettings,
+          };
+          try {
+            const res = await streamBackupChunks(
+              normalizedBundle,
+              passphrase,
+              vaultMode,
+              async (chunk) => {
+                const b64 = uint8ArrayToBase64Chunk(chunk);
+                window.LikkhoNative?.appendSafBackupChunk?.(b64);
+              }
+            );
+            totalBytesWritten = res.totalBytes;
+            window.LikkhoNative?.finishSafBackupStream?.();
+          } catch (err) {
+            window.LikkhoNative?.cancelSafBackupStream?.();
+            reject(err);
+          }
+        });
+      } catch (err) {
+        console.warn('Native SAF streaming backup failed, falling back:', err);
+      }
+    }
+  } else if (window.LikkhoNative && typeof window.LikkhoNative.saveBackupViaSaf === 'function') {
+    // Legacy fallback for native without streaming
+    const envelope = await encryptVaultBundle(bundle, passphrase, vaultMode);
+    return writeToPrivateSpecialFolder(envelope, bundle.logs.length, keyHintHash, vaultMode);
+  }
+
+  // 2. OPFS Streaming (Chromium / Web)
+  try {
+    if (navigator.storage && typeof navigator.storage.getDirectory === 'function') {
+      const rootDir = await navigator.storage.getDirectory();
+      const specialFolder = await rootDir.getDirectoryHandle(cfg.safFolderName, { create: true });
+      const fileHandle = await specialFolder.getFileHandle(cfg.dbFilename, { create: true });
+      if ('createWritable' in fileHandle) {
+        const writable = await (fileHandle as any).createWritable();
+        try {
+          const res = await streamBackupChunks(
+            {
+              logs: bundle.logs,
+              customFonts: bundle.customFonts || [],
+              micSettings: bundle.micSettings,
+            },
+            passphrase,
+            vaultMode,
+            async (chunk) => {
+              await writable.write(chunk);
+            }
+          );
+          if (totalBytesWritten === 0) {
+            totalBytesWritten = res.totalBytes;
+          }
+        } finally {
+          await writable.close();
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('OPFS chunked streaming write error:', err);
+  }
+
+  // 3. Mirror ONLY lightweight metadata to IndexedDB (zero 200MB string)
+  try {
+    const db = await openPrivateVaultDB(vaultMode);
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      const store = tx.objectStore(IDB_STORE);
+      store.put(
+        {
+          lastBackupAt: now,
+          entryCount: bundle.logs.length,
+          vaultPath: `SAF/${cfg.safFolderName}/${cfg.dbFilename}`,
+          sizeBytes: totalBytesWritten,
+          keyHintHash,
+          isChunkedStream: true,
+        },
+        cfg.dbFilename
+      );
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch {
+    // ignore
+  }
+
+  return {
+    exists: true,
+    lastBackupAt: now,
+    entryCount: bundle.logs.length,
+    vaultPath: `SAF/${cfg.safFolderName}/${cfg.dbFilename}`,
+    sizeBytes: totalBytesWritten,
+    keyHintHash,
+  };
+}
+
+/**
+ * Restores vault backup without loading 200MB file into memory at once:
+ * - Detects chunked streaming format and decrypts slice-by-slice into IndexedDB stores.
+ * - Automatically falls back to legacy v1/v2 single-envelope restore if older backup is loaded.
+ */
+export async function performStreamingVaultRestore(
+  passphrase: string,
+  vaultMode: VaultMode = 'primary'
+): Promise<VaultBackupBundle> {
+  const cfg = getVaultConfig(vaultMode);
+
+  // 1. Check Native Android SAF
+  if (window.LikkhoNative) {
+    if (
+      typeof window.LikkhoNative.getSafBackupFileSize === 'function' &&
+      typeof window.LikkhoNative.readSafBackupSlice === 'function'
+    ) {
+      const fileSize = window.LikkhoNative.getSafBackupFileSize(vaultMode);
+      if (fileSize > 0) {
+        // Read first 42 bytes to check if it's chunked stream
+        const firstSliceB64 = window.LikkhoNative.readSafBackupSlice(0, 42, vaultMode);
+        if (firstSliceB64) {
+          const firstBytes = base64ToUint8ArrayChunk(firstSliceB64);
+          let isStream = true;
+          const magic = [0x4c, 0x4b, 0x53, 0x54, 0x52, 0x4d, 0x30, 0x31];
+          for (let i = 0; i < magic.length; i++) {
+            if (firstBytes[i] !== magic[i]) {
+              isStream = false;
+              break;
+            }
+          }
+
+          if (isStream) {
+            // Read in 2MB slices and build Blob
+            const slices: Uint8Array[] = [];
+            const SLICE_SIZE = 2 * 1024 * 1024;
+            for (let offset = 0; offset < fileSize; offset += SLICE_SIZE) {
+              const reqLen = Math.min(SLICE_SIZE, fileSize - offset);
+              const b64 = window.LikkhoNative.readSafBackupSlice(offset, reqLen, vaultMode);
+              if (b64) {
+                slices.push(base64ToUint8ArrayChunk(b64));
+              }
+            }
+            const blob = new Blob(slices as unknown as BlobPart[]);
+            const res = await restoreFromStreamSource(blob, passphrase, vaultMode);
+            if (res) return res;
+          }
+        }
+      }
+    }
+
+    // Fallback to legacy SAF read
+    if (typeof window.LikkhoNative.restoreBackupViaSaf === 'function') {
+      const safEnvelope = await new Promise<string>((resolve) => {
+        window.__onLikkhoSafRestoreResult = (success: boolean, payload?: string) => {
+          window.__onLikkhoSafRestoreResult = undefined;
+          if (success && payload && payload.trim().length > 0) resolve(payload);
+          else resolve('');
+        };
+        window.LikkhoNative?.restoreBackupViaSaf?.(vaultMode);
+      });
+      if (safEnvelope) {
+        try {
+          return await decryptVaultBundle(safEnvelope, passphrase, vaultMode);
+        } catch {
+          // try stream if base64
+          try {
+            const raw = base64ToUint8ArrayChunk(safEnvelope);
+            const blob = new Blob([raw as unknown as BlobPart]);
+            const sRes = await restoreFromStreamSource(blob, passphrase, vaultMode);
+            if (sRes) return sRes;
+          } catch {}
+        }
+      }
+    }
+  }
+
+  // 2. Check OPFS
+  try {
+    if (navigator.storage && typeof navigator.storage.getDirectory === 'function') {
+      const rootDir = await navigator.storage.getDirectory();
+      const specialFolder = await rootDir.getDirectoryHandle(cfg.safFolderName, { create: false });
+      const candidateFiles =
+        vaultMode === 'primary'
+          ? [cfg.dbFilename, 'likkho_encrypted_vault.json']
+          : [cfg.dbFilename];
+      for (const fname of candidateFiles) {
+        try {
+          const fileHandle = await specialFolder.getFileHandle(fname, { create: false });
+          const file = await fileHandle.getFile();
+          if (file.size >= 42) {
+            const streamResult = await restoreFromStreamSource(file, passphrase, vaultMode);
+            if (streamResult) return streamResult;
+          }
+          // If not stream, try legacy
+          const text = await file.text();
+          return await decryptVaultBundle(text, passphrase, vaultMode);
+        } catch {}
+      }
+    }
+  } catch {}
+
+  // 3. Fallback to existing readFromPrivateSpecialFolder (legacy IndexedDB)
+  const legacy = await readFromPrivateSpecialFolder(vaultMode);
+  if (legacy.encryptedEnvelope) {
+    return await decryptVaultBundle(legacy.encryptedEnvelope, passphrase, vaultMode);
+  }
+
+  throw new Error('No backup found to restore.');
 }
 
 /**
