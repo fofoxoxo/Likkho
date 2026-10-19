@@ -502,7 +502,25 @@ export async function streamBackupChunks(
       }
 
       const totalChunks = Math.max(1, Math.ceil(blob.size / DEFAULT_CHUNK_SIZE));
-      const mimeType = blob.type || (item.type === 'image' ? 'image/jpeg' : 'audio/wav');
+      let mimeType: string;
+      if (item.type === 'audio') {
+        if (blob.type && blob.type.startsWith('audio/')) {
+          mimeType = blob.type;
+        } else {
+          const fmt = (item.audioAttachment?.format || '').toLowerCase().trim();
+          if (fmt === 'mp3') {
+            mimeType = 'audio/mpeg';
+          } else if (fmt === 'm4a') {
+            mimeType = 'audio/mp4';
+          } else if (fmt) {
+            mimeType = `audio/${fmt}`;
+          } else {
+            mimeType = 'audio/wav';
+          }
+        }
+      } else {
+        mimeType = (blob.type && blob.type.startsWith('image/')) ? blob.type : 'image/jpeg';
+      }
 
       for (let cIdx = 0; cIdx < totalChunks; cIdx++) {
         const start = cIdx * DEFAULT_CHUNK_SIZE;
@@ -717,7 +735,7 @@ export async function restoreFromStreamSource(
         if (totalChunks === 1) {
           // Single chunk: write directly to IndexedDB store as Blob without accumulation
           const blob = new Blob([decryptedBuffer], { type: mimeType });
-          if (id.startsWith('aud_')) {
+          if (typeof mimeType === 'string' && mimeType.startsWith('audio/')) {
             await saveAudioBlobToStore(id, blob);
             savedAudioIds.add(id);
           } else {
@@ -747,7 +765,7 @@ export async function restoreFromStreamSource(
 
             // Composite Blob is created from disk-backed IndexedDB Blobs (zero JS heap bloat)
             const fullBlob = new Blob(chunkParts, { type: tracker.mimeType });
-            if (id.startsWith('aud_')) {
+            if (typeof tracker.mimeType === 'string' && tracker.mimeType.startsWith('audio/')) {
               await saveAudioBlobToStore(id, fullBlob);
               savedAudioIds.add(id);
             } else {
