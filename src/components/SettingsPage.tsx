@@ -11,6 +11,7 @@ import {
   Mic,
   Fingerprint,
   BookOpenCheck,
+  BookOpen,
   Search,
   X,
   Maximize2,
@@ -20,6 +21,7 @@ import {
   Download,
   AlertTriangle,
 } from 'lucide-react';
+import { BackedUpDiariesModal } from './BackedUpDiariesModal';
 import {
   AudioFormatOption,
   CustomFontItem,
@@ -55,6 +57,8 @@ interface SettingsPageProps {
   logs: DiaryLog[];
   customFonts: CustomFontItem[];
   onClearAllAppData: () => Promise<void>;
+  savedKeyHash?: string | null;
+  onRestoreSingleDiary?: (log: DiaryLog) => void;
 }
 
 const AUDIO_FORMATS: { id: AudioFormatOption; label: string }[] = [
@@ -102,10 +106,14 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   logs,
   customFonts,
   onClearAllAppData,
+  savedKeyHash = null,
+  onRestoreSingleDiary,
 }) => {
   const [showPasscodeModal, setShowPasscodeModal] = useState<boolean>(false);
   const [showMicModal, setShowMicModal] = useState<boolean>(false);
   const [showLegalAboutPage, setShowLegalAboutPage] = useState<boolean>(false);
+  const [showBackedUpDiariesModal, setShowBackedUpDiariesModal] =
+    useState<boolean>(false);
   const [showClearAllConfirmModal, setShowClearAllConfirmModal] =
     useState<boolean>(false);
   const [isExportingZip, setIsExportingZip] = useState<boolean>(false);
@@ -826,6 +834,28 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             <ChevronRight className="h-5 w-5 text-[var(--wiki-muted)]" />
           </button>
 
+          {/* 4b. Backed-up Diaries (Read & Delete Backed-up Diaries from Vault) */}
+          <button
+            type="button"
+            onClick={() => setShowBackedUpDiariesModal(true)}
+            className="flex w-full items-center justify-between px-4 py-4 text-left hover:bg-[var(--wiki-surface)] transition-colors"
+          >
+            <div className="flex items-center gap-3.5">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center border border-[var(--wiki-border)] bg-[var(--wiki-surface)]">
+                <BookOpen className="h-5 w-5 text-[#3366cc]" />
+              </div>
+              <div>
+                <div className="font-wiki-serif text-base font-bold">
+                  Backed-up Diaries
+                </div>
+                <div className="text-xs text-[var(--wiki-muted)]">
+                  Read, inspect &amp; delete diaries saved in your backup vault
+                </div>
+              </div>
+            </div>
+            <ChevronRight className="h-5 w-5 text-[var(--wiki-muted)]" />
+          </button>
+
           {/* 5. Saved Word Analysis Button (Opens dedicated Alphabetical A–Z Saved Words page with Search button) */}
           <button
             type="button"
@@ -1099,6 +1129,21 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             </form>
           </div>
         </div>
+      )}
+
+      {/* Backed-up Diaries Vault Modal */}
+      {showBackedUpDiariesModal && (
+        <BackedUpDiariesModal
+          vaultMode={vaultMode}
+          savedKeyHash={savedKeyHash}
+          biometricsEnabled={biometricsEnabled}
+          onClose={() => setShowBackedUpDiariesModal(false)}
+          onRestoreSingleDiary={onRestoreSingleDiary}
+          onGoToBackupRestore={() => {
+            setShowBackedUpDiariesModal(false);
+            onOpenBackupRestore();
+          }}
+        />
       )}
     </div>
   );

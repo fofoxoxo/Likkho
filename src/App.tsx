@@ -58,6 +58,11 @@ import {
   getImageObjectUrl,
   migrateLogsMediaToBlobStore,
 } from './utils/imageStorage';
+import {
+  saveAppSpecificInternalFile,
+  readAppSpecificInternalFile,
+  deleteAppSpecificInternalFile,
+} from './utils/internalEncryptedStorage';
 
 type PageRoute = 'home' | 'workspace' | 'settings' | 'backup';
 
@@ -398,15 +403,19 @@ export default function App() {
     }
     setLogs(initialLocalLogs);
 
-    // 3. Load rich media logs & custom .ttf fonts from isolated IndexedDB database (`WikiLogPrivateSystemVaultDB` vs `WikiLogIsolatedDecoyVaultDB`)
+    // 3. Load rich media logs & custom fonts from App-Specific Internal Files Directory (encrypted at rest) and IndexedDB
     Promise.all([
-      loadActiveAppStateFromIDB<DiaryLog[]>(idbLogsKey, vaultMode),
-      loadActiveAppStateFromIDB<CustomFontItem[]>(idbFontsKey, vaultMode),
+      readAppSpecificInternalFile<DiaryLog[]>(idbLogsKey, vaultMode).then(
+        (internal) => internal || loadActiveAppStateFromIDB<DiaryLog[]>(idbLogsKey, vaultMode)
+      ),
+      readAppSpecificInternalFile<CustomFontItem[]>(idbFontsKey, vaultMode).then(
+        (internal) => internal || loadActiveAppStateFromIDB<CustomFontItem[]>(idbFontsKey, vaultMode)
+      ),
     ])
-      .then(async ([idbLogs, idbFonts]) => {
+      .then(async ([savedLogs, savedFonts]) => {
         const candidateLogs =
-          idbLogs && Array.isArray(idbLogs) && (idbLogs.length > 0 || vaultMode === 'decoy')
-            ? idbLogs
+          savedLogs && Array.isArray(savedLogs) && (savedLogs.length > 0 || vaultMode === 'decoy')
+            ? savedLogs
             : initialLocalLogs;
 
         if (candidateLogs && Array.isArray(candidateLogs)) {
@@ -419,6 +428,7 @@ export default function App() {
           setLogs(finalLogs);
           if (migratedCount > 0) {
             await saveActiveAppStateToIDB(idbLogsKey, finalLogs, vaultMode);
+            await saveAppSpecificInternalFile(idbLogsKey, finalLogs, vaultMode);
             try {
               localStorage.setItem(logsStorageKey, JSON.stringify(finalLogs));
             } catch {
@@ -426,9 +436,9 @@ export default function App() {
             }
           }
         }
-        if (idbFonts && Array.isArray(idbFonts)) {
-          setCustomFonts(idbFonts);
-          for (const f of idbFonts) {
+        if (savedFonts && Array.isArray(savedFonts)) {
+          setCustomFonts(savedFonts);
+          for (const f of savedFonts) {
             injectGlobalFontFaceCss(f.fontFamily, f.dataUrl);
           }
         } else {
@@ -722,7 +732,7 @@ export default function App() {
     }
   };
 
-  // Save in-app logs + media to isolated IndexedDB and localStorage for the active vault
+  // Save in-app logs + media to App-Specific Internal Files Directory (encrypted at rest), IndexedDB and localStorage
   useEffect(() => {
     if (!isVaultHydratedRef.current) return;
     const logsStorageKey =
@@ -730,19 +740,21 @@ export default function App() {
     const idbLogsKey = vaultMode === 'decoy' ? IDB_DECOY_LOGS_KEY : IDB_LOGS_KEY;
 
     saveActiveAppStateToIDB(idbLogsKey, logs, vaultMode);
+    saveAppSpecificInternalFile(idbLogsKey, logs, vaultMode);
     try {
       localStorage.setItem(logsStorageKey, JSON.stringify(logs));
     } catch {
-      // Large media gracefully stored in isolated IDB above
+      // Large media gracefully stored in App-Specific Internal Files Directory & IDB above
     }
   }, [logs, vaultMode]);
 
-  // Save custom .ttf fonts to isolated IndexedDB for the active vault
+  // Save custom .ttf fonts to App-Specific Internal Files Directory and isolated IndexedDB
   useEffect(() => {
     if (!isVaultHydratedRef.current) return;
     const idbFontsKey = vaultMode === 'decoy' ? IDB_DECOY_FONTS_KEY : IDB_FONTS_KEY;
     if (customFonts.length > 0) {
       saveActiveAppStateToIDB(idbFontsKey, customFonts, vaultMode);
+      saveAppSpecificInternalFile(idbFontsKey, customFonts, vaultMode);
     }
   }, [customFonts, vaultMode]);
 
@@ -918,6 +930,14 @@ export default function App() {
     const id = pendingDeleteLog.id;
     if (window.LikkhoNative?.cancelNativeReminder) {
       window.LikkhoNative.cancelNativeReminder(id);
+    }
+    // Delete native audio files from App-Specific Internal Files Directory if applicable
+    if (pendingDeleteLog.audioAttachments && Array.isArray(pendingDeleteLog.audioAttachments)) {
+      for (const att of pendingDeleteLog.audioAttachments) {
+        if (att.audioUri && window.LikkhoNative?.deleteNativeAudioFile) {
+          window.LikkhoNative.deleteNativeAudioFile(att.audioUri);
+        }
+      }
     }
     setLogs((prev) => prev.filter((l) => l.id !== id));
     setPendingDeleteLog(null);
@@ -1227,6 +1247,18 @@ export default function App() {
           onUpdateMicSettings={(next) => setMicSettings(next)}
           logs={logs}
           customFonts={customFonts}
+          savedKeyHash={savedKeyHash}
+          onRestoreSingleDiary={(singleLog) => {
+            setLogs((prev) => {
+              const exists = prev.some((l) => l.id === singleLog.id);
+              if (exists) {
+                return prev.map((l) => (l.id === singleLog.id ? singleLog : l));
+              }
+              return [singleLog, ...prev];
+            });
+            setExportStatusBanner(`Restored "${singleLog.heading || 'Diary'}" to app.`);
+            window.setTimeout(() => setExportStatusBanner(null), 3000);
+          }}
           onClearAllAppData={async () => {
             // Cancel any scheduled reminders
             logs.forEach((l) => {
@@ -1235,6 +1267,10 @@ export default function App() {
               }
             });
             await clearAllAppVaultData();
+            await deleteAppSpecificInternalFile(IDB_LOGS_KEY, 'primary');
+            await deleteAppSpecificInternalFile(IDB_DECOY_LOGS_KEY, 'decoy');
+            await deleteAppSpecificInternalFile(IDB_FONTS_KEY, 'primary');
+            await deleteAppSpecificInternalFile(IDB_DECOY_FONTS_KEY, 'decoy');
             setLogs([]);
             setCustomFonts([]);
             setMicSettings(DEFAULT_MIC_SETTINGS);

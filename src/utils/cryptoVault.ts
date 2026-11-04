@@ -116,6 +116,10 @@ declare global {
       authenticateDeviceLockForBackup?: () => void;
       getNativeAudioFileUri?: (filePath: string) => string;
       deleteNativeAudioFile?: (filePath: string) => void;
+      writeInternalAppFile?: (filename: string, data: string) => boolean;
+      readInternalAppFile?: (filename: string) => string;
+      deleteInternalAppFile?: (filename: string) => boolean;
+      hasInternalAppFile?: (filename: string) => boolean;
     };
     __handleLikkhoAndroidBack?: () => string;
     __onLikkhoBiometricResult?: (success: boolean, msg?: string) => void;
