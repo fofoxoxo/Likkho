@@ -2274,45 +2274,11 @@ jobs:
 
           ls -la release-apks/
 
-      - name: Build Pure Native Kotlin Android APK (Jetpack Compose)
-        working-directory: ./android-native-app
-        env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: |
-          chmod +x ./gradlew
-          ./gradlew assembleRelease assembleDebug --stacktrace || true
-          echo "=== Native build output files: ==="
-          find app/build/outputs -type f || true
-          # Find and copy release APK
-          RELEASE_APK=$(find app/build/outputs/apk/release -name "*release*.apk" 2>/dev/null | head -n 1)
-          if [ -n "$RELEASE_APK" ] && [ -f "$RELEASE_APK" ]; then
-            cp "$RELEASE_APK" ../android/release-apks/likkho-native-kotlin-release-v1.3.0.apk
-            echo "Copied $RELEASE_APK to likkho-native-kotlin-release-v1.3.0.apk"
-          fi
-          # Find and copy debug APK
-          DEBUG_APK=$(find app/build/outputs/apk/debug -name "*debug*.apk" 2>/dev/null | head -n 1)
-          if [ -n "$DEBUG_APK" ] && [ -f "$DEBUG_APK" ]; then
-            cp "$DEBUG_APK" ../android/release-apks/likkho-native-kotlin-debug-v1.3.0.apk
-            echo "Copied $DEBUG_APK to likkho-native-kotlin-debug-v1.3.0.apk"
-          fi
-          ls -la ../android/release-apks/
-
       - name: Upload Release APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: likkho-release-v1.3.0-apk
           path: android/release-apks/likkho-release-v1.3.0.apk
-          retention-days: 30
-
-      - name: Upload Native Kotlin Release APK Artifact
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: likkho-native-kotlin-release-v1.3.0-apk
-          path: android/release-apks/likkho-native-kotlin-*.apk
           retention-days: 30
 
       - name: Upload Release AAB Bundle Artifact
@@ -2343,20 +2309,18 @@ jobs:
             - **In-App Deletion Isolation**: Deleting diaries from within the app safely removes them only from the App-Specific Internal Files Directory. Your backup files (`real_vault.db` / `decoy_vault.db`) in your chosen folder remain untouched and intact.
             - **Backed-up Diaries Vault in Settings**: Added a dedicated button on the Settings page to inspect, read, and selectively delete or restore diaries directly from your backup vault file.
             - **Low-RAM Streaming Engine & Audio Enhancements**: Zero memory bloat during 200MB+ backups and restores, with native voice note streaming.
-            - **Pure Native Kotlin + Jetpack Compose Edition**: Pure native build with Room DB and direct DMA FileChannels (`likkho-native-kotlin-release-v1.3.0.apk`).
             
             ### 📦 Release Downloads:
-            - **Native Kotlin Release APK**: `likkho-native-kotlin-release-v1.3.0.apk`
-            - **Signed Hybrid Release APK**: `likkho-release-v1.3.0.apk`
+            - **Signed Release APK**: `likkho-release-v1.3.0.apk`
             - **Signed Google Play App Bundle**: `likkho-release-v1.3.0.aab`
             - **Debug APK**: `likkho-debug-v1.3.0.apk`
           files: |
             android/release-apks/likkho-release-v1.3.0.apk
             android/release-apks/likkho-release-v1.3.0.aab
             android/release-apks/likkho-debug-v1.3.0.apk
-            android/release-apks/likkho-native-kotlin-*.apk
           draft: false
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
 
