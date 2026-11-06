@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Wikipedia-inspired Clean Theme Palette -->
+    <color name="wiki_bg_light">#FFFFFF</color>
+    <color name="wiki_surface_light">#F8F9FA</color>
+    <color name="wiki_border_light">#A2A9B1</color>
+    <color name="wiki_text_light">#202122</color>
+    <color name="wiki_muted_light">#72777D</color>
+    <color name="wiki_blue">#3366CC</color>
+    <color name="wiki_blue_hover">#2A56B0</color>
+
+    <color name="wiki_bg_dark">#101418</color>
+    <color name="wiki_surface_dark">#1A1F24</color>
+    <color name="wiki_border_dark">#54595D</color>
+    <color name="wiki_text_dark">#EAECF0</color>
+    <color name="wiki_muted_dark">#A2A9B1</color>
+    <color name="wiki_red">#B32424</color>
+    <color name="wiki_green">#14866D</color>
+</resources>
