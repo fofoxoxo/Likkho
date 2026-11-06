@@ -30,6 +30,12 @@ val WikiRed = Color(0xFFB32424)
 val WikiGreen = Color(0xFF14866D)
 val WikiAmber = Color(0xFFAC6600)
 
+// Aliases matching all screen references
+val WikipediaBlue = WikiBlue
+val WikipediaRed = WikiRed
+val WikipediaGreen = WikiGreen
+val WikipediaAmber = WikiAmber
+
 // Wikipedia Serif Typography
 val WikiSerif = FontFamily.Serif
 val WikiMono = FontFamily.Monospace
@@ -102,7 +108,7 @@ private val DarkColorScheme = darkColorScheme(
 )
 
 @Composable
-fun LikkhoNativeTheme(
+fun LikkhoTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit
 ) {
@@ -113,4 +119,12 @@ fun LikkhoNativeTheme(
         typography = WikiTypography,
         content = content
     )
+}
+
+@Composable
+fun LikkhoNativeTheme(
+    darkTheme: Boolean = isSystemInDarkTheme(),
+    content: @Composable () -> Unit
+) {
+    LikkhoTheme(darkTheme = darkTheme, content = content)
 }

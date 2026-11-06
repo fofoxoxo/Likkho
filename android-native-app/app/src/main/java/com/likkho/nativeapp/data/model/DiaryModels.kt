@@ -77,7 +77,12 @@ data class MicRecordingSettings(
 )
 
 data class VaultBackupBundle(
-    val logs: List<DiaryLog>,
+    val version: String = "1.3.0",
+    val exportedAt: Long = System.currentTimeMillis(),
+    val vaultMode: String = "primary",
+    val totalEntries: Int = 0,
+    val diaries: List<DiaryLog> = emptyList(),
+    val logs: List<DiaryLog> = diaries,
     val customFonts: List<CustomFontItem> = emptyList(),
     val micSettings: MicRecordingSettings = MicRecordingSettings()
 )
