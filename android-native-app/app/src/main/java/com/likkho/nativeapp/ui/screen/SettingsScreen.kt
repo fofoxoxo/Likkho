@@ -26,6 +26,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.likkho.nativeapp.data.model.MicRecordingSettings
 import com.likkho.nativeapp.data.security.NativeStreamVaultEngine
 import com.likkho.nativeapp.data.security.SecurityStorageManager
 import com.likkho.nativeapp.ui.theme.*
@@ -48,9 +49,9 @@ fun SettingsScreen(
     val scope = rememberCoroutineScope()
 
     var isDarkMode by remember { mutableStateOf(securityManager.isDarkMode()) }
-    var isBiometricEnabled by remember { mutableStateOf(securityManager.isBiometricEnabled()) }
-    var isPasscodeSet by remember { mutableStateOf(securityManager.isPasscodeSet()) }
-    var isDecoyPasscodeSet by remember { mutableStateOf(securityManager.isDecoyPasscodeSet()) }
+    var isBiometricEnabled by remember { mutableStateOf(securityManager.isBiometricsEnabled()) }
+    var isPasscodeSet by remember { mutableStateOf(securityManager.getPrimaryPasscode() != null) }
+    var isDecoyPasscodeSet by remember { mutableStateOf(securityManager.getSecondaryPasscode() != null) }
 
     var showSetPinDialog by remember { mutableStateOf(false) }
     var showDecoyPinDialog by remember { mutableStateOf(false) }
@@ -65,10 +66,9 @@ fun SettingsScreen(
     var confirmDecoyPinInput by remember { mutableStateOf("") }
     var decoyPinError by remember { mutableStateOf<String?>(null) }
 
-    var sampleRate by remember { mutableStateOf(securityManager.getMicSampleRate()) }
+    var micSettings by remember { mutableStateOf(securityManager.getMicSettings()) }
 
-    val safDirectoryUri = securityManager.getSafTreeUri(false)
-    val safFolderName = if (safDirectoryUri != null) "Folder Selected" else "Not Configured"
+    val safDirectoryUri = securityManager.getSafTreeUri("primary")
 
     Scaffold(
         topBar = {
@@ -132,7 +132,6 @@ fun SettingsScreen(
             item {
                 SettingsSectionHeader("SECURITY & PASSCODE")
                 SettingsCard {
-                    // Set/Change Passcode row with 10-second hold detection for Secret Decoy PIN
                     var isPressing by remember { mutableStateOf(false) }
                     var holdSeconds by remember { mutableStateOf(0) }
 
@@ -211,8 +210,9 @@ fun SettingsScreen(
                             if (isPasscodeSet) {
                                 TextButton(
                                     onClick = {
-                                        securityManager.clearPasscode(false)
+                                        securityManager.setPrimaryPasscode(null)
                                         isPasscodeSet = false
+                                        isDecoyPasscodeSet = false
                                         Toast.makeText(context, "Passcode removed", Toast.LENGTH_SHORT).show()
                                     }
                                 ) {
@@ -235,7 +235,7 @@ fun SettingsScreen(
                                 enabled = isPasscodeSet,
                                 onCheckedChange = { checked ->
                                     isBiometricEnabled = checked
-                                    securityManager.setBiometricEnabled(checked)
+                                    securityManager.setBiometricsEnabled(checked)
                                 }
                             )
                         }
@@ -250,7 +250,7 @@ fun SettingsScreen(
                             trailing = {
                                 TextButton(
                                     onClick = {
-                                        securityManager.clearPasscode(true)
+                                        securityManager.setSecondaryPasscode(null)
                                         isDecoyPasscodeSet = false
                                         Toast.makeText(context, "Secondary PIN removed", Toast.LENGTH_SHORT).show()
                                     }
@@ -267,7 +267,6 @@ fun SettingsScreen(
             item {
                 SettingsSectionHeader("SAF STORAGE & VAULT BACKUP")
                 SettingsCard {
-                    // Chosen Folder
                     SettingsRow(
                         title = "Storage Access Folder",
                         subtitle = if (safDirectoryUri != null) "Folder active (.likkho_backups)" else "Select safe storage location",
@@ -284,7 +283,6 @@ fun SettingsScreen(
 
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
-                    // Backup Now
                     SettingsRow(
                         title = "Save Streaming Backup",
                         subtitle = "Direct-IO atomic backup to real_vault.db",
@@ -301,7 +299,6 @@ fun SettingsScreen(
 
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
-                    // Restore from Backup
                     SettingsRow(
                         title = "Restore from Backup File",
                         subtitle = "Direct-IO low RAM stream restore",
@@ -318,7 +315,6 @@ fun SettingsScreen(
 
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
-                    // Backed-up Diaries button
                     SettingsRow(
                         title = "Backed-up Diaries Vault",
                         subtitle = "Inspect, read, or delete diaries in backup file",
@@ -341,11 +337,11 @@ fun SettingsScreen(
                 SettingsCard {
                     SettingsRow(
                         title = "Audio Sample Rate",
-                        subtitle = when (sampleRate) {
+                        subtitle = when (micSettings.sampleRate) {
                             44100 -> "44.1 kHz (CD High Quality, Recommended)"
                             22050 -> "22.05 kHz (Compact Voice Recording)"
                             16000 -> "16 kHz (Ultra-Low Storage Size)"
-                            else -> "$sampleRate Hz"
+                            else -> "${micSettings.sampleRate} Hz"
                         },
                         icon = Icons.Default.Mic,
                         onClick = { showRecordingFormatDialog = true },
@@ -436,7 +432,7 @@ fun SettingsScreen(
                             pinError = "PINs do not match."
                             return@Button
                         }
-                        securityManager.savePasscode(newPinInput, false)
+                        securityManager.setPrimaryPasscode(newPinInput)
                         isPasscodeSet = true
                         showSetPinDialog = false
                         Toast.makeText(context, "Passcode saved successfully", Toast.LENGTH_SHORT).show()
@@ -505,7 +501,7 @@ fun SettingsScreen(
                             decoyPinError = "PINs do not match."
                             return@Button
                         }
-                        securityManager.savePasscode(decoyPinInput, true)
+                        securityManager.setSecondaryPasscode(decoyPinInput)
                         isDecoyPasscodeSet = true
                         showDecoyPinDialog = false
                         Toast.makeText(context, "Covert vault PIN activated", Toast.LENGTH_SHORT).show()
@@ -545,18 +541,20 @@ fun SettingsScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable {
-                                    sampleRate = rate
-                                    securityManager.setMicSampleRate(rate)
+                                    val updated = micSettings.copy(sampleRate = rate)
+                                    micSettings = updated
+                                    securityManager.setMicSettings(updated)
                                     showRecordingFormatDialog = false
                                 }
                                 .padding(vertical = 10.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             RadioButton(
-                                selected = (sampleRate == rate),
+                                selected = (micSettings.sampleRate == rate),
                                 onClick = {
-                                    sampleRate = rate
-                                    securityManager.setMicSampleRate(rate)
+                                    val updated = micSettings.copy(sampleRate = rate)
+                                    micSettings = updated
+                                    securityManager.setMicSettings(updated)
                                     showRecordingFormatDialog = false
                                 }
                             )
@@ -611,74 +609,5 @@ fun SettingsScreen(
                 }
             }
         )
-    }
-}
-
-@Composable
-fun SettingsSectionHeader(title: String) {
-    Text(
-        text = title,
-        fontSize = 11.sp,
-        fontWeight = FontWeight.Bold,
-        letterSpacing = 1.sp,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(start = 4.dp, bottom = 4.dp)
-    )
-}
-
-@Composable
-fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp)),
-        shape = RoundedCornerShape(8.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        )
-    ) {
-        Column(content = content)
-    }
-}
-
-@Composable
-fun SettingsRow(
-    title: String,
-    subtitle: String,
-    icon: ImageVector,
-    iconTint: Color = WikipediaBlue,
-    trailing: @Composable () -> Unit = {},
-    onClick: (() -> Unit)? = null
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .then(
-                if (onClick != null) Modifier.clickable { onClick() } else Modifier
-            )
-            .padding(horizontal = 16.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = iconTint,
-            modifier = Modifier.size(24.dp)
-        )
-        Spacer(modifier = Modifier.width(16.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = title,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            Text(
-                text = subtitle,
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        trailing()
     }
 }

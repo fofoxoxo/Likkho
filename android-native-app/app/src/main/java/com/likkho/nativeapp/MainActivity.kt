@@ -38,18 +38,18 @@ class MainActivity : FragmentActivity() {
     private lateinit var database: LikkhoDatabase
     private lateinit var vaultEngine: NativeStreamVaultEngine
 
-    private var isDecoySession = mutableStateOf(false)
+    private var activeVaultMode = mutableStateOf("primary")
     private var currentScreen = mutableStateOf<Screen>(Screen.DiaryList)
     private var isAppLocked = mutableStateOf(true)
+    private var searchQuery = mutableStateOf("")
 
-    private var pendingSafIsDecoy = false
     private val openDocumentTreeLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
     ) { uri: Uri? ->
         if (uri != null) {
             val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
             contentResolver.takePersistableUriPermission(uri, flags)
-            securityManager.saveSafTreeUri(uri, pendingSafIsDecoy)
+            securityManager.setSafTreeUri(activeVaultMode.value, uri)
             Toast.makeText(this, "SAF Backup folder saved!", Toast.LENGTH_SHORT).show()
         }
     }
@@ -61,11 +61,11 @@ class MainActivity : FragmentActivity() {
         database = LikkhoDatabase.getDatabase(this)
         vaultEngine = NativeStreamVaultEngine(this)
 
-        if (securityManager.isPasscodeSet()) {
+        if (securityManager.getPrimaryPasscode() != null) {
             isAppLocked.value = true
             currentScreen.value = Screen.Passcode
             applyFlagSecure(true)
-            if (securityManager.isBiometricEnabled()) {
+            if (securityManager.isBiometricsEnabled()) {
                 showBiometricPrompt()
             }
         } else {
@@ -84,43 +84,53 @@ class MainActivity : FragmentActivity() {
                         is Screen.Passcode -> {
                             PasscodeScreen(
                                 securityManager = securityManager,
-                                onUnlockSuccess = { isDecoy ->
-                                    isDecoySession.value = isDecoy
+                                onUnlocked = { mode ->
+                                    activeVaultMode.value = mode
                                     isAppLocked.value = false
                                     applyFlagSecure(true)
                                     currentScreen.value = Screen.DiaryList
+                                },
+                                onTriggerBiometrics = {
+                                    showBiometricPrompt()
                                 }
                             )
                         }
 
                         is Screen.DiaryList -> {
                             val diaryDao = database.diaryDao()
-                            val vaultMode = if (isDecoySession.value) "decoy" else "primary"
-                            val diariesFlow = diaryDao.getAllLogs(vaultMode)
+                            val diariesFlow = diaryDao.getAllLogs(activeVaultMode.value)
                             val diaries by diariesFlow.collectAsState(initial = emptyList())
 
                             DiaryListScreen(
-                                diaries = diaries,
-                                isDecoy = isDecoySession.value,
-                                onOpenDiary = { id ->
-                                    currentScreen.value = Screen.WritingWorkspace(id)
+                                logs = diaries,
+                                vaultMode = activeVaultMode.value,
+                                onOpenDiary = { diary ->
+                                    currentScreen.value = Screen.WritingWorkspace(diary.id)
                                 },
                                 onCreateNewDiary = {
                                     currentScreen.value = Screen.WritingWorkspace(null)
                                 },
-                                onOpenSettings = {
-                                    currentScreen.value = Screen.Settings
-                                },
-                                onTogglePin = { diary ->
+                                onTogglePin = { diaryId ->
                                     lifecycleScope.launch {
-                                        diaryDao.togglePin(diary.id)
+                                        diaryDao.togglePin(diaryId)
                                     }
                                 },
                                 onDeleteDiary = { diary ->
                                     lifecycleScope.launch {
                                         diaryDao.deleteLogById(diary.id)
                                     }
-                                }
+                                },
+                                onOpenSettings = {
+                                    currentScreen.value = Screen.Settings
+                                },
+                                onLockApp = {
+                                    if (securityManager.getPrimaryPasscode() != null) {
+                                        isAppLocked.value = true
+                                        currentScreen.value = Screen.Passcode
+                                    }
+                                },
+                                searchQuery = searchQuery.value,
+                                onSearchQueryChange = { q -> searchQuery.value = q }
                             )
                         }
 
@@ -137,22 +147,16 @@ class MainActivity : FragmentActivity() {
                             }
 
                             WritingWorkspaceScreen(
-                                initialDiary = activeDiary,
-                                isDecoy = isDecoySession.value,
-                                onBack = {
-                                    currentScreen.value = Screen.DiaryList
-                                },
-                                onSaveDiary = { log ->
+                                initialLog = activeDiary,
+                                vaultMode = activeVaultMode.value,
+                                onSaveAndExit = { log ->
                                     lifecycleScope.launch {
                                         diaryDao.upsertLog(log)
                                         currentScreen.value = Screen.DiaryList
                                     }
                                 },
-                                onDeleteDiary = { log ->
-                                    lifecycleScope.launch {
-                                        diaryDao.deleteLogById(log.id)
-                                        currentScreen.value = Screen.DiaryList
-                                    }
+                                onBackWithoutSave = {
+                                    currentScreen.value = Screen.DiaryList
                                 }
                             )
                         }
@@ -165,7 +169,6 @@ class MainActivity : FragmentActivity() {
                                     currentScreen.value = Screen.DiaryList
                                 },
                                 onSelectSafDirectory = {
-                                    pendingSafIsDecoy = isDecoySession.value
                                     openDocumentTreeLauncher.launch(null)
                                 },
                                 onOpenBackedUpDiaries = {
@@ -174,8 +177,7 @@ class MainActivity : FragmentActivity() {
                                 onClearAllInAppDiaries = {
                                     lifecycleScope.launch {
                                         val dao = database.diaryDao()
-                                        val mode = if (isDecoySession.value) "decoy" else "primary"
-                                        dao.clearVaultLogs(mode)
+                                        dao.clearVaultLogs(activeVaultMode.value)
                                     }
                                 },
                                 onBackupRequested = {
@@ -191,7 +193,7 @@ class MainActivity : FragmentActivity() {
                             BackedUpDiariesScreen(
                                 securityManager = securityManager,
                                 vaultEngine = vaultEngine,
-                                isDecoy = isDecoySession.value,
+                                vaultMode = activeVaultMode.value,
                                 onBack = {
                                     currentScreen.value = Screen.Settings
                                 },
@@ -227,7 +229,7 @@ class MainActivity : FragmentActivity() {
             object : BiometricPrompt.AuthenticationCallback() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                     super.onAuthenticationSucceeded(result)
-                    isDecoySession.value = false
+                    activeVaultMode.value = "primary"
                     isAppLocked.value = false
                     currentScreen.value = Screen.DiaryList
                     Toast.makeText(this@MainActivity, "Unlocked with Biometrics", Toast.LENGTH_SHORT).show()
@@ -249,10 +251,9 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun triggerFullStreamingBackup() {
-        val uri = securityManager.getSafTreeUri(isDecoySession.value)
+        val uri = securityManager.getSafTreeUri(activeVaultMode.value)
         if (uri == null) {
             Toast.makeText(this, "Please select a backup storage folder first", Toast.LENGTH_LONG).show()
-            pendingSafIsDecoy = isDecoySession.value
             openDocumentTreeLauncher.launch(null)
             return
         }
@@ -260,65 +261,68 @@ class MainActivity : FragmentActivity() {
         lifecycleScope.launch {
             Toast.makeText(this@MainActivity, "Starting low-RAM streaming backup...", Toast.LENGTH_SHORT).show()
             val dao = database.diaryDao()
-            val mode = if (isDecoySession.value) "decoy" else "primary"
-            val diaries = dao.getAllLogsList(mode)
+            val diaries = dao.getAllLogsList(activeVaultMode.value)
 
             val bundle = VaultBackupBundle(
                 version = "1.3.0",
                 exportedAt = System.currentTimeMillis(),
-                vaultMode = mode,
+                vaultMode = activeVaultMode.value,
                 totalEntries = diaries.size,
                 diaries = diaries
             )
 
-            val passHash = securityManager.getPasscodeHash(isDecoySession.value)
-            val pass = passHash ?: "likkho_default_safe_key"
+            val pass = if (activeVaultMode.value == "decoy") {
+                securityManager.getSecondaryPasscode() ?: "likkho_default_safe_key"
+            } else {
+                securityManager.getPrimaryPasscode() ?: "likkho_default_safe_key"
+            }
 
             val result = vaultEngine.performStreamingBackup(
                 treeUri = uri,
                 bundle = bundle,
-                isDecoy = isDecoySession.value,
-                password = pass
-            ) { _ -> }
+                passphrase = pass,
+                vaultMode = activeVaultMode.value
+            )
 
-            result.onSuccess {
+            if (result.success) {
                 Toast.makeText(this@MainActivity, "Backup successfully saved to SAF vault!", Toast.LENGTH_LONG).show()
-            }.onFailure { err ->
-                Toast.makeText(this@MainActivity, "Backup failed: ${err.message}", Toast.LENGTH_LONG).show()
+            } else {
+                Toast.makeText(this@MainActivity, "Backup failed: ${result.message}", Toast.LENGTH_LONG).show()
             }
         }
     }
 
     private fun triggerFullStreamingRestore() {
-        val uri = securityManager.getSafTreeUri(isDecoySession.value)
+        val uri = securityManager.getSafTreeUri(activeVaultMode.value)
         if (uri == null) {
             Toast.makeText(this, "Please select the backup folder first", Toast.LENGTH_LONG).show()
-            pendingSafIsDecoy = isDecoySession.value
             openDocumentTreeLauncher.launch(null)
             return
         }
 
         lifecycleScope.launch {
             Toast.makeText(this@MainActivity, "Streaming and restoring from vault...", Toast.LENGTH_SHORT).show()
-            val passHash = securityManager.getPasscodeHash(isDecoySession.value)
-            val pass = passHash ?: "likkho_default_safe_key"
+            val pass = if (activeVaultMode.value == "decoy") {
+                securityManager.getSecondaryPasscode() ?: "likkho_default_safe_key"
+            } else {
+                securityManager.getPrimaryPasscode() ?: "likkho_default_safe_key"
+            }
 
-            val result = vaultEngine.performStreamingRestore(
-                treeUri = uri,
-                isDecoy = isDecoySession.value,
-                password = pass
-            ) { _ -> }
-
-            result.onSuccess { bundle ->
+            try {
+                val result = vaultEngine.performStreamingRestore(
+                    treeUri = uri,
+                    passphrase = pass,
+                    vaultMode = activeVaultMode.value
+                )
                 val dao = database.diaryDao()
-                dao.upsertLogs(bundle.diaries)
+                dao.upsertLogs(result.bundle.diaries)
                 Toast.makeText(
                     this@MainActivity,
-                    "Restored ${bundle.diaries.size} entries into Likkho!",
+                    "Restored ${result.bundle.diaries.size} entries into Likkho!",
                     Toast.LENGTH_LONG
                 ).show()
-            }.onFailure { err ->
-                Toast.makeText(this@MainActivity, "Restore failed: ${err.message}", Toast.LENGTH_LONG).show()
+            } catch (e: Exception) {
+                Toast.makeText(this@MainActivity, "Restore failed: ${e.message}", Toast.LENGTH_LONG).show()
             }
         }
     }

@@ -2284,11 +2284,19 @@ jobs:
         run: |
           chmod +x ./gradlew
           ./gradlew assembleRelease assembleDebug --stacktrace || true
-          if [ -f app/build/outputs/apk/release/app-release.apk ]; then
-            cp app/build/outputs/apk/release/app-release.apk ../android/release-apks/likkho-native-kotlin-release-v1.3.0.apk
+          echo "=== Native build output files: ==="
+          find app/build/outputs -type f || true
+          # Find and copy release APK
+          RELEASE_APK=$(find app/build/outputs/apk/release -name "*release*.apk" 2>/dev/null | head -n 1)
+          if [ -n "$RELEASE_APK" ] && [ -f "$RELEASE_APK" ]; then
+            cp "$RELEASE_APK" ../android/release-apks/likkho-native-kotlin-release-v1.3.0.apk
+            echo "Copied $RELEASE_APK to likkho-native-kotlin-release-v1.3.0.apk"
           fi
-          if [ -f app/build/outputs/apk/debug/app-debug.apk ]; then
-            cp app/build/outputs/apk/debug/app-debug.apk ../android/release-apks/likkho-native-kotlin-debug-v1.3.0.apk
+          # Find and copy debug APK
+          DEBUG_APK=$(find app/build/outputs/apk/debug -name "*debug*.apk" 2>/dev/null | head -n 1)
+          if [ -n "$DEBUG_APK" ] && [ -f "$DEBUG_APK" ]; then
+            cp "$DEBUG_APK" ../android/release-apks/likkho-native-kotlin-debug-v1.3.0.apk
+            echo "Copied $DEBUG_APK to likkho-native-kotlin-debug-v1.3.0.apk"
           fi
           ls -la ../android/release-apks/
 

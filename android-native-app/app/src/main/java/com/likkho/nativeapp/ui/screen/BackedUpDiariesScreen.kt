@@ -39,12 +39,13 @@ import java.util.Locale
 fun BackedUpDiariesScreen(
     securityManager: SecurityStorageManager,
     vaultEngine: NativeStreamVaultEngine,
-    isDecoy: Boolean,
+    vaultMode: String,
     onBack: () -> Unit,
     onRestoreSingleDiaryToApp: (DiaryLog) -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val isDecoy = (vaultMode == "decoy")
 
     var isLoading by remember { mutableStateOf(true) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
@@ -53,7 +54,7 @@ fun BackedUpDiariesScreen(
     var selectedDiaryForReading by remember { mutableStateOf<DiaryLog?>(null) }
     var diaryToDeleteFromVault by remember { mutableStateOf<DiaryLog?>(null) }
 
-    val safUri = securityManager.getSafTreeUri(isDecoy)
+    val safUri = securityManager.getSafTreeUri(vaultMode)
 
     fun loadVault() {
         if (safUri == null) {
@@ -66,15 +67,18 @@ fun BackedUpDiariesScreen(
         errorMessage = null
 
         scope.launch {
-            val passHash = securityManager.getPasscodeHash(isDecoy)
-            val pass = passHash ?: "likkho_default_safe_key"
-            val result = vaultEngine.performStreamingRestore(safUri, isDecoy, pass) { _ -> }
-
-            isLoading = false
-            result.onSuccess { bundle ->
-                loadedBundle = bundle
-            }.onFailure { err ->
-                errorMessage = err.message ?: "Failed to read backup vault."
+            try {
+                val pass = if (isDecoy) {
+                    securityManager.getSecondaryPasscode() ?: "likkho_default_safe_key"
+                } else {
+                    securityManager.getPrimaryPasscode() ?: "likkho_default_safe_key"
+                }
+                val result = vaultEngine.performStreamingRestore(safUri, pass, vaultMode)
+                isLoading = false
+                loadedBundle = result.bundle
+            } catch (e: Exception) {
+                isLoading = false
+                errorMessage = e.message ?: "Failed to read backup vault."
             }
         }
     }
@@ -441,19 +445,22 @@ fun BackedUpDiariesScreen(
                             loadedBundle = updatedBundle
 
                             scope.launch {
-                                val passHash = securityManager.getPasscodeHash(isDecoy)
-                                val pass = passHash ?: "likkho_default_safe_key"
+                                val pass = if (isDecoy) {
+                                    securityManager.getSecondaryPasscode() ?: "likkho_default_safe_key"
+                                } else {
+                                    securityManager.getPrimaryPasscode() ?: "likkho_default_safe_key"
+                                }
                                 val backupRes = vaultEngine.performStreamingBackup(
                                     treeUri = safUri,
                                     bundle = updatedBundle,
-                                    isDecoy = isDecoy,
-                                    password = pass
-                                ) { _ -> }
+                                    passphrase = pass,
+                                    vaultMode = vaultMode
+                                )
 
-                                if (backupRes.isSuccess) {
+                                if (backupRes.success) {
                                     Toast.makeText(context, "Removed from vault and backup updated", Toast.LENGTH_SHORT).show()
                                 } else {
-                                    Toast.makeText(context, "Failed to update backup file", Toast.LENGTH_LONG).show()
+                                    Toast.makeText(context, "Failed to update backup file: ${backupRes.message}", Toast.LENGTH_LONG).show()
                                 }
                             }
                         }
@@ -469,130 +476,5 @@ fun BackedUpDiariesScreen(
                 }
             }
         )
-    }
-}
-
-@Composable
-fun BackedUpDiaryCard(
-    diary: DiaryLog,
-    onRead: () -> Unit,
-    onRestore: () -> Unit,
-    onDelete: () -> Unit
-) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
-            .clickable { onRead() },
-        shape = RoundedCornerShape(8.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-    ) {
-        Column(modifier = Modifier.padding(14.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = diary.heading.ifEmpty { "Untitled Entry" },
-                    fontSize = 16.sp,
-                    fontFamily = FontFamily.Serif,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
-                Text(
-                    text = SimpleDateFormat("MMM d, yyyy", Locale.getDefault()).format(Date(diary.createdAt)),
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-
-            Spacer(modifier = Modifier.height(6.dp))
-
-            Text(
-                text = diary.plainPreview.ifEmpty { diary.contentHtml.replace(Regex("<[^>]*>"), "") },
-                fontSize = 13.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                lineHeight = 18.sp
-            )
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (diary.canvasImages.isNotEmpty()) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Default.Image,
-                                contentDescription = null,
-                                tint = WikipediaBlue,
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Spacer(modifier = Modifier.width(3.dp))
-                            Text(
-                                text = "${diary.canvasImages.size}",
-                                fontSize = 11.sp,
-                                color = WikipediaBlue
-                            )
-                        }
-                    }
-                    if (diary.audioAttachments.isNotEmpty()) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Default.Mic,
-                                contentDescription = null,
-                                tint = WikipediaBlue,
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Spacer(modifier = Modifier.width(3.dp))
-                            Text(
-                                text = "${diary.audioAttachments.size}",
-                                fontSize = 11.sp,
-                                color = WikipediaBlue
-                            )
-                        }
-                    }
-                }
-
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(
-                        onClick = onRestore,
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Restore,
-                            contentDescription = null,
-                            tint = WikipediaBlue,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Restore", fontSize = 12.sp, color = WikipediaBlue)
-                    }
-
-                    TextButton(
-                        onClick = onDelete,
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.DeleteOutline,
-                            contentDescription = null,
-                            tint = WikipediaRed,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Delete", fontSize = 12.sp, color = WikipediaRed)
-                    }
-                }
-            }
-        }
     }
 }
