@@ -235,6 +235,7 @@ export interface VaultBackupBundle {
   logs: DiaryLog[];
   customFonts?: CustomFontItem[];
   micSettings?: MicRecordingSettings;
+  savedPasswords?: any[];
   mediaArchive?: MediaArchiveItem[];
   skippedMediaCount?: number;
   skippedMediaIds?: string[];

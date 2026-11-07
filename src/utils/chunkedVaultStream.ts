@@ -57,6 +57,7 @@ export interface StreamVaultManifest {
   logs: DiaryLog[];
   customFonts: CustomFontItem[];
   micSettings?: MicRecordingSettings;
+  savedPasswords?: any[];
 }
 
 export interface StreamRestoreResult {
@@ -398,7 +399,18 @@ export async function streamBackupChunks(
   totalBytesWritten += header.length;
 
   // 2. Write Manifest Record (Type 0x01)
-  // Contains only logs with media IDs, custom fonts, mic settings. Lightweight JSON!
+  // Contains only logs with media IDs, custom fonts, mic settings, and saved passwords. Lightweight JSON!
+  const rawPw =
+    typeof localStorage !== 'undefined'
+      ? localStorage.getItem(`likkho_saved_passwords_${vaultMode}`)
+      : null;
+  let storedPw: any[] = [];
+  try {
+    if (rawPw) storedPw = JSON.parse(rawPw);
+  } catch {
+    // ignore
+  }
+
   const manifest: StreamVaultManifest = {
     magic: 'WIKILOG_STREAM_V1',
     dbTarget: cfg.dbFilename,
@@ -406,6 +418,7 @@ export async function streamBackupChunks(
     logs: bundle.logs,
     customFonts: bundle.customFonts || [],
     micSettings: bundle.micSettings,
+    savedPasswords: (bundle as any).savedPasswords || storedPw,
   };
   const manifestBytes = enc.encode(JSON.stringify(manifest));
   const manifestIv = deriveChunkIv(baseIv, chunkCounter++);
@@ -731,6 +744,19 @@ export async function restoreFromStreamSource(
       if (recordType === STREAM_RECORD_TYPE_MANIFEST) {
         const jsonStr = dec.decode(decryptedBuffer);
         restoredManifest = JSON.parse(jsonStr) as StreamVaultManifest;
+        if (
+          Array.isArray(restoredManifest.savedPasswords) &&
+          typeof localStorage !== 'undefined'
+        ) {
+          try {
+            localStorage.setItem(
+              `likkho_saved_passwords_${vaultMode}`,
+              JSON.stringify(restoredManifest.savedPasswords)
+            );
+          } catch {
+            // ignore
+          }
+        }
       } else if (recordType === STREAM_RECORD_TYPE_MEDIA_CHUNK) {
         if (totalChunks === 1) {
           // Single chunk: write directly to IndexedDB store as Blob without accumulation
