@@ -143,7 +143,7 @@ fun PasscodeScreen(
                 ) {
                     Icon(
                         imageVector = Icons.Default.Lock,
-                        contentContentDescription = null,
+                        contentDescription = null,
                         tint = WikiBlue,
                         modifier = Modifier.size(32.dp)
                     )
