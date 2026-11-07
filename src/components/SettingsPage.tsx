@@ -25,7 +25,15 @@ import {
   Eye,
   EyeOff,
   Copy,
+  Sparkles,
+  RefreshCw,
 } from 'lucide-react';
+import { AppUpdateModal } from './AppUpdateModal';
+import {
+  checkForAppUpdate,
+  AppUpdateInfo,
+  APP_CURRENT_VERSION,
+} from '../utils/appUpdateChecker';
 import { BackedUpDiariesModal } from './BackedUpDiariesModal';
 import {
   AudioFormatOption,
@@ -205,6 +213,32 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     setTimeout(() => {
       setToastMsg((prev) => (prev === msg ? null : prev));
     }, 2600);
+  };
+
+  const [manualUpdateModal, setManualUpdateModal] = useState<AppUpdateInfo | null>(null);
+  const [isCheckingUpdate, setIsCheckingUpdate] = useState<boolean>(false);
+
+  const handleManualCheckForUpdates = async () => {
+    if (isCheckingUpdate) return;
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      showToast('Internet offline. Connect to check for updates.');
+      return;
+    }
+    setIsCheckingUpdate(true);
+    try {
+      const info = await checkForAppUpdate(true);
+      if (info && info.hasUpdate) {
+        setManualUpdateModal(info);
+      } else if (info) {
+        showToast(`Likkho is up to date (v${APP_CURRENT_VERSION}).`);
+      } else {
+        showToast('Could not reach GitHub Releases. Try again later.');
+      }
+    } catch {
+      showToast('Failed to check for updates.');
+    } finally {
+      setIsCheckingUpdate(false);
+    }
   };
 
   const startSetPasscodeHold = () => {
@@ -1358,6 +1392,38 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             </div>
             <ChevronRight className="h-5 w-5 text-[var(--wiki-muted)]" />
           </button>
+
+          {/* 8. Check for App Updates */}
+          <button
+            type="button"
+            onClick={handleManualCheckForUpdates}
+            disabled={isCheckingUpdate}
+            className="flex w-full items-center justify-between px-4 py-4 text-left hover:bg-[var(--wiki-surface)] transition-colors disabled:opacity-60"
+          >
+            <div className="flex items-center gap-3.5">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center border border-[var(--wiki-border)] bg-[var(--wiki-surface)]">
+                {isCheckingUpdate ? (
+                  <RefreshCw className="h-5 w-5 text-[#3366cc] animate-spin" />
+                ) : (
+                  <Sparkles className="h-5 w-5 text-[#3366cc]" />
+                )}
+              </div>
+              <div>
+                <div className="font-wiki-serif text-base font-bold flex items-center gap-2">
+                  <span>Check for Updates</span>
+                  <span className="font-wiki-mono text-[10px] font-semibold text-[#3366cc] border border-[#3366cc]/30 px-1.5 py-0.5">
+                    v{APP_CURRENT_VERSION}
+                  </span>
+                </div>
+                <div className="text-xs text-[var(--wiki-muted)]">
+                  {isCheckingUpdate
+                    ? 'Checking GitHub Releases...'
+                    : 'Tap to check for new APK versions on GitHub'}
+                </div>
+              </div>
+            </div>
+            <ChevronRight className="h-5 w-5 text-[var(--wiki-muted)]" />
+          </button>
         </section>
       </div>
 
@@ -1575,6 +1641,14 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             setShowBackedUpDiariesModal(false);
             onOpenBackupRestore();
           }}
+        />
+      )}
+
+      {/* Manual Check Update Modal */}
+      {manualUpdateModal && (
+        <AppUpdateModal
+          updateInfo={manualUpdateModal}
+          onClose={() => setManualUpdateModal(null)}
         />
       )}
     </div>

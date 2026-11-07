@@ -58,6 +58,8 @@ import {
   getImageObjectUrl,
   migrateLogsMediaToBlobStore,
 } from './utils/imageStorage';
+import { AppUpdateModal } from './components/AppUpdateModal';
+import { checkForAppUpdate, AppUpdateInfo } from './utils/appUpdateChecker';
 import {
   saveAppSpecificInternalFile,
   readAppSpecificInternalFile,
@@ -246,6 +248,36 @@ export default function App() {
 
   // 3-dots menu, Export modal, Delete Confirmation Modal & Locked Diary Prompt states
   const [openMenuLogId, setOpenMenuLogId] = useState<string | null>(null);
+  const [availableUpdate, setAvailableUpdate] = useState<AppUpdateInfo | null>(null);
+
+  // Background check for GitHub release updates when app loads or data connects
+  useEffect(() => {
+    let active = true;
+    const triggerUpdateCheck = async () => {
+      if (typeof navigator !== 'undefined' && navigator.onLine) {
+        try {
+          const info = await checkForAppUpdate();
+          if (active && info && info.hasUpdate) {
+            setAvailableUpdate(info);
+          }
+        } catch {
+          // ignore network failure
+        }
+      }
+    };
+
+    triggerUpdateCheck();
+
+    const handleOnline = () => {
+      triggerUpdateCheck();
+    };
+
+    window.addEventListener('online', handleOnline);
+    return () => {
+      active = false;
+      window.removeEventListener('online', handleOnline);
+    };
+  }, []);
   const [exportingLog, setExportingLog] = useState<DiaryLog | null>(null);
   const [exportProcessingBanner, setExportProcessingBanner] = useState<string | null>(
     null
@@ -1835,6 +1867,14 @@ export default function App() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Auto-Update Notification Modal */}
+      {availableUpdate && (
+        <AppUpdateModal
+          updateInfo={availableUpdate}
+          onClose={() => setAvailableUpdate(null)}
+        />
       )}
     </div>
   );

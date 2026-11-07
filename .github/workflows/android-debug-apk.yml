@@ -40,7 +40,7 @@ jobs:
       - name: Install Dependencies & Build Web App
         run: |
           npm install --legacy-peer-deps
-          npm run build
+          VITE_GITHUB_REPOSITORY="${{ github.repository }}" npm run build
 
       - name: Initialize Capacitor Android Project
         run: |
@@ -2251,25 +2251,25 @@ jobs:
           ./gradlew assembleRelease assembleDebug bundleRelease
 
           mkdir -p release-apks
-          # Find and package Release APK (v1.4.0) - STRICTLY SIGNED ONLY
+          # Find and package Release APK (v1.5.0) - STRICTLY SIGNED ONLY
           if [ -f app/build/outputs/apk/release/app-release.apk ]; then
-            cp app/build/outputs/apk/release/app-release.apk release-apks/likkho-release-v1.4.0.apk
+            cp app/build/outputs/apk/release/app-release.apk release-apks/likkho-release-v1.5.0.apk
           else
             echo "::error::FATAL: Signed release APK (app-release.apk) not found. Unsigned APK will not be uploaded."
             exit 1
           fi
 
-          # Find and package Release AAB (Android App Bundle v1.4.0) - STRICTLY SIGNED ONLY
+          # Find and package Release AAB (Android App Bundle v1.5.0) - STRICTLY SIGNED ONLY
           if [ -f app/build/outputs/bundle/release/app-release.aab ]; then
-            cp app/build/outputs/bundle/release/app-release.aab release-apks/likkho-release-v1.4.0.aab
+            cp app/build/outputs/bundle/release/app-release.aab release-apks/likkho-release-v1.5.0.aab
           else
             echo "::error::FATAL: Signed release AAB (app-release.aab) not found. Unsigned AAB will not be uploaded."
             exit 1
           fi
 
-          # Find and package Debug APK (v1.4.0)
+          # Find and package Debug APK (v1.5.0)
           if [ -f app/build/outputs/apk/debug/app-debug.apk ]; then
-            cp app/build/outputs/apk/debug/app-debug.apk release-apks/likkho-debug-v1.4.0.apk
+            cp app/build/outputs/apk/debug/app-debug.apk release-apks/likkho-debug-v1.5.0.apk
           fi
 
           ls -la release-apks/
@@ -2277,49 +2277,50 @@ jobs:
       - name: Upload Release APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: likkho-release-v1.4.0-apk
-          path: android/release-apks/likkho-release-v1.4.0.apk
+          name: likkho-release-v1.5.0-apk
+          path: android/release-apks/likkho-release-v1.5.0.apk
           retention-days: 30
 
       - name: Upload Release AAB Bundle Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: likkho-release-v1.4.0-aab
-          path: android/release-apks/likkho-release-v1.4.0.aab
+          name: likkho-release-v1.5.0-aab
+          path: android/release-apks/likkho-release-v1.5.0.aab
           retention-days: 30
 
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: likkho-debug-v1.4.0-apk
-          path: android/release-apks/likkho-debug-v1.4.0.apk
+          name: likkho-debug-v1.5.0-apk
+          path: android/release-apks/likkho-debug-v1.5.0.apk
           retention-days: 30
 
-      - name: Publish GitHub Release (v1.4.0)
+      - name: Publish GitHub Release (v1.5.0)
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
         with:
-          tag_name: v1.4.0
-          name: "Likkho v1.4.0 (Minor Update) - Accurate Canvas Image Size & Passwords Manager"
+          tag_name: v1.5.0
+          name: "Likkho v1.5.0 (Minor Update) - GitHub Releases Auto-Update Notification & Direct APK Installer"
           body: |
-            ## Likkho v1.4.0 Release Notes
+            ## Likkho v1.5.0 Release Notes
             
             ### ✨ What's New in this Minor Update:
-            - **Accurate Canvas Image Original Size Calculation**: Fixed the issue where canvas images always displayed "29bytes". The app now resolves the true original file size and binary blob bytes directly from cache, IndexedDB binary storage, or metadata, displaying accurate KB/MB labels across the canvas toolbar and image studio.
-            - **Passwords Manager in Settings**: Added a new "Passwords" button in Settings featuring:
-              - **3-Column Chip Grid Layout**: Clean Wikipedia-styled chips arranged 3 per row in width (`grid-cols-3`).
-              - **Header + Add Button**: Easily add accounts/services by entering Name and Password with live visibility toggle.
-              - **View Password Pop-up**: Tapping any chip opens an instant modal showing the saved password, 1-tap clipboard copy button, eye reveal/hide toggle, and deletion support.
-              - **Dual-Vault Privacy**: Passwords are securely isolated per vault (`primary` vs `decoy`).
+            - **Auto-Update Pop-up Notification**: When the app opens while online (or when mobile data/Wi-Fi is turned on), Likkho checks GitHub Releases for new updates. If a newer version is released, a prompt appears showing:
+              - What's New notes from the release
+              - **Direct APK Download & Install** button
+              - **GitHub Release Page** redirect link
+              - "Later" dismiss button
+            - **Manual Check for Updates in Settings**: Added a new "Check for Updates" button under Settings showing the current installed version and allowing manual checks at any time.
+            - **AES-GCM 256-bit Encrypted Passwords Backup**: Passwords saved in the Passwords Manager are securely bundled and encrypted with AES-256 GCM in the backup vault (`real_vault.db` / `decoy_vault.db`) and auto-restored seamlessly.
             
             ### 📦 Release Downloads:
-            - **Signed Release APK**: `likkho-release-v1.4.0.apk`
-            - **Signed Google Play App Bundle**: `likkho-release-v1.4.0.aab`
-            - **Debug APK**: `likkho-debug-v1.4.0.apk`
+            - **Signed Release APK**: `likkho-release-v1.5.0.apk`
+            - **Signed Google Play App Bundle**: `likkho-release-v1.5.0.aab`
+            - **Debug APK**: `likkho-debug-v1.5.0.apk`
           files: |
-            android/release-apks/likkho-release-v1.4.0.apk
-            android/release-apks/likkho-release-v1.4.0.aab
-            android/release-apks/likkho-debug-v1.4.0.apk
+            android/release-apks/likkho-release-v1.5.0.apk
+            android/release-apks/likkho-release-v1.5.0.aab
+            android/release-apks/likkho-debug-v1.5.0.apk
           draft: false
           prerelease: false
         env:
