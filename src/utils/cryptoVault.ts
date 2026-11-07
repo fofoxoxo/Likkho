@@ -154,6 +154,8 @@ export interface CanvasDraggableImage {
   opacity: number;
   rotation?: number;
   layer?: 'foreground' | 'background';
+  sizeBytes?: number;
+  originalSizeBytes?: number;
 }
 
 export interface CanvasAudioAttachment {

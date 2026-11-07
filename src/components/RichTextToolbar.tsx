@@ -95,7 +95,11 @@ interface RichTextToolbarProps {
   onChangeCanvasBg: (dataUrl: string | null, opacity: number) => void;
   onOpenBgImageStudio?: (rawBgImageDataUrl: string) => void;
   onOpenMediaImageStudio: (rawImageDataUrl: string) => void;
-  onInsertRawCanvasImage?: (rawImageDataUrl: string) => void;
+  onInsertRawCanvasImage?: (
+    rawImageDataUrl: string,
+    sizeBytes?: number,
+    originalSizeBytes?: number
+  ) => void;
   onOpenMediaAudioStudio?: (
     rawAudioDataUrl: string,
     fileName: string,
@@ -1904,8 +1908,14 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     try {
       const processed = await processImageFileToBlob(file, 2560);
       if (onInsertRawCanvasImage) {
-        onInsertRawCanvasImage(processed.id);
-        const sizeStr = formatByteSizeLabel(processed.blob.size);
+        onInsertRawCanvasImage(
+          processed.id,
+          processed.sizeBytes,
+          processed.originalSizeBytes
+        );
+        const sizeStr = formatByteSizeLabel(
+          processed.originalSizeBytes || processed.blob.size
+        );
         showBriefHint(`Image added (${sizeStr}). Tap "Compress / Edit" if needed.`);
       } else {
         onOpenMediaImageStudio(processed.id);

@@ -18,6 +18,66 @@ const IMAGE_STORE_NAME = 'image_blobs';
 
 // Map of currently active Object URLs: mediaRef -> blobUrl
 const activeImageObjectUrls = new Map<string, string>();
+// Caches for true original and stored byte sizes
+const imageOriginalByteSizeCache = new Map<string, number>();
+const imageBlobByteSizeCache = new Map<string, number>();
+
+export function cacheImageSize(idOrUrl: string, sizeBytes: number, originalBytes?: number): void {
+  if (!idOrUrl || sizeBytes <= 0) return;
+  imageBlobByteSizeCache.set(idOrUrl, sizeBytes);
+  if (originalBytes && originalBytes > 0) {
+    imageOriginalByteSizeCache.set(idOrUrl, originalBytes);
+  }
+}
+
+export function getCachedImageByteSize(idOrUrl: string | null | undefined): number | null {
+  if (!idOrUrl) return null;
+  if (imageOriginalByteSizeCache.has(idOrUrl)) return imageOriginalByteSizeCache.get(idOrUrl)!;
+  if (imageBlobByteSizeCache.has(idOrUrl)) return imageBlobByteSizeCache.get(idOrUrl)!;
+  return null;
+}
+
+export async function resolveImageOriginalByteSize(idOrUrl: string | null | undefined): Promise<number> {
+  if (!idOrUrl) return 0;
+  const cached = getCachedImageByteSize(idOrUrl);
+  if (cached && cached > 0) return cached;
+
+  if (idOrUrl.startsWith('data:')) {
+    const comma = idOrUrl.indexOf(',');
+    if (comma >= 0) {
+      const b64 = idOrUrl.slice(comma + 1);
+      const pad = b64.endsWith('==') ? 2 : b64.endsWith('=') ? 1 : 0;
+      const bytes = Math.max(0, Math.floor((b64.length * 3) / 4) - pad);
+      imageBlobByteSizeCache.set(idOrUrl, bytes);
+      return bytes;
+    }
+  }
+
+  if (idOrUrl.startsWith('img_blob_') || (!idOrUrl.includes(':') && idOrUrl.length > 5)) {
+    try {
+      const blob = await getImageBlobFromStore(idOrUrl);
+      if (blob) {
+        imageBlobByteSizeCache.set(idOrUrl, blob.size);
+        return blob.size;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  if (idOrUrl.startsWith('blob:')) {
+    try {
+      const r = await fetch(idOrUrl);
+      const b = await r.blob();
+      imageBlobByteSizeCache.set(idOrUrl, b.size);
+      return b.size;
+    } catch {
+      // ignore
+    }
+  }
+
+  return 0;
+}
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -160,12 +220,13 @@ export async function ensureImageObjectUrl(mediaRef: string | null | undefined):
 export async function saveImageBlobAndGetRef(
   blob: Blob,
   preferredId?: string
-): Promise<{ id: string; objectUrl: string }> {
+): Promise<{ id: string; objectUrl: string; sizeBytes: number }> {
   const id = preferredId || `img_blob_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   await saveImageBlobToStore(id, blob);
+  cacheImageSize(id, blob.size);
   const objectUrl = URL.createObjectURL(blob);
   activeImageObjectUrls.set(id, objectUrl);
-  return { id, objectUrl };
+  return { id, objectUrl, sizeBytes: blob.size };
 }
 
 /**
@@ -214,7 +275,15 @@ export async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
 export async function processImageFileToBlob(
   file: Blob | File,
   maxDimension: number = 2560
-): Promise<{ id: string; blob: Blob; width: number; height: number; objectUrl: string }> {
+): Promise<{
+  id: string;
+  blob: Blob;
+  width: number;
+  height: number;
+  objectUrl: string;
+  originalSizeBytes?: number;
+  sizeBytes?: number;
+}> {
   let sourceWidth = 0;
   let sourceHeight = 0;
   let drawSource: CanvasImageSource | null = null;
@@ -296,6 +365,7 @@ export async function processImageFileToBlob(
 
   const id = `img_blob_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   await saveImageBlobToStore(id, finalBlob);
+  cacheImageSize(id, finalBlob.size, file.size);
 
   const objectUrl = URL.createObjectURL(finalBlob);
   activeImageObjectUrls.set(id, objectUrl);
@@ -306,6 +376,8 @@ export async function processImageFileToBlob(
     width: targetWidth,
     height: targetHeight,
     objectUrl,
+    originalSizeBytes: file.size,
+    sizeBytes: finalBlob.size,
   };
 }
 

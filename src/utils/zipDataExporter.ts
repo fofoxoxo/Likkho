@@ -496,6 +496,26 @@ export async function exportAllAppDataAsZip(
     }
   });
 
+  // Include Saved Passwords if present
+  try {
+    const rawPw = localStorage.getItem(`likkho_saved_passwords_${vaultMode}`);
+    if (rawPw) {
+      const parsedPw = JSON.parse(rawPw);
+      if (Array.isArray(parsedPw) && parsedPw.length > 0) {
+        let pwMd = `# Saved Passwords (${vaultMode.toUpperCase()} Vault)\n\n`;
+        parsedPw.forEach((p: any, idx: number) => {
+          pwMd += `### ${idx + 1}. ${p.name || 'Untitled'}\n- **Password:** ${p.password || ''}\n- **Saved At:** ${p.createdAt ? new Date(p.createdAt).toLocaleString() : 'N/A'}\n\n`;
+        });
+        zipFiles.push({
+          path: `passwords/saved_passwords.md`,
+          data: enc.encode(pwMd),
+        });
+      }
+    }
+  } catch {
+    // ignore
+  }
+
   // Always include a top-level README.md summary in the ZIP
   const exportedDate = new Date().toLocaleString('en-IN');
   const readmeMd = `# Likkho Data Export Archive\n\n- **Exported At:** ${exportedDate}\n- **Total Diaries (.md):** ${logs.length}\n- **Saved Word Analyses:** ${savedWords.length}\n- **Custom Fonts (.ttf):** ${customFonts.length}\n\n## Folder Structure\n- \`diaries/\` — All diary entries in Markdown (\`.md\`) format.\n- \`images/\` — All profile pictures, canvas backgrounds, inline images, and floating canvas images in their original image formats.\n- \`audio/\` — All recorded and attached audio files in their original audio formats.\n`;

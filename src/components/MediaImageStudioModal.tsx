@@ -14,6 +14,8 @@ import {
   ensureImageObjectUrl,
   saveImageBlobAndGetRef,
   dataUrlToBlob,
+  getCachedImageByteSize,
+  resolveImageOriginalByteSize,
 } from '../utils/imageStorage';
 
 export type ImageFilterPreset =
@@ -77,14 +79,17 @@ interface MediaImageStudioModalProps {
     processedDataUrl: string,
     opacity: number,
     width: number,
-    height: number
+    height: number,
+    sizeBytes?: number
   ) => void;
 }
 
 export function estimateDataUrlByteSize(dataUrl: string | null | undefined): number {
   if (!dataUrl) return 0;
+  const cached = getCachedImageByteSize(dataUrl);
+  if (cached && cached > 0) return cached;
   const commaIdx = dataUrl.indexOf(',');
-  if (commaIdx < 0) return dataUrl.length;
+  if (commaIdx < 0) return 0;
   const base64 = dataUrl.slice(commaIdx + 1);
   const padding = base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0;
   return Math.max(0, Math.floor((base64.length * 3) / 4) - padding);
@@ -158,7 +163,9 @@ export const MediaImageStudioModal: React.FC<MediaImageStudioModalProps> = ({
   const [isCompressionEnabled, setIsCompressionEnabled] = useState<boolean>(false);
 
   // Original file size & dimensions
-  const originalSizeBytes = useMemo(() => estimateDataUrlByteSize(imageSrc), [imageSrc]);
+  const [originalSizeBytes, setOriginalSizeBytes] = useState<number>(() => {
+    return getCachedImageByteSize(imageSrc) || estimateDataUrlByteSize(imageSrc);
+  });
   const [originalWidth, setOriginalWidth] = useState<number>(360);
   const [originalHeight, setOriginalHeight] = useState<number>(360);
   const [estimatedOutputBytes, setEstimatedOutputBytes] = useState<number>(originalSizeBytes);
@@ -201,6 +208,10 @@ export const MediaImageStudioModal: React.FC<MediaImageStudioModalProps> = ({
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      const realSize = await resolveImageOriginalByteSize(imageSrc);
+      if (!cancelled && realSize > 0) {
+        setOriginalSizeBytes(realSize);
+      }
       const resolvedSrc = (await ensureImageObjectUrl(imageSrc)) || imageSrc;
       if (cancelled) return;
       const img = new Image();
@@ -677,15 +688,15 @@ export const MediaImageStudioModal: React.FC<MediaImageStudioModalProps> = ({
       if (imageSrc.startsWith('data:image/')) {
         try {
           const blob = await dataUrlToBlob(imageSrc);
-          const { id } = await saveImageBlobAndGetRef(blob);
-          onConfirm(id, opacity, displayW, displayH);
+          const { id, sizeBytes } = await saveImageBlobAndGetRef(blob);
+          onConfirm(id, opacity, displayW, displayH, sizeBytes);
           return;
         } catch {
           // ignore
         }
       }
 
-      onConfirm(imageSrc, opacity, displayW, displayH);
+      onConfirm(imageSrc, opacity, displayW, displayH, originalSizeBytes);
       return;
     }
 
@@ -704,8 +715,8 @@ export const MediaImageStudioModal: React.FC<MediaImageStudioModalProps> = ({
     previewCanvasRef.current.toBlob(
       async (blob) => {
         if (!blob) return;
-        const { id } = await saveImageBlobAndGetRef(blob);
-        onConfirm(id, opacity, w, h);
+        const { id, sizeBytes } = await saveImageBlobAndGetRef(blob);
+        onConfirm(id, opacity, w, h, sizeBytes);
       },
       outFmt,
       qualityRatio

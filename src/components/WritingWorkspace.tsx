@@ -58,6 +58,8 @@ import {
   getImageObjectUrl,
   ensureImageObjectUrl,
   processImageFileToBlob,
+  getCachedImageByteSize,
+  resolveImageOriginalByteSize,
 } from '../utils/imageStorage';
 import {
   buildSpoilerMaskString,
@@ -1511,6 +1513,36 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
       ? canvasImages.find((c) => c.id === selectedCanvasImgId) || null
       : null;
 
+  const [selectedCanvasImageResolvedSize, setSelectedCanvasImageResolvedSize] = useState<number>(0);
+
+  useEffect(() => {
+    let active = true;
+    if (!selectedCanvasImage) {
+      setSelectedCanvasImageResolvedSize(0);
+      return;
+    }
+    const known =
+      selectedCanvasImage.originalSizeBytes ||
+      selectedCanvasImage.sizeBytes ||
+      getCachedImageByteSize(selectedCanvasImage.dataUrl);
+    if (known && known > 0) {
+      setSelectedCanvasImageResolvedSize(known);
+    }
+    resolveImageOriginalByteSize(selectedCanvasImage.dataUrl).then((bytes) => {
+      if (active && bytes > 0) {
+        setSelectedCanvasImageResolvedSize(bytes);
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [
+    selectedCanvasImage?.id,
+    selectedCanvasImage?.dataUrl,
+    selectedCanvasImage?.originalSizeBytes,
+    selectedCanvasImage?.sizeBytes,
+  ]);
+
   const selectedInlineImgElement: HTMLImageElement | null =
     !isReadingMode && selectedInlineImgId && editorRef.current
       ? (editorRef.current.querySelector(
@@ -1781,7 +1813,12 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
             <span className="shrink-0 px-1.5 font-wiki-mono text-[11px] font-medium text-[var(--wiki-muted)] select-none">
               Size:{' '}
               <strong className="font-semibold text-[var(--wiki-text)]">
-                {formatByteSizeLabel(estimateDataUrlByteSize(selectedCanvasImage.dataUrl))}
+                {formatByteSizeLabel(
+                  selectedCanvasImageResolvedSize ||
+                    selectedCanvasImage.originalSizeBytes ||
+                    selectedCanvasImage.sizeBytes ||
+                    estimateDataUrlByteSize(selectedCanvasImage.dataUrl)
+                )}
               </strong>
             </span>
 
@@ -2445,7 +2482,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
             setEditingCanvasImageId(null);
             setRawMediaStudioImage(rawDataUrl);
           }}
-          onInsertRawCanvasImage={(rawDataUrl) => {
+          onInsertRawCanvasImage={(rawDataUrl, sizeBytes, originalSizeBytes) => {
             const tempImg = new Image();
             tempImg.onload = () => {
               const displayW = Math.min(240, Math.max(60, tempImg.width || 240));
@@ -2467,6 +2504,8 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
                     opacity: 1,
                     rotation: 0,
                     layer: 'foreground',
+                    sizeBytes,
+                    originalSizeBytes,
                   },
                 ];
                 pushCanvasSnapshot({ canvasImages: next });
@@ -2490,6 +2529,8 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
                     opacity: 1,
                     rotation: 0,
                     layer: 'foreground',
+                    sizeBytes,
+                    originalSizeBytes,
                   },
                 ];
                 pushCanvasSnapshot({ canvasImages: next });
@@ -2845,7 +2886,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
             setEditingCanvasImageId(null);
             setEditingInlineImgId(null);
           }}
-          onConfirm={(processedDataUrl, opacity, width, height) => {
+          onConfirm={(processedDataUrl, opacity, width, height, sizeBytes) => {
             if (editingInlineImgId && editorRef.current) {
               const inlineEl = editorRef.current.querySelector(
                 `#${CSS.escape(editingInlineImgId)}`
@@ -2875,6 +2916,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
                         opacity,
                         width: width || item.width,
                         height: height || item.height,
+                        sizeBytes: sizeBytes || item.sizeBytes,
                       }
                     : item
                 );
@@ -2901,6 +2943,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
                   opacity,
                   rotation: 0,
                   layer: 'foreground',
+                  sizeBytes,
                 },
               ];
               pushCanvasSnapshot({ canvasImages: next });

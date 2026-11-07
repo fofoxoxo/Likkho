@@ -20,6 +20,11 @@ import {
   ExternalLink,
   Download,
   AlertTriangle,
+  Plus,
+  Key,
+  Eye,
+  EyeOff,
+  Copy,
 } from 'lucide-react';
 import { BackedUpDiariesModal } from './BackedUpDiariesModal';
 import {
@@ -37,6 +42,38 @@ import {
 import { WordAnalysisModal } from './WordAnalysisModal';
 import { LEGAL_AND_ABOUT_SECTIONS } from '../utils/legalAndAboutContent';
 import { exportAllAppDataAsZip } from '../utils/zipDataExporter';
+
+export interface SavedPasswordItem {
+  id: string;
+  name: string;
+  password: string;
+  createdAt: number;
+}
+
+export function getStoredPasswords(vaultMode: VaultMode): SavedPasswordItem[] {
+  try {
+    const raw = localStorage.getItem(`likkho_saved_passwords_${vaultMode}`);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function persistStoredPasswords(
+  vaultMode: VaultMode,
+  items: SavedPasswordItem[]
+): void {
+  try {
+    localStorage.setItem(
+      `likkho_saved_passwords_${vaultMode}`,
+      JSON.stringify(items)
+    );
+  } catch {
+    // ignore
+  }
+}
 
 interface SettingsPageProps {
   vaultMode: VaultMode;
@@ -138,6 +175,26 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   useEffect(() => {
     setSavedWords(getSavedWordAnalyses(vaultMode));
   }, [vaultMode, showSavedWordsPage]);
+
+  // Saved Passwords Manager (3-column chips grid with + Add and View modal)
+  const [showPasswordsPage, setShowPasswordsPage] = useState<boolean>(false);
+  const [savedPasswords, setSavedPasswords] = useState<SavedPasswordItem[]>(() =>
+    getStoredPasswords(vaultMode)
+  );
+  const [showAddPasswordModal, setShowAddPasswordModal] = useState<boolean>(false);
+  const [newPasswordName, setNewPasswordName] = useState<string>('');
+  const [newPasswordValue, setNewPasswordValue] = useState<string>('');
+  const [showNewPasswordText, setShowNewPasswordText] = useState<boolean>(false);
+  const [addPasswordError, setAddPasswordError] = useState<string>('');
+
+  const [activeViewingPassword, setActiveViewingPassword] =
+    useState<SavedPasswordItem | null>(null);
+  const [showRevealedPassword, setShowRevealedPassword] = useState<boolean>(false);
+  const [copiedPasswordId, setCopiedPasswordId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setSavedPasswords(getStoredPasswords(vaultMode));
+  }, [vaultMode, showPasswordsPage]);
 
   // 10-second long press on "Set Passcode" button (only in Primary Vault when Primary Passcode is already active)
   const holdTimerRef = useRef<number | null>(null);
@@ -647,6 +704,354 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     );
   }
 
+  // Dedicated "Passwords" Sub-Page with 3-column Chips & + Add in Header
+  if (showPasswordsPage) {
+    return (
+      <div className="flex h-full w-full flex-col bg-[var(--wiki-bg)] text-[var(--wiki-text)]">
+        {/* Header with Back Button, Title, and + Add Button */}
+        <header className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-4">
+          <div className="flex items-center gap-3 min-w-0">
+            <button
+              type="button"
+              onClick={() => {
+                setShowPasswordsPage(false);
+                setActiveViewingPassword(null);
+                setShowAddPasswordModal(false);
+              }}
+              className="flex h-10 w-10 shrink-0 items-center justify-center border border-transparent hover:border-[var(--wiki-border)] hover:bg-[var(--wiki-bg)]"
+              aria-label="Back to Settings"
+            >
+              <ArrowLeft className="h-5 w-5" />
+            </button>
+            <div className="flex items-center gap-2 min-w-0">
+              <Key className="h-5 w-5 shrink-0 text-[#3366cc]" />
+              <h1 className="font-wiki-serif text-xl font-bold leading-tight truncate">
+                Passwords
+              </h1>
+            </div>
+          </div>
+
+          {/* Header + Button to Add New Password Chip */}
+          <button
+            type="button"
+            onClick={() => {
+              setNewPasswordName('');
+              setNewPasswordValue('');
+              setShowNewPasswordText(false);
+              setAddPasswordError('');
+              setShowAddPasswordModal(true);
+            }}
+            className="flex h-9 items-center gap-1.5 border border-[#3366cc] bg-[#3366cc] px-3.5 text-xs font-semibold text-white hover:bg-[#2a56b0] active:scale-95 transition-all shadow-2xs"
+            title="Add new password chip"
+          >
+            <Plus className="h-4 w-4" />
+            <span>Add</span>
+          </button>
+        </header>
+
+        {/* Content Area with Width me 3 ke chips */}
+        <div className="flex-1 overflow-y-auto px-4 py-5 space-y-4">
+          {toastMsg && (
+            <div className="flex items-center gap-2 border border-[#14866d] bg-[#14866d]/10 px-3 py-2.5 text-xs font-medium text-[var(--wiki-text)]">
+              <Check className="h-4 w-4 shrink-0 text-[#14866d]" />
+              <span>{toastMsg}</span>
+            </div>
+          )}
+
+          {savedPasswords.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 text-center border border-dashed border-[var(--wiki-border)] bg-[var(--wiki-surface)]/50 p-6">
+              <div className="flex h-12 w-12 items-center justify-center border border-[var(--wiki-border)] bg-[var(--wiki-bg)] mb-3">
+                <Key className="h-6 w-6 text-[var(--wiki-muted)]" />
+              </div>
+              <h3 className="font-wiki-serif text-base font-bold text-[var(--wiki-text)]">
+                No passwords saved
+              </h3>
+              <p className="mt-1 text-xs text-[var(--wiki-muted)] max-w-xs">
+                Tap the <strong>+ Add</strong> button above to save your first account or service password.
+              </p>
+            </div>
+          ) : (
+            <div>
+              <div className="mb-2.5 text-[11px] font-semibold text-[var(--wiki-muted)] uppercase tracking-wider">
+                <span>Saved Password Chips ({savedPasswords.length})</span>
+              </div>
+
+              {/* Width me 3 ke chips: grid grid-cols-3 */}
+              <div className="grid grid-cols-3 gap-2 sm:gap-3">
+                {savedPasswords.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => {
+                      setActiveViewingPassword(item);
+                      setShowRevealedPassword(false);
+                      setCopiedPasswordId(null);
+                    }}
+                    className="group relative flex flex-col items-center justify-center min-h-[78px] p-2 sm:p-2.5 border border-[var(--wiki-border)] bg-[var(--wiki-surface)] hover:border-[#3366cc] hover:bg-[var(--wiki-bg)] active:scale-95 transition-all text-center shadow-2xs overflow-hidden"
+                    title={`Click to view password for ${item.name}`}
+                  >
+                    <div className="flex h-6 w-6 items-center justify-center border border-[var(--wiki-border)] bg-[var(--wiki-bg)] group-hover:border-[#3366cc] mb-1.5 transition-colors">
+                      <Key className="h-3.5 w-3.5 text-[#3366cc]" />
+                    </div>
+                    <span
+                      className="w-full truncate text-xs font-semibold text-[var(--wiki-text)]"
+                      title={item.name}
+                    >
+                      {item.name}
+                    </span>
+                    <span className="font-wiki-mono text-[9px] text-[var(--wiki-muted)] mt-0.5 tracking-widest">
+                      ••••••
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Modal: Add New Password Modal */}
+        {showAddPasswordModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs">
+            <div className="w-full max-w-sm border border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-text)] shadow-2xl overflow-hidden">
+              <div className="flex items-center justify-between border-b border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-4 py-3">
+                <div className="flex items-center gap-2">
+                  <Key className="h-4 w-4 text-[#3366cc]" />
+                  <h3 className="font-wiki-serif text-base font-bold">Add Password</h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowAddPasswordModal(false)}
+                  className="flex h-7 w-7 items-center justify-center text-[var(--wiki-muted)] hover:text-[var(--wiki-text)]"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (!newPasswordName.trim()) {
+                    setAddPasswordError('Please enter a name.');
+                    return;
+                  }
+                  if (!newPasswordValue) {
+                    setAddPasswordError('Please enter a password.');
+                    return;
+                  }
+                  const newItem: SavedPasswordItem = {
+                    id: `pwd_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+                    name: newPasswordName.trim(),
+                    password: newPasswordValue,
+                    createdAt: Date.now(),
+                  };
+                  const nextList = [...savedPasswords, newItem];
+                  setSavedPasswords(nextList);
+                  persistStoredPasswords(vaultMode, nextList);
+                  setShowAddPasswordModal(false);
+                  setNewPasswordName('');
+                  setNewPasswordValue('');
+                  setAddPasswordError('');
+                  showToast(`Password "${newItem.name}" saved.`);
+                }}
+                className="p-4 space-y-3.5"
+              >
+                {addPasswordError && (
+                  <div className="flex items-center gap-1.5 border border-[#b32424] bg-[#b32424]/10 p-2 text-xs text-[#b32424]">
+                    <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                    <span>{addPasswordError}</span>
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-xs font-semibold text-[var(--wiki-text)] mb-1">
+                    Name (Service / Account)
+                  </label>
+                  <input
+                    type="text"
+                    value={newPasswordName}
+                    onChange={(e) => {
+                      setNewPasswordName(e.target.value);
+                      if (addPasswordError) setAddPasswordError('');
+                    }}
+                    placeholder="e.g. Google, WiFi, Bank"
+                    className="h-9 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3 text-xs outline-none focus:border-[#3366cc]"
+                    autoFocus
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-[var(--wiki-text)] mb-1">
+                    Password
+                  </label>
+                  <div className="relative flex items-center">
+                    <input
+                      type={showNewPasswordText ? 'text' : 'password'}
+                      value={newPasswordValue}
+                      onChange={(e) => {
+                        setNewPasswordValue(e.target.value);
+                        if (addPasswordError) setAddPasswordError('');
+                      }}
+                      placeholder="Enter password..."
+                      className="h-9 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] pl-3 pr-10 text-xs font-wiki-mono outline-none focus:border-[#3366cc]"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowNewPasswordText(!showNewPasswordText)}
+                      className="absolute right-1 flex h-7 w-7 items-center justify-center text-[var(--wiki-muted)] hover:text-[var(--wiki-text)]"
+                      title={showNewPasswordText ? 'Hide password' : 'Show password'}
+                    >
+                      {showNewPasswordText ? (
+                        <EyeOff className="h-4 w-4" />
+                      ) : (
+                        <Eye className="h-4 w-4" />
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-2 border-t border-[var(--wiki-hairline)]">
+                  <button
+                    type="button"
+                    onClick={() => setShowAddPasswordModal(false)}
+                    className="h-9 border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3 text-xs font-medium hover:bg-[var(--wiki-bg)]"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex h-9 items-center gap-1.5 bg-[#3366cc] px-4 text-xs font-semibold text-white hover:bg-[#2a56b0]"
+                  >
+                    <Check className="h-4 w-4" />
+                    <span>Save</span>
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* Modal: View Saved Password Pop-up */}
+        {activeViewingPassword && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs">
+            <div className="w-full max-w-sm border border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-text)] shadow-2xl overflow-hidden">
+              <div className="flex items-center justify-between border-b border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-4 py-3">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Key className="h-4 w-4 shrink-0 text-[#3366cc]" />
+                  <h3 className="font-wiki-serif text-base font-bold truncate">
+                    {activeViewingPassword.name}
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveViewingPassword(null)}
+                  className="flex h-7 w-7 shrink-0 items-center justify-center text-[var(--wiki-muted)] hover:text-[var(--wiki-text)]"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="p-4 space-y-4">
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-[11px] font-semibold text-[var(--wiki-muted)] uppercase tracking-wide">
+                      Saved Password
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setShowRevealedPassword(!showRevealedPassword)}
+                      className="flex items-center gap-1 text-[11px] font-medium text-[#3366cc] hover:underline"
+                    >
+                      {showRevealedPassword ? (
+                        <>
+                          <EyeOff className="h-3.5 w-3.5" />
+                          <span>Hide</span>
+                        </>
+                      ) : (
+                        <>
+                          <Eye className="h-3.5 w-3.5" />
+                          <span>Show</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2 border border-[var(--wiki-border)] bg-[var(--wiki-surface)] p-2.5">
+                    <div className="font-wiki-mono text-sm font-medium tracking-wide break-all select-all">
+                      {showRevealedPassword
+                        ? activeViewingPassword.password
+                        : '•'.repeat(Math.min(activeViewingPassword.password.length, 18))}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          await navigator.clipboard.writeText(
+                            activeViewingPassword.password
+                          );
+                          setCopiedPasswordId(activeViewingPassword.id);
+                          showToast('Password copied to clipboard!');
+                          setTimeout(() => setCopiedPasswordId(null), 2000);
+                        } catch {
+                          showToast('Failed to copy password.');
+                        }
+                      }}
+                      className="flex h-8 shrink-0 items-center gap-1 border border-[var(--wiki-border)] bg-[var(--wiki-bg)] px-2.5 text-xs font-semibold text-[#3366cc] hover:border-[#3366cc]"
+                      title="Copy password"
+                    >
+                      {copiedPasswordId === activeViewingPassword.id ? (
+                        <>
+                          <Check className="h-3.5 w-3.5 text-[#14866d]" />
+                          <span className="text-[#14866d]">Copied</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="h-3.5 w-3.5" />
+                          <span>Copy</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between text-[11px] text-[var(--wiki-muted)]">
+                  <span>
+                    Saved: {new Date(activeViewingPassword.createdAt).toLocaleDateString()}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between gap-2 pt-2 border-t border-[var(--wiki-hairline)]">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const idToDelete = activeViewingPassword.id;
+                      const nextList = savedPasswords.filter((p) => p.id !== idToDelete);
+                      setSavedPasswords(nextList);
+                      persistStoredPasswords(vaultMode, nextList);
+                      setActiveViewingPassword(null);
+                      showToast('Password deleted.');
+                    }}
+                    className="flex h-9 items-center gap-1.5 border border-[#b32424]/30 px-3 text-xs font-medium text-[#b32424] hover:bg-[#b32424]/10"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    <span>Delete</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setActiveViewingPassword(null)}
+                    className="h-9 border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-4 text-xs font-medium hover:bg-[var(--wiki-bg)]"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-full w-full flex-col bg-[var(--wiki-bg)] text-[var(--wiki-text)]">
       {/* Header */}
@@ -811,6 +1216,33 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               </div>
             </button>
           )}
+
+          {/* 3b. Passwords Button (Opens 3-column chips grid with + Add and View popup) */}
+          <button
+            type="button"
+            onClick={() => {
+              setSavedPasswords(getStoredPasswords(vaultMode));
+              setShowPasswordsPage(true);
+            }}
+            className="flex w-full items-center justify-between px-4 py-4 text-left hover:bg-[var(--wiki-surface)] transition-colors"
+          >
+            <div className="flex items-center gap-3.5">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center border border-[var(--wiki-border)] bg-[var(--wiki-surface)]">
+                <Key className="h-5 w-5 text-[#3366cc]" />
+              </div>
+              <div>
+                <div className="font-wiki-serif text-base font-bold">
+                  Passwords
+                </div>
+                <div className="text-xs text-[var(--wiki-muted)]">
+                  {savedPasswords.length > 0
+                    ? `${savedPasswords.length} saved password chip${savedPasswords.length > 1 ? 's' : ''}`
+                    : 'Manage saved account & service passwords'}
+                </div>
+              </div>
+            </div>
+            <ChevronRight className="h-5 w-5 text-[var(--wiki-muted)]" />
+          </button>
 
           {/* 4. Backup & Restore */}
           <button
