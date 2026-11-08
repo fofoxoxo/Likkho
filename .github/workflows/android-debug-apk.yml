@@ -55,6 +55,35 @@ jobs:
 
       - name: Configure compileSdk 35, targetSdk 34, SAF (.likkho_backups + .nomedia) & Microphone Foreground Service
         run: |
+          # 0. Fix Gradle distribution download timeouts & socket limits:
+          #    - Switch -all.zip (~220MB) to -bin.zip (~110MB) to cut download size in half
+          #    - Set connection & socket timeout to 180,000 ms (3 minutes) instead of default 10,000 ms (10 seconds)
+          #    - Pre-download via curl with multi-retry & GitHub mirror, and point wrapper to local file:/// to eliminate network timeouts
+          WRAPPER_PROPS="android/gradle/wrapper/gradle-wrapper.properties"
+          if [ -f "$WRAPPER_PROPS" ]; then
+            sed -i 's/-all\.zip/-bin\.zip/g' "$WRAPPER_PROPS"
+            echo "systemProp.org.gradle.internal.http.connectionTimeout=180000" >> "$WRAPPER_PROPS"
+            echo "systemProp.org.gradle.internal.http.socketTimeout=180000" >> "$WRAPPER_PROPS"
+            echo "systemProp.org.gradle.internal.http.connectionTimeout=180000" >> android/gradle.properties
+            echo "systemProp.org.gradle.internal.http.socketTimeout=180000" >> android/gradle.properties
+
+            DIST_URL=$(grep "distributionUrl=" "$WRAPPER_PROPS" | head -n 1 | cut -d'=' -f2- | sed 's/\\:/:/g')
+            if [ -n "$DIST_URL" ]; then
+              DIST_NAME=$(basename "$DIST_URL")
+              echo "Pre-fetching Gradle distribution via curl: $DIST_URL"
+              curl -fSL --retry 5 --retry-delay 5 --retry-connrefused --connect-timeout 60 --max-time 300 "$DIST_URL" -o "/tmp/$DIST_NAME" || true
+              if [ ! -s "/tmp/$DIST_NAME" ]; then
+                VERSION=$(echo "$DIST_NAME" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?')
+                echo "services.gradle.org slow or timed out, trying GitHub mirror for v${VERSION}..."
+                curl -fSL --retry 3 --connect-timeout 30 --max-time 180 "https://github.com/gradle/gradle-distributions/releases/download/v${VERSION}/${DIST_NAME}" -o "/tmp/$DIST_NAME" || true
+              fi
+              if [ -s "/tmp/$DIST_NAME" ]; then
+                echo "Successfully cached /tmp/$DIST_NAME ($(du -h "/tmp/$DIST_NAME" | cut -f1)). Setting distributionUrl to local file."
+                sed -i "s|distributionUrl=.*|distributionUrl=file\:///tmp/$DIST_NAME|g" "$WRAPPER_PROPS"
+              fi
+            fi
+          fi
+
           # Set compileSdkVersion = 35 (required by androidx.core:core-ktx:1.15.0) while keeping targetSdkVersion = 34 and minSdkVersion untouched
           if [ -f android/variables.gradle ]; then
             sed -i 's/compileSdkVersion = [0-9][0-9]*/compileSdkVersion = 35/g' android/variables.gradle || true
@@ -2524,6 +2553,7 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          GRADLE_OPTS: "-Dorg.gradle.internal.http.connectionTimeout=180000 -Dorg.gradle.internal.http.socketTimeout=180000 -Dorg.gradle.daemon=false"
         run: |
           if [ -z "${KEYSTORE_BASE64}" ]; then
             echo "::error::FATAL: KEYSTORE_BASE64 secret is missing. Release APK and AAB build cannot proceed without release keystore."
