@@ -128,9 +128,9 @@ jobs:
           </resources>
           EOF
 
-          # Register ReminderReceiver and MicForegroundService (foregroundServiceType="microphone", stopWithTask="false") inside <application>
-          if ! grep -q "ReminderReceiver" "$MANIFEST"; then
-            sed -i 's/<\/application>/    <receiver android:name=".ReminderReceiver" android:exported="false" \/>\n        <service android:name=".MicForegroundService" android:exported="false" android:stopWithTask="false" android:foregroundServiceType="microphone" \/>\n    <\/application>/' "$MANIFEST"
+          # Register ReminderReceiver, QuickNoteReceiver, MicForegroundService and QuickNoteTileService inside <application>
+          if ! grep -q "QuickNoteTileService" "$MANIFEST"; then
+            sed -i 's/<\/application>/    <receiver android:name=".ReminderReceiver" android:exported="false" \/>\n        <receiver android:name=".QuickNoteReceiver" android:exported="false" \/>\n        <service android:name=".MicForegroundService" android:exported="false" android:stopWithTask="false" android:foregroundServiceType="microphone" \/>\n        <service android:name=".QuickNoteTileService" android:label="Quick Note" android:icon="@mipmap\/ic_launcher" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE" android:exported="true">\n            <intent-filter>\n                <action android:name="android.service.quicksettings.action.QS_TILE" \/>\n            <\/intent-filter>\n        <\/service>\n    <\/application>/' "$MANIFEST"
           fi
 
           # Set Likkho launcher icon (white background with black "Likkho" text) in density-specific mipmap folders only
@@ -206,6 +206,96 @@ jobs:
                       .setContentIntent(contentIntent);
 
                   nm.notify(notifId, builder.build());
+              }
+          }
+          EOF
+
+          # 1b. Create QuickNoteReceiver.java for Notification Shade actions (Done & Dismiss)
+          cat << 'EOF' > "$PKG_DIR/QuickNoteReceiver.java"
+          package com.likkho.diary;
+
+          import android.app.NotificationManager;
+          import android.content.BroadcastReceiver;
+          import android.content.Context;
+          import android.content.Intent;
+          import android.content.SharedPreferences;
+
+          public class QuickNoteReceiver extends BroadcastReceiver {
+              public static final String ACTION_DONE = "com.likkho.diary.ACTION_QUICK_NOTE_DONE";
+              public static final String ACTION_DISMISS = "com.likkho.diary.ACTION_QUICK_NOTE_DISMISS";
+
+              @Override
+              public void onReceive(Context context, Intent intent) {
+                  if (intent == null) return;
+                  String action = intent.getAction();
+                  String noteId = intent.getStringExtra("noteId");
+                  int notifId = intent.getIntExtra("notifId", 88000);
+
+                  NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+                  if (nm != null) {
+                      nm.cancel(notifId);
+                  }
+
+                  if (ACTION_DONE.equals(action) && noteId != null && !noteId.isEmpty()) {
+                      if (MainActivity.currentInstance != null) {
+                          MainActivity.currentInstance.onQuickNoteMarkedDone(noteId);
+                      } else {
+                          SharedPreferences prefs = context.getSharedPreferences("likkho_saf_prefs", Context.MODE_PRIVATE);
+                          prefs.edit().putString("pending_done_quick_note_id", noteId).apply();
+                      }
+                  }
+              }
+          }
+          EOF
+
+          # 1c. Create QuickNoteTileService.java for Android Quick Settings Shade Tile
+          cat << 'EOF' > "$PKG_DIR/QuickNoteTileService.java"
+          package com.likkho.diary;
+
+          import android.content.Intent;
+          import android.os.Build;
+          import android.service.quicksettings.Tile;
+          import android.service.quicksettings.TileService;
+
+          public class QuickNoteTileService extends TileService {
+              @Override
+              public void onStartListening() {
+                  super.onStartListening();
+                  Tile tile = getQsTile();
+                  if (tile != null) {
+                      tile.setState(Tile.STATE_ACTIVE);
+                      tile.setLabel("Quick Note");
+                      tile.updateTile();
+                  }
+              }
+
+              @Override
+              public void onClick() {
+                  super.onClick();
+                  Intent intent = new Intent(this, MainActivity.class);
+                  intent.setAction("com.likkho.diary.ACTION_QUICK_NOTE");
+                  intent.putExtra("action", "quick_note");
+                  intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                      try {
+                          android.app.PendingIntent pi = android.app.PendingIntent.getActivity(
+                              this,
+                              0,
+                              intent,
+                              android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE
+                          );
+                          startActivityAndCollapse(pi);
+                          return;
+                      } catch (Exception ignored) {}
+                  }
+                  try {
+                      startActivityAndCollapse(intent);
+                  } catch (Exception e) {
+                      try {
+                          startActivity(intent);
+                      } catch (Exception ignored) {}
+                  }
               }
           }
           EOF
@@ -613,6 +703,7 @@ jobs:
               private boolean isFullScreenEnabled = false;
               private android.view.View recentsPrivacyOverlayView = null;
               private volatile String pendingIncomingLikkhoBase64 = null;
+              private volatile boolean pendingQuickNoteLaunch = false;
               private android.view.ActionMode currentActionMode = null;
 
               @Override
@@ -705,6 +796,7 @@ jobs:
 
                       // Check if Likkho was launched by tapping a .likkho file in WhatsApp / Telegram / File Manager
                       handleIncomingLikkhoIntent(getIntent());
+                      handleQuickNoteIntent(getIntent());
 
                       webView.setWebChromeClient(new WebChromeClient() {
                           @Override
@@ -774,6 +866,7 @@ jobs:
                   super.onNewIntent(intent);
                   setIntent(intent);
                   handleIncomingLikkhoIntent(intent);
+                  handleQuickNoteIntent(intent);
               }
 
               private void handleIncomingLikkhoIntent(Intent intent) {
@@ -826,6 +919,47 @@ jobs:
                   }).start();
               }
 
+              private void handleQuickNoteIntent(Intent intent) {
+                  if (intent == null) return;
+                  if ("quick_note".equals(intent.getStringExtra("action")) ||
+                      "com.likkho.diary.ACTION_QUICK_NOTE".equals(intent.getAction()) ||
+                      (intent.getData() != null && "quick_note".equals(intent.getData().getQueryParameter("action")))) {
+                      pendingQuickNoteLaunch = true;
+                      notifyWebViewQuickNoteLaunch();
+                  }
+              }
+
+              public void onQuickNoteMarkedDone(final String noteId) {
+                  runOnUiThread(() -> {
+                      if (bridge != null && bridge.getWebView() != null) {
+                          bridge.getWebView().evaluateJavascript(
+                              "(function(){ if(window.__onLikkhoQuickNoteDone){ window.__onLikkhoQuickNoteDone('" + noteId + "'); } })()",
+                              null
+                          );
+                      }
+                  });
+              }
+
+              private void notifyWebViewQuickNoteLaunch() {
+                  runOnUiThread(() -> {
+                      if (bridge != null && bridge.getWebView() != null && pendingQuickNoteLaunch) {
+                          bridge.getWebView().evaluateJavascript(
+                              "(function(){ if(window.__onLikkhoOpenQuickNoteCreator){ window.__onLikkhoOpenQuickNoteCreator(); } })()",
+                              null
+                          );
+                      }
+                  });
+              }
+
+              private void checkPendingQuickNoteDone() {
+                  SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+                  String noteId = prefs.getString("pending_done_quick_note_id", null);
+                  if (noteId != null && !noteId.isEmpty()) {
+                      prefs.edit().remove("pending_done_quick_note_id").apply();
+                      onQuickNoteMarkedDone(noteId);
+                  }
+              }
+
               @Override
               public void onResume() {
                   super.onResume();
@@ -837,6 +971,10 @@ jobs:
                       dismissActionModeAndClearSelection();
                   }
                   deliverFinishedNativeRecordingIfPossible(this);
+                  checkPendingQuickNoteDone();
+                  if (pendingQuickNoteLaunch) {
+                      notifyWebViewQuickNoteLaunch();
+                  }
               }
 
               @Override
@@ -2154,6 +2292,151 @@ jobs:
                               Toast.makeText(MainActivity.this, "Share error: " + e.getMessage(), Toast.LENGTH_LONG).show();
                           }
                       });
+                  }
+
+                  @JavascriptInterface
+                  public boolean consumePendingQuickNoteAction() {
+                      boolean val = pendingQuickNoteLaunch;
+                      pendingQuickNoteLaunch = false;
+                      return val;
+                  }
+
+                  @JavascriptInterface
+                  public void postQuickNoteNotification(String noteId, String title, String itemsJson) {
+                      runOnUiThread(() -> {
+                          try {
+                              NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+                              if (nm == null) return;
+
+                              final String CHANNEL_ID = "likkho_quick_notes_channel";
+                              if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                  NotificationChannel ch = new NotificationChannel(
+                                      CHANNEL_ID,
+                                      "Likkho Quick Notes",
+                                      NotificationManager.IMPORTANCE_HIGH
+                                  );
+                                  ch.setShowBadge(true);
+                                  nm.createNotificationChannel(ch);
+                              }
+
+                              int notifId = 88000 + Math.abs((noteId != null ? noteId : "default").hashCode() % 1000);
+
+                              // Intent to open app when tapping notification body
+                              Intent openIntent = new Intent(MainActivity.this, MainActivity.class);
+                              openIntent.setAction("com.likkho.diary.ACTION_QUICK_NOTE");
+                              openIntent.putExtra("action", "quick_note");
+                              openIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                              PendingIntent openPi = PendingIntent.getActivity(
+                                  MainActivity.this,
+                                  notifId,
+                                  openIntent,
+                                  PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+                              );
+
+                              // Action: Done
+                              Intent doneIntent = new Intent(MainActivity.this, QuickNoteReceiver.class);
+                              doneIntent.setAction(QuickNoteReceiver.ACTION_DONE);
+                              doneIntent.putExtra("noteId", noteId);
+                              doneIntent.putExtra("notifId", notifId);
+                              PendingIntent donePi = PendingIntent.getBroadcast(
+                                  MainActivity.this,
+                                  notifId + 1,
+                                  doneIntent,
+                                  PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+                              );
+
+                              // Action: Dismiss
+                              Intent dismissIntent = new Intent(MainActivity.this, QuickNoteReceiver.class);
+                              dismissIntent.setAction(QuickNoteReceiver.ACTION_DISMISS);
+                              dismissIntent.putExtra("noteId", noteId);
+                              dismissIntent.putExtra("notifId", notifId);
+                              PendingIntent dismissPi = PendingIntent.getBroadcast(
+                                  MainActivity.this,
+                                  notifId + 2,
+                                  dismissIntent,
+                                  PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+                              );
+
+                              // Parse items from JSON
+                              androidx.core.app.NotificationCompat.InboxStyle inbox = new androidx.core.app.NotificationCompat.InboxStyle();
+                              inbox.setBigContentTitle("📝 " + (title != null && !title.isEmpty() ? title : "Quick Note"));
+
+                              StringBuilder summary = new StringBuilder();
+                              if (itemsJson != null && !itemsJson.isEmpty()) {
+                                  try {
+                                      org.json.JSONArray arr = new org.json.JSONArray(itemsJson);
+                                      int total = arr.length();
+                                      int doneCount = 0;
+                                      for (int i = 0; i < total; i++) {
+                                          org.json.JSONObject item = arr.getJSONObject(i);
+                                          boolean done = item.optBoolean("done", false);
+                                          String text = item.optString("text", "");
+                                          if (done) doneCount++;
+                                          String line = (done ? "☑ " : "☐ ") + text;
+                                          inbox.addLine(line);
+                                          if (summary.length() > 0) summary.append(", ");
+                                          summary.append(line);
+                                      }
+                                      inbox.setSummaryText(doneCount + "/" + total + " completed");
+                                  } catch (Exception ignored) {}
+                              }
+
+                              androidx.core.app.NotificationCompat.Builder b = new androidx.core.app.NotificationCompat.Builder(MainActivity.this, CHANNEL_ID)
+                                  .setSmallIcon(android.R.drawable.ic_menu_agenda)
+                                  .setContentTitle("📝 " + (title != null && !title.isEmpty() ? title : "Quick Note"))
+                                  .setContentText(summary.length() > 0 ? summary.toString() : "Checklist Note")
+                                  .setStyle(inbox)
+                                  .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
+                                  .setOngoing(true)
+                                  .setContentIntent(openPi)
+                                  .addAction(android.R.drawable.checkbox_on_background, "Done", donePi)
+                                  .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Dismiss", dismissPi);
+
+                              nm.notify(notifId, b.build());
+                          } catch (Exception ignored) {}
+                      });
+                  }
+
+                  @JavascriptInterface
+                  public void cancelQuickNoteNotification(String noteId) {
+                      runOnUiThread(() -> {
+                          try {
+                              NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+                              if (nm != null && noteId != null) {
+                                  int notifId = 88000 + Math.abs(noteId.hashCode() % 1000);
+                                  nm.cancel(notifId);
+                              }
+                          } catch (Exception ignored) {}
+                      });
+                  }
+
+                  @JavascriptInterface
+                  public boolean createHomeScreenShortcut() {
+                      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                          try {
+                              android.content.pm.ShortcutManager sm = getSystemService(android.content.pm.ShortcutManager.class);
+                              if (sm != null && sm.isRequestPinShortcutSupported()) {
+                                  Intent launchIntent = new Intent(MainActivity.this, MainActivity.class);
+                                  launchIntent.setAction("com.likkho.diary.ACTION_QUICK_NOTE");
+                                  launchIntent.putExtra("action", "quick_note");
+                                  launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+
+                                  android.content.pm.ShortcutInfo pinShortcutInfo = new android.content.pm.ShortcutInfo.Builder(MainActivity.this, "shortcut_quick_note")
+                                      .setShortLabel("Quick Note")
+                                      .setLongLabel("Likkho Quick Note")
+                                      .setIcon(android.graphics.drawable.Icon.createWithResource(MainActivity.this, android.R.drawable.ic_menu_edit))
+                                      .setIntent(launchIntent)
+                                      .build();
+
+                                  sm.requestPinShortcut(pinShortcutInfo, null);
+                                  Toast.makeText(MainActivity.this, "Adding Quick Note shortcut to Home screen...", Toast.LENGTH_SHORT).show();
+                                  return true;
+                              }
+                          } catch (Exception e) {
+                              Toast.makeText(MainActivity.this, "Shortcut error: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                          }
+                      }
+                      return false;
                   }
               }
 

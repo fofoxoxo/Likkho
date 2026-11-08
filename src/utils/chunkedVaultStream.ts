@@ -58,6 +58,7 @@ export interface StreamVaultManifest {
   customFonts: CustomFontItem[];
   micSettings?: MicRecordingSettings;
   savedPasswords?: any[];
+  quickNotes?: any[];
 }
 
 export interface StreamRestoreResult {
@@ -411,6 +412,17 @@ export async function streamBackupChunks(
     // ignore
   }
 
+  const rawQn =
+    typeof localStorage !== 'undefined'
+      ? localStorage.getItem(`likkho_quick_notes_${vaultMode}`)
+      : null;
+  let storedQn: any[] = [];
+  try {
+    if (rawQn) storedQn = JSON.parse(rawQn);
+  } catch {
+    // ignore
+  }
+
   const manifest: StreamVaultManifest = {
     magic: 'WIKILOG_STREAM_V1',
     dbTarget: cfg.dbFilename,
@@ -419,6 +431,7 @@ export async function streamBackupChunks(
     customFonts: bundle.customFonts || [],
     micSettings: bundle.micSettings,
     savedPasswords: (bundle as any).savedPasswords || storedPw,
+    quickNotes: (bundle as any).quickNotes || storedQn,
   };
   const manifestBytes = enc.encode(JSON.stringify(manifest));
   const manifestIv = deriveChunkIv(baseIv, chunkCounter++);
@@ -752,6 +765,20 @@ export async function restoreFromStreamSource(
             localStorage.setItem(
               `likkho_saved_passwords_${vaultMode}`,
               JSON.stringify(restoredManifest.savedPasswords)
+            );
+          } catch {
+            // ignore
+          }
+        }
+
+        if (
+          Array.isArray(restoredManifest.quickNotes) &&
+          typeof localStorage !== 'undefined'
+        ) {
+          try {
+            localStorage.setItem(
+              `likkho_quick_notes_${vaultMode}`,
+              JSON.stringify(restoredManifest.quickNotes)
             );
           } catch {
             // ignore

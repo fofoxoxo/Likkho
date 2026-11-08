@@ -120,8 +120,18 @@ declare global {
       readInternalAppFile?: (filename: string) => string;
       deleteInternalAppFile?: (filename: string) => boolean;
       hasInternalAppFile?: (filename: string) => boolean;
+      postQuickNoteNotification?: (
+        noteId: string,
+        title: string,
+        itemsJson: string
+      ) => void;
+      cancelQuickNoteNotification?: (noteId: string) => void;
+      createHomeScreenShortcut?: () => boolean;
+      consumePendingQuickNoteAction?: () => boolean;
     };
     __handleLikkhoAndroidBack?: () => string;
+    __onLikkhoQuickNoteDone?: (noteId: string) => void;
+    __onLikkhoOpenQuickNoteCreator?: () => void;
     __onLikkhoBiometricResult?: (success: boolean, msg?: string) => void;
     __onLikkhoDeviceLockBackupResult?: (success: boolean, message?: string) => void;
     __onLikkhoVaultFilePicked?: (envelope: string) => void;

@@ -29,5 +29,19 @@
       "type": "image/png",
       "purpose": "maskable"
     }
+  ],
+  "shortcuts": [
+    {
+      "name": "Quick Note",
+      "short_name": "Note",
+      "description": "Write a quick checklist note",
+      "url": "/?action=quick_note",
+      "icons": [
+        {
+          "src": "/pwa-192x192.png",
+          "sizes": "192x192"
+        }
+      ]
+    }
   ]
 }

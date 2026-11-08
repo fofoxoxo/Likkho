@@ -60,6 +60,13 @@ import {
 } from './utils/imageStorage';
 import { AppUpdateModal } from './components/AppUpdateModal';
 import { checkForAppUpdate, AppUpdateInfo } from './utils/appUpdateChecker';
+import { QuickNoteCreatorModal } from './components/QuickNoteCreatorModal';
+import {
+  getQuickNotes,
+  saveQuickNotes,
+  markQuickNoteDone,
+  syncQuickNoteToNotification,
+} from './utils/quickNotesStorage';
 import {
   saveAppSpecificInternalFile,
   readAppSpecificInternalFile,
@@ -301,6 +308,60 @@ export default function App() {
     heading: string;
     preview: string;
   } | null>(null);
+
+  // Global Quick Note creator modal (triggered from Home screen shortcut, Quick Settings tile, or notification)
+  const [showGlobalQuickNoteModal, setShowGlobalQuickNoteModal] = useState<boolean>(false);
+
+  // Check for Quick Note launch action (Home Screen Shortcut, Quick Settings Tile, or notification action)
+  useEffect(() => {
+    const checkQuickNoteLaunch = () => {
+      let isQuickNoteLaunch = false;
+      if (typeof window !== 'undefined') {
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.get('action') === 'quick_note' || window.location.hash.includes('quick_note')) {
+          isQuickNoteLaunch = true;
+          try {
+            const cleanUrl = window.location.pathname;
+            window.history.replaceState({}, '', cleanUrl);
+          } catch {
+            // ignore
+          }
+        }
+      }
+      if (
+        window.LikkhoNative &&
+        typeof window.LikkhoNative.consumePendingQuickNoteAction === 'function' &&
+        window.LikkhoNative.consumePendingQuickNoteAction()
+      ) {
+        isQuickNoteLaunch = true;
+      }
+
+      if (isQuickNoteLaunch) {
+        setShowGlobalQuickNoteModal(true);
+      }
+    };
+
+    checkQuickNoteLaunch();
+    window.addEventListener('focus', checkQuickNoteLaunch);
+    document.addEventListener('visibilitychange', checkQuickNoteLaunch);
+
+    // Global callback from Android Quick Settings tile or shortcut
+    window.__onLikkhoOpenQuickNoteCreator = () => {
+      setShowGlobalQuickNoteModal(true);
+    };
+
+    // Global callback from Android Notification Action: "Done"
+    window.__onLikkhoQuickNoteDone = (noteId: string) => {
+      markQuickNoteDone(noteId, vaultMode);
+    };
+
+    return () => {
+      window.removeEventListener('focus', checkQuickNoteLaunch);
+      document.removeEventListener('visibilitychange', checkQuickNoteLaunch);
+      delete window.__onLikkhoOpenQuickNoteCreator;
+      delete window.__onLikkhoQuickNoteDone;
+    };
+  }, [vaultMode]);
 
   // Poll cooldown timer when Locked Diary modal is open
   useEffect(() => {
@@ -1874,6 +1935,22 @@ export default function App() {
         <AppUpdateModal
           updateInfo={availableUpdate}
           onClose={() => setAvailableUpdate(null)}
+        />
+      )}
+
+      {/* Global Quick Note Creator Modal (from Quick Settings Tile or Home Screen Shortcut) */}
+      {showGlobalQuickNoteModal && (
+        <QuickNoteCreatorModal
+          onClose={() => setShowGlobalQuickNoteModal(false)}
+          onSave={(newNote) => {
+            const currentList = getQuickNotes(vaultMode);
+            const nextList = [newNote, ...currentList];
+            saveQuickNotes(nextList, vaultMode);
+            if (newNote.isPinnedToNotification && !newNote.isDone) {
+              syncQuickNoteToNotification(newNote);
+            }
+            setShowGlobalQuickNoteModal(false);
+          }}
         />
       )}
     </div>

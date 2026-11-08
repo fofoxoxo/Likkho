@@ -27,7 +27,10 @@ import {
   Copy,
   Sparkles,
   RefreshCw,
+  CheckSquare,
 } from 'lucide-react';
+import { QuickNotesPage } from './QuickNotesPage';
+import { getQuickNotes, QuickNote } from '../utils/quickNotesStorage';
 import { AppUpdateModal } from './AppUpdateModal';
 import {
   checkForAppUpdate,
@@ -203,6 +206,16 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   useEffect(() => {
     setSavedPasswords(getStoredPasswords(vaultMode));
   }, [vaultMode, showPasswordsPage]);
+
+  // Quick Notes Manager (Checklist notes, notifications, tile & shortcuts)
+  const [showQuickNotesPage, setShowQuickNotesPage] = useState<boolean>(false);
+  const [quickNotes, setQuickNotes] = useState<QuickNote[]>(() =>
+    getQuickNotes(vaultMode)
+  );
+
+  useEffect(() => {
+    setQuickNotes(getQuickNotes(vaultMode));
+  }, [vaultMode, showQuickNotesPage]);
 
   // 10-second long press on "Set Passcode" button (only in Primary Vault when Primary Passcode is already active)
   const holdTimerRef = useRef<number | null>(null);
@@ -1086,6 +1099,18 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     );
   }
 
+  // Dedicated "Quick Notes" Sub-Page
+  if (showQuickNotesPage) {
+    return (
+      <QuickNotesPage
+        notes={quickNotes}
+        vaultMode={vaultMode}
+        onUpdateNotes={setQuickNotes}
+        onBack={() => setShowQuickNotesPage(false)}
+      />
+    );
+  }
+
   return (
     <div className="flex h-full w-full flex-col bg-[var(--wiki-bg)] text-[var(--wiki-text)]">
       {/* Header */}
@@ -1272,6 +1297,33 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                   {savedPasswords.length > 0
                     ? `${savedPasswords.length} saved password chip${savedPasswords.length > 1 ? 's' : ''}`
                     : 'Manage saved account & service passwords'}
+                </div>
+              </div>
+            </div>
+            <ChevronRight className="h-5 w-5 text-[var(--wiki-muted)]" />
+          </button>
+
+          {/* 3c. Quick Notes (Checklist notes, tile & notifications) */}
+          <button
+            type="button"
+            onClick={() => {
+              setQuickNotes(getQuickNotes(vaultMode));
+              setShowQuickNotesPage(true);
+            }}
+            className="flex w-full items-center justify-between px-4 py-4 text-left hover:bg-[var(--wiki-surface)] transition-colors"
+          >
+            <div className="flex items-center gap-3.5">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center border border-[var(--wiki-border)] bg-[var(--wiki-surface)]">
+                <CheckSquare className="h-5 w-5 text-[#3366cc]" />
+              </div>
+              <div>
+                <div className="font-wiki-serif text-base font-bold">
+                  Quick Notes
+                </div>
+                <div className="text-xs text-[var(--wiki-muted)]">
+                  {quickNotes.length > 0
+                    ? `${quickNotes.filter(n => !n.isDone).length} active, ${quickNotes.filter(n => n.isDone).length} completed`
+                    : 'Checklist notes, notification shade & quick tiles'}
                 </div>
               </div>
             </div>
