@@ -8,16 +8,12 @@ import {
   BellOff,
   Trash2,
   Edit2,
-  ExternalLink,
-  Smartphone,
-  Layers,
-  Sparkles,
+  FileText,
 } from 'lucide-react';
 import {
   QuickNote,
   saveQuickNotes,
   syncQuickNoteToNotification,
-  requestPinHomeScreenShortcut,
 } from '../utils/quickNotesStorage';
 import { VaultMode } from '../utils/cryptoVault';
 import { QuickNoteCreatorModal } from './QuickNoteCreatorModal';
@@ -35,7 +31,6 @@ export const QuickNotesPage: React.FC<QuickNotesPageProps> = ({
   onUpdateNotes,
   onBack,
 }) => {
-  const [activeTab, setActiveTab] = useState<'active' | 'completed'>('active');
   const [editingNote, setEditingNote] = useState<QuickNote | null>(null);
   const [isCreatingNew, setIsCreatingNew] = useState<boolean>(false);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
@@ -47,15 +42,11 @@ export const QuickNotesPage: React.FC<QuickNotesPageProps> = ({
     }, 2800);
   };
 
-  const activeNotes = notes.filter((n) => !n.isDone);
-  const completedNotes = notes.filter((n) => n.isDone);
-  const currentList = activeTab === 'active' ? activeNotes : completedNotes;
-
-  // Toggle item done inside a note
+  // Toggle item done inside a checklist note
   const handleToggleItemDone = (noteId: string, itemId: string) => {
     const updated = notes.map((note) => {
       if (note.id !== noteId) return note;
-      const updatedItems = note.items.map((item) =>
+      const updatedItems = (note.items || []).map((item) =>
         item.id === itemId ? { ...item, done: !item.done } : item
       );
       const allDone = updatedItems.length > 0 && updatedItems.every((i) => i.done);
@@ -81,7 +72,7 @@ export const QuickNotesPage: React.FC<QuickNotesPageProps> = ({
     const updated = notes.map((note) => {
       if (note.id !== noteId) return note;
       const nextDone = !note.isDone;
-      const updatedItems = note.items.map((i) => ({ ...i, done: nextDone }));
+      const updatedItems = (note.items || []).map((i) => ({ ...i, done: nextDone }));
       return {
         ...note,
         isDone: nextDone,
@@ -97,10 +88,10 @@ export const QuickNotesPage: React.FC<QuickNotesPageProps> = ({
     if (targetNote) {
       if (targetNote.isDone) {
         syncQuickNoteToNotification(null);
-        showToast(`Note marked as completed.`);
+        showToast('Note marked as completed.');
       } else {
         syncQuickNoteToNotification(targetNote);
-        showToast(`Note restored to active.`);
+        showToast('Note restored to active.');
       }
     }
   };
@@ -154,7 +145,7 @@ export const QuickNotesPage: React.FC<QuickNotesPageProps> = ({
     onUpdateNotes(nextNotes);
     saveQuickNotes(nextNotes, vaultMode);
 
-    // Sync recently created or edited note to Notification
+    // Sync note to Notification
     if (saved.isPinnedToNotification && !saved.isDone) {
       syncQuickNoteToNotification(saved);
       showToast('Quick Note saved & posted to Android Notification.');
@@ -167,18 +158,9 @@ export const QuickNotesPage: React.FC<QuickNotesPageProps> = ({
     setIsCreatingNew(false);
   };
 
-  const handleAddShortcut = () => {
-    const pinned = requestPinHomeScreenShortcut();
-    if (pinned) {
-      showToast('Quick Note shortcut pinned to Home Screen!');
-    } else {
-      showToast('Shortcut requested. If in browser, use "Add to Home screen".');
-    }
-  };
-
   return (
     <div className="flex h-full w-full flex-col bg-[var(--wiki-bg)] text-[var(--wiki-text)]">
-      {/* Header */}
+      {/* Header — Back button, Title, and + Add Button */}
       <header className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-4">
         <div className="flex items-center gap-3 min-w-0">
           <button
@@ -197,66 +179,20 @@ export const QuickNotesPage: React.FC<QuickNotesPageProps> = ({
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          {/* Add Home Screen Shortcut */}
-          <button
-            type="button"
-            onClick={handleAddShortcut}
-            className="flex h-9 items-center gap-1.5 border border-[var(--wiki-border)] bg-[var(--wiki-bg)] px-2.5 text-xs font-medium text-[var(--wiki-text)] hover:border-[#3366cc] active:scale-95 transition-all shadow-2xs"
-            title="Add Quick Note shortcut icon to your phone's Home Screen"
-          >
-            <Smartphone className="h-4 w-4 text-[#3366cc]" />
-            <span className="hidden sm:inline">Add Shortcut</span>
-          </button>
-
-          {/* New Note Button */}
-          <button
-            type="button"
-            onClick={() => setIsCreatingNew(true)}
-            className="flex h-9 items-center gap-1.5 border border-[#3366cc] bg-[#3366cc] px-3.5 text-xs font-semibold text-white hover:bg-[#2a56b0] active:scale-95 transition-all shadow-2xs"
-            title="Create a new quick checklist note"
-          >
-            <Plus className="h-4 w-4" />
-            <span>Add</span>
-          </button>
-        </div>
+        {/* Add Note Button */}
+        <button
+          type="button"
+          onClick={() => setIsCreatingNew(true)}
+          className="flex h-9 items-center gap-1.5 border border-[#3366cc] bg-[#3366cc] px-3.5 text-xs font-semibold text-white hover:bg-[#2a56b0] active:scale-95 transition-all shadow-2xs"
+          title="Create a new quick note"
+        >
+          <Plus className="h-4 w-4" />
+          <span>Add</span>
+        </button>
       </header>
 
-      {/* Tabs */}
-      <div className="flex shrink-0 border-b border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-4 text-xs">
-        <button
-          type="button"
-          onClick={() => setActiveTab('active')}
-          className={`flex items-center gap-1.5 border-b-2 py-3 px-3 font-semibold transition-colors ${
-            activeTab === 'active'
-              ? 'border-[#3366cc] text-[#3366cc]'
-              : 'border-transparent text-[var(--wiki-muted)] hover:text-[var(--wiki-text)]'
-          }`}
-        >
-          <span>Active</span>
-          <span className="font-wiki-mono rounded-full bg-[var(--wiki-bg)] border border-[var(--wiki-border)] px-1.5 py-0.2 text-[10px]">
-            {activeNotes.length}
-          </span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('completed')}
-          className={`flex items-center gap-1.5 border-b-2 py-3 px-3 font-semibold transition-colors ${
-            activeTab === 'completed'
-              ? 'border-[#3366cc] text-[#3366cc]'
-              : 'border-transparent text-[var(--wiki-muted)] hover:text-[var(--wiki-text)]'
-          }`}
-        >
-          <span>Completed</span>
-          <span className="font-wiki-mono rounded-full bg-[var(--wiki-bg)] border border-[var(--wiki-border)] px-1.5 py-0.2 text-[10px]">
-            {completedNotes.length}
-          </span>
-        </button>
-      </div>
-
-      {/* Scrollable Content */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      {/* Main Notes List (Without tabs or 3-ways banner) */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-3.5">
         {toastMsg && (
           <div className="flex items-center gap-2 border border-[#14866d] bg-[#14866d]/10 px-3 py-2.5 text-xs font-medium text-[var(--wiki-text)]">
             <Check className="h-4 w-4 shrink-0 text-[#14866d]" />
@@ -264,62 +200,45 @@ export const QuickNotesPage: React.FC<QuickNotesPageProps> = ({
           </div>
         )}
 
-        {/* 3 Creation Options Banner */}
-        <div className="border border-[var(--wiki-border)] bg-[var(--wiki-surface)] p-3 text-xs space-y-2">
-          <div className="font-semibold text-[var(--wiki-text)] flex items-center gap-1.5">
-            <Sparkles className="h-3.5 w-3.5 text-[#3366cc]" />
-            <span>3 Ways to write Quick Notes anytime:</span>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px] text-[var(--wiki-muted)]">
-            <div className="border border-[var(--wiki-hairline)] bg-[var(--wiki-bg)] p-2">
-              <strong className="text-[var(--wiki-text)] block mb-0.5">1. In-App:</strong>
-              Tap the <strong>+ Add</strong> button above.
-            </div>
-            <div className="border border-[var(--wiki-hairline)] bg-[var(--wiki-bg)] p-2">
-              <strong className="text-[var(--wiki-text)] block mb-0.5">2. Quick Settings Tile:</strong>
-              Swipe down notification shade twice, tap edit, and add <strong>Quick Note</strong> tile.
-            </div>
-            <div className="border border-[var(--wiki-hairline)] bg-[var(--wiki-bg)] p-2">
-              <strong className="text-[var(--wiki-text)] block mb-0.5">3. Home Screen Icon:</strong>
-              Tap <strong>Add Shortcut</strong> above to place a 1-tap launcher icon.
-            </div>
-          </div>
-        </div>
-
-        {currentList.length === 0 ? (
+        {notes.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-center border border-dashed border-[var(--wiki-border)] bg-[var(--wiki-surface)]/50 p-6">
             <div className="flex h-12 w-12 items-center justify-center border border-[var(--wiki-border)] bg-[var(--wiki-bg)] mb-3">
               <CheckSquare className="h-6 w-6 text-[var(--wiki-muted)]" />
             </div>
             <h3 className="font-wiki-serif text-base font-bold text-[var(--wiki-text)]">
-              {activeTab === 'active' ? 'No active quick notes' : 'No completed quick notes'}
+              No quick notes yet
             </h3>
             <p className="mt-1 text-xs text-[var(--wiki-muted)] max-w-xs">
-              {activeTab === 'active'
-                ? 'Tap "+ Add" above or use your Home Screen shortcut / Quick Settings tile to jot down instant checklist notes.'
-                : 'Checked notes will appear here.'}
+              Tap the <strong>+ Add</strong> button above or long-press the Likkho app icon on your home screen to jot down instant notes.
             </p>
           </div>
         ) : (
           <div className="space-y-3">
-            {currentList.map((note) => (
+            {notes.map((note) => (
               <div
                 key={note.id}
                 className={`border border-[var(--wiki-border)] bg-[var(--wiki-bg)] p-3.5 shadow-2xs space-y-3 transition-opacity ${
-                  note.isDone ? 'opacity-75' : ''
+                  note.isDone ? 'opacity-75 bg-[var(--wiki-surface)]/40' : ''
                 }`}
               >
-                {/* Note Header */}
-                <div className="flex items-start justify-between gap-2 border-b border-[var(--wiki-hairline)] pb-2.5">
-                  <div className="min-w-0">
-                    <h4
-                      className={`font-wiki-serif text-base font-bold text-[var(--wiki-text)] truncate ${
-                        note.isDone ? 'line-through text-[var(--wiki-muted)]' : ''
-                      }`}
-                    >
-                      {note.title}
-                    </h4>
-                    <span className="font-wiki-mono text-[10px] text-[var(--wiki-muted)]">
+                {/* Note Log Header with Corner Status: Completed / Active */}
+                <div className="flex items-start justify-between gap-3 border-b border-[var(--wiki-hairline)] pb-2.5">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      {note.isChecklist ? (
+                        <CheckSquare className="h-4 w-4 shrink-0 text-[#3366cc]" />
+                      ) : (
+                        <FileText className="h-4 w-4 shrink-0 text-[#3366cc]" />
+                      )}
+                      <h4
+                        className={`font-wiki-serif text-base font-bold text-[var(--wiki-text)] truncate ${
+                          note.isDone ? 'line-through text-[var(--wiki-muted)]' : ''
+                        }`}
+                      >
+                        {note.title}
+                      </h4>
+                    </div>
+                    <span className="font-wiki-mono text-[10px] text-[var(--wiki-muted)] mt-0.5 block">
                       {new Date(note.createdAt).toLocaleString('en-IN', {
                         day: '2-digit',
                         month: 'short',
@@ -330,56 +249,70 @@ export const QuickNotesPage: React.FC<QuickNotesPageProps> = ({
                     </span>
                   </div>
 
-                  {/* Status Badges */}
+                  {/* Corner Status: Completed ya Active */}
                   <div className="flex items-center gap-1.5 shrink-0">
-                    {note.isPinnedToNotification && !note.isDone && (
-                      <span className="flex items-center gap-1 border border-[#3366cc]/30 bg-[#3366cc]/10 px-2 py-0.5 text-[10px] font-semibold text-[#3366cc]">
-                        <Bell className="h-3 w-3" />
-                        <span>In Notification</span>
+                    {note.isDone ? (
+                      <span className="flex items-center gap-1 border border-[#14866d]/40 bg-[#14866d]/15 px-2.5 py-0.5 text-[11px] font-bold text-[#14866d] uppercase tracking-wider">
+                        <Check className="h-3 w-3 stroke-[2.5]" />
+                        <span>Completed</span>
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-1 border border-[#3366cc]/40 bg-[#3366cc]/15 px-2.5 py-0.5 text-[11px] font-bold text-[#3366cc] uppercase tracking-wider">
+                        <span>Active</span>
                       </span>
                     )}
 
-                    {note.isDone && (
-                      <span className="flex items-center gap-1 border border-[#14866d]/30 bg-[#14866d]/10 px-2 py-0.5 text-[10px] font-semibold text-[#14866d]">
-                        <Check className="h-3 w-3" />
-                        <span>Done</span>
+                    {note.isPinnedToNotification && !note.isDone && (
+                      <span
+                        className="flex h-5.5 w-5.5 items-center justify-center border border-[#3366cc]/30 bg-[#3366cc]/10 text-[#3366cc]"
+                        title="Pinned in Android Notification shade"
+                      >
+                        <Bell className="h-3 w-3" />
                       </span>
                     )}
                   </div>
                 </div>
 
-                {/* Checklist Items with Checkboxes */}
-                <div className="space-y-2 text-xs">
-                  {note.items.map((item) => (
-                    <div
-                      key={item.id}
-                      onClick={() => handleToggleItemDone(note.id, item.id)}
-                      className="flex items-center gap-2.5 p-1.5 border border-transparent hover:border-[var(--wiki-hairline)] hover:bg-[var(--wiki-surface)] cursor-pointer select-none transition-colors"
-                    >
-                      <button
-                        type="button"
-                        className={`flex h-4.5 w-4.5 shrink-0 items-center justify-center border transition-colors ${
-                          item.done
-                            ? 'border-[#14866d] bg-[#14866d] text-white'
-                            : 'border-[var(--wiki-border)] bg-[var(--wiki-bg)] hover:border-[#3366cc]'
-                        }`}
-                        title={item.done ? 'Mark pending' : 'Mark done'}
+                {/* Note Content / To-Dos Canvas Display */}
+                {note.isChecklist || (note.items && note.items.length > 0) ? (
+                  /* To-Dos Checklist Items with Checkboxes */
+                  <div className="space-y-1.5 text-xs">
+                    {(note.items || []).map((item) => (
+                      <div
+                        key={item.id}
+                        onClick={() => handleToggleItemDone(note.id, item.id)}
+                        className="flex items-center gap-2.5 p-1.5 border border-transparent hover:border-[var(--wiki-hairline)] hover:bg-[var(--wiki-surface)] cursor-pointer select-none transition-colors"
                       >
-                        {item.done && <Check className="h-3 w-3 stroke-[3]" />}
-                      </button>
+                        <button
+                          type="button"
+                          className={`flex h-4.5 w-4.5 shrink-0 items-center justify-center border transition-colors ${
+                            item.done
+                              ? 'border-[#14866d] bg-[#14866d] text-white'
+                              : 'border-[var(--wiki-border)] bg-[var(--wiki-bg)] hover:border-[#3366cc]'
+                          }`}
+                          title={item.done ? 'Mark pending' : 'Mark done'}
+                        >
+                          {item.done && <Check className="h-3 w-3 stroke-[3]" />}
+                        </button>
 
-                      <span
-                        className={`flex-1 break-words ${
-                          item.done
-                            ? 'line-through text-[var(--wiki-muted)]'
-                            : 'text-[var(--wiki-text)] font-medium'
-                        }`}
-                      >
-                        {item.text}
-                      </span>
-                    </div>
-                  ))}
-                </div>
+                        <span
+                          className={`flex-1 break-words ${
+                            item.done
+                              ? 'line-through text-[var(--wiki-muted)]'
+                              : 'text-[var(--wiki-text)] font-medium'
+                          }`}
+                        >
+                          {item.text}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  /* Freeform Note Text Canvas Display */
+                  <div className="text-xs leading-relaxed text-[var(--wiki-text)] whitespace-pre-wrap break-words bg-[var(--wiki-surface)]/50 p-2.5 border border-[var(--wiki-hairline)]">
+                    {note.content || 'Empty note'}
+                  </div>
+                )}
 
                 {/* Card Actions */}
                 <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--wiki-hairline)] pt-2.5 text-xs">

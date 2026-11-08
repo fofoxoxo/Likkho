@@ -20,6 +20,8 @@ export interface QuickNoteItem {
 export interface QuickNote {
   id: string;
   title: string;
+  content?: string;
+  isChecklist?: boolean;
   items: QuickNoteItem[];
   createdAt: number;
   updatedAt: number;
@@ -64,8 +66,21 @@ export function syncQuickNoteToNotification(note: QuickNote | null): void {
     return;
   }
 
+  const itemsToSync =
+    note.items && note.items.length > 0
+      ? note.items
+      : (note.content || '').split('\n').filter(Boolean).map((line, idx) => ({
+          id: `line_${idx}`,
+          text: line,
+          done: false,
+        }));
+
   const itemsJson = JSON.stringify(
-    note.items.map((i) => ({ text: i.text, done: i.done }))
+    itemsToSync.map((i) => ({
+      text: i.text,
+      done: i.done,
+      isChecklist: Boolean(note.isChecklist),
+    }))
   );
 
   // 1. Native Android Notification
@@ -77,9 +92,14 @@ export function syncQuickNoteToNotification(note: QuickNote | null): void {
   // 2. Web Notification fallback
   if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
     try {
-      const pendingItems = note.items.filter((i) => !i.done).map((i) => `☐ ${i.text}`);
-      const doneItems = note.items.filter((i) => i.done).map((i) => `☑ ${i.text}`);
-      const bodyText = [...pendingItems, ...doneItems].join('  ·  ') || 'No items';
+      let bodyText = '';
+      if (note.isChecklist) {
+        const pendingItems = itemsToSync.filter((i) => !i.done).map((i) => `☐ ${i.text}`);
+        const doneItems = itemsToSync.filter((i) => i.done).map((i) => `☑ ${i.text}`);
+        bodyText = [...pendingItems, ...doneItems].join('  ·  ') || 'No items';
+      } else {
+        bodyText = note.content || itemsToSync.map((i) => i.text).join('  ·  ') || 'Note';
+      }
 
       new Notification(`📝 ${note.title}`, {
         body: bodyText,
