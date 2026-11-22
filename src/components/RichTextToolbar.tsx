@@ -57,10 +57,7 @@ import {
   markExternalFilePickerPending,
   clearExternalFilePickerPending,
 } from '../utils/cryptoVault';
-import {
-  finalizeRecordedAudioToDataUrl,
-  getMimeTypeForFormat,
-} from '../utils/audioRecorder';
+import { getMimeTypeForFormat } from '../utils/audioRecorder';
 import { persistAudioAttachment, saveAudioBlobToStore } from '../utils/audioStorage';
 import { processImageFileToBlob } from '../utils/imageStorage';
 import { parseImportedFileToHtml } from '../utils/importFileToCanvas';

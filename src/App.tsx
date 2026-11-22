@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Lock,
   Menu,
@@ -16,7 +16,6 @@ import {
   CheckCircle2,
   Loader2,
   AlertTriangle,
-  KeyRound,
   Share2,
 } from 'lucide-react';
 import {
@@ -300,7 +299,6 @@ export default function App() {
   const [diaryCooldownSec, setDiaryCooldownSec] = useState<number>(() =>
     getRemainingPasscodeCooldownSeconds()
   );
-  const pendingOpenedSharedLogRef = useRef<DiaryLog | null>(null);
 
   // Active ringing Android notification alert banner
   const [ringingAlert, setRingingAlert] = useState<{
@@ -348,6 +346,7 @@ export default function App() {
     // Global callback from Android Quick Settings tile or shortcut
     window.__onLikkhoOpenQuickNoteCreator = () => {
       setShowGlobalQuickNoteModal(true);
+      return 'OPENED';
     };
 
     // Global callback from Android Notification Action: "Done"
@@ -1949,6 +1948,11 @@ export default function App() {
             if (newNote.isPinnedToNotification && !newNote.isDone) {
               syncQuickNoteToNotification(newNote);
             }
+            window.dispatchEvent(
+              new CustomEvent('likkho-quick-notes-changed', {
+                detail: { noteId: newNote.id },
+              })
+            );
             setShowGlobalQuickNoteModal(false);
           }}
         />

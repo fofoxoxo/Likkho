@@ -4,7 +4,7 @@ import {
   DiaryLog,
   markExternalFilePickerPending,
 } from './cryptoVault';
-import { buildZipArchiveBlob, buildZipArchiveBlobAsync, ZipEntryFile } from './zipDataExporter';
+import { buildZipArchiveBlobAsync, ZipEntryFile } from './zipDataExporter';
 import { getAudioBinaryBytes, saveAudioBlobToStore } from './audioStorage';
 import {
   getImageBlobFromStore,
@@ -269,18 +269,6 @@ async function getImageBinaryBytesAndMeta(
     }
   }
   return parseDataUrlToBytesAndMeta(refOrDataUrl, fallbackExt, fallbackMime);
-}
-
-function bytesToDataUrl(bytes: Uint8Array, mimeType: string): string {
-  let binary = '';
-  const chunkSize = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    binary += String.fromCharCode.apply(
-      null,
-      Array.from(bytes.subarray(i, i + chunkSize))
-    );
-  }
-  return `data:${mimeType};base64,${btoa(binary)}`;
 }
 
 function convertHtmlToReadableMarkdown(log: DiaryLog): string {

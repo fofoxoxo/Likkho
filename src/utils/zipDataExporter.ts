@@ -63,7 +63,6 @@ export async function buildZipArchiveBlobAsync(entries: ZipEntryFile[]): Promise
   for (const entry of entries) {
     const nameBytes = enc.encode(entry.path.replace(/^\/+/, ''));
     const entryData = entry.data;
-    const isBlob = entryData instanceof Blob;
     const size = entryData instanceof Blob ? entryData.size : entryData.length;
     const crc = entryData instanceof Blob ? await calculateBlobCrc32(entryData) : crc32(entryData);
 

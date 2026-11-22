@@ -114,7 +114,7 @@ export function getMimeTypeForFormat(format: AudioFormatOption): string {
 export async function processAudioBlobWithStudioSettings(
   sourceBlob: Blob,
   settings: AudioStudioSettings,
-  originalFormat?: AudioFormatOption,
+  _originalFormat?: AudioFormatOption,
   hasCustomized: boolean = true
 ): Promise<{ blob: Blob; durationSec: number }> {
   // 1. Guard: Only process if file is smaller than 20MB AND user customized settings

@@ -258,7 +258,7 @@ function estimateSyllablesFromWord(word: string): { count: number; breakdown: st
   return { count, breakdown };
 }
 
-function analyzeProsodyAndMeter(word: string, syllableCount: number, ipa: string): string {
+function analyzeProsodyAndMeter(_word: string, syllableCount: number, ipa: string): string {
   if (syllableCount === 1) {
     return 'Monosyllabic (Single Stressed Beat / Spondaic or Context-Dependent)';
   }

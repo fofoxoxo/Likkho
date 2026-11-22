@@ -117,7 +117,36 @@ jobs:
             sed -i 's/<\/activity>/    <intent-filter>\n                <action android:name="android.intent.action.VIEW" \/>\n                <action android:name="android.intent.action.EDIT" \/>\n                <category android:name="android.intent.category.DEFAULT" \/>\n                <category android:name="android.intent.category.BROWSABLE" \/>\n                <data android:scheme="content" \/>\n                <data android:scheme="file" \/>\n                <data android:mimeType="*\/*" \/>\n                <data android:host="*" \/>\n                <data android:pathSuffix=".likkho" \/>\n                <data android:pathPattern=".*\\.likkho" \/>\n                <data android:pathPattern=".*\\..*\\.likkho" \/>\n                <data android:pathPattern=".*\\..*\\..*\\.likkho" \/>\n                <data android:pathPattern=".*\\..*\\..*\\..*\\.likkho" \/>\n            <\/intent-filter>\n            <intent-filter>\n                <action android:name="android.intent.action.VIEW" \/>\n                <action android:name="android.intent.action.EDIT" \/>\n                <category android:name="android.intent.category.DEFAULT" \/>\n                <category android:name="android.intent.category.BROWSABLE" \/>\n                <data android:scheme="content" \/>\n                <data android:scheme="file" \/>\n                <data android:mimeType="application\/x-likkho" \/>\n                <data android:mimeType="application\/vnd.likkho.diary" \/>\n            <\/intent-filter>\n            <intent-filter>\n                <action android:name="android.intent.action.VIEW" \/>\n                <category android:name="android.intent.category.DEFAULT" \/>\n                <category android:name="android.intent.category.BROWSABLE" \/>\n                <data android:scheme="content" \/>\n                <data android:scheme="file" \/>\n                <data android:mimeType="application\/x-likkho" \/>\n                <data android:mimeType="application\/octet-stream" \/>\n                <data android:mimeType="application\/zip" \/>\n                <data android:mimeType="application\/vnd.likkho.diary" \/>\n                <data android:pathSuffix=".likkho" \/>\n                <data android:pathPattern=".*\\.likkho" \/>\n            <\/intent-filter>\n        <\/activity>/' "$MANIFEST"
           fi
 
-          mkdir -p android/app/src/main/res/xml
+          if ! grep -q "android.app.shortcuts" "$MANIFEST"; then
+            sed -i 's/<\/activity>/    <meta-data android:name="android.app.shortcuts" android:resource="@xml\/shortcuts" \/>\n        <\/activity>/' "$MANIFEST"
+          fi
+
+          mkdir -p android/app/src/main/res/xml android/app/src/main/res/values
+          cat << 'EOF' > android/app/src/main/res/values/likkho_strings.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <string name="quick_note_short_label">Quick Note</string>
+              <string name="quick_note_long_label">Create Quick Note</string>
+          </resources>
+          EOF
+
+          cat << 'EOF' > android/app/src/main/res/xml/shortcuts.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+              <shortcut
+                  android:shortcutId="quick_note"
+                  android:enabled="true"
+                  android:icon="@android:drawable/ic_menu_edit"
+                  android:shortcutShortLabel="@string/quick_note_short_label"
+                  android:shortcutLongLabel="@string/quick_note_long_label">
+                  <intent
+                      android:action="com.likkho.diary.ACTION_QUICK_NOTE"
+                      android:targetPackage="com.likkho.diary"
+                      android:targetClass="com.likkho.diary.MainActivity" />
+              </shortcut>
+          </shortcuts>
+          EOF
+
           if [ -f android/app/src/main/res/xml/file_paths.xml ]; then
             if ! grep -q "likkho_shared_cache" android/app/src/main/res/xml/file_paths.xml; then
               sed -i 's/<\/paths>/    <cache-path name="likkho_shared_cache" path="." \/>\n<\/paths>/' android/app/src/main/res/xml/file_paths.xml || true
@@ -159,7 +188,7 @@ jobs:
 
           # Register ReminderReceiver, QuickNoteReceiver, MicForegroundService and QuickNoteTileService inside <application>
           if ! grep -q "QuickNoteTileService" "$MANIFEST"; then
-            sed -i 's/<\/application>/    <receiver android:name=".ReminderReceiver" android:exported="false" \/>\n        <receiver android:name=".QuickNoteReceiver" android:exported="false" \/>\n        <service android:name=".MicForegroundService" android:exported="false" android:stopWithTask="false" android:foregroundServiceType="microphone" \/>\n        <service android:name=".QuickNoteTileService" android:label="Quick Note" android:icon="@mipmap\/ic_launcher" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE" android:exported="true">\n            <intent-filter>\n                <action android:name="android.service.quicksettings.action.QS_TILE" \/>\n            <\/intent-filter>\n        <\/service>\n    <\/application>/' "$MANIFEST"
+            sed -i 's/<\/application>/    <receiver android:name=".ReminderReceiver" android:exported="false" \/>\n        <receiver android:name=".QuickNoteReceiver" android:exported="false" \/>\n        <service android:name=".MicForegroundService" android:exported="false" android:stopWithTask="false" android:foregroundServiceType="microphone" \/>\n        <service android:name=".QuickNoteTileService" android:label="Quick Note" android:icon="@android:drawable\/ic_menu_edit" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE" android:exported="true">\n            <intent-filter>\n                <action android:name="android.service.quicksettings.action.QS_TILE" \/>\n            <\/intent-filter>\n        <\/service>\n    <\/application>/' "$MANIFEST"
           fi
 
           # Set Likkho launcher icon (white background with black "Likkho" text) in density-specific mipmap folders only
@@ -970,8 +999,9 @@ jobs:
               public void onQuickNoteMarkedDone(final String noteId) {
                   runOnUiThread(() -> {
                       if (bridge != null && bridge.getWebView() != null) {
+                          String safeNoteId = noteId != null ? noteId.replace("\\", "\\\\").replace("'", "\\'") : "";
                           bridge.getWebView().evaluateJavascript(
-                              "(function(){ if(window.__onLikkhoQuickNoteDone){ window.__onLikkhoQuickNoteDone('" + noteId + "'); } })()",
+                              "(function(){ if(window.__onLikkhoQuickNoteDone){ window.__onLikkhoQuickNoteDone('" + safeNoteId + "'); } })()",
                               null
                           );
                       }
@@ -982,8 +1012,12 @@ jobs:
                   runOnUiThread(() -> {
                       if (bridge != null && bridge.getWebView() != null && pendingQuickNoteLaunch) {
                           bridge.getWebView().evaluateJavascript(
-                              "(function(){ if(window.__onLikkhoOpenQuickNoteCreator){ window.__onLikkhoOpenQuickNoteCreator(); } })()",
-                              null
+                              "(function(){ if(window.__onLikkhoOpenQuickNoteCreator){ return window.__onLikkhoOpenQuickNoteCreator() || 'OPENED'; } return ''; })()",
+                              val -> {
+                                  if (val != null && val.contains("OPENED")) {
+                                      pendingQuickNoteLaunch = false;
+                                  }
+                              }
                           );
                       }
                   });
@@ -1463,8 +1497,11 @@ jobs:
                           String b64 = payload != null && !payload.isEmpty()
                               ? Base64.encodeToString(payload.getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP)
                               : "";
+                          String payloadJs = b64.isEmpty()
+                              ? "''"
+                              : "(function(b){var bin=atob(b);var u=new Uint8Array(bin.length);for(var i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i);return new TextDecoder().decode(u);})('" + b64 + "')";
                           bridge.getWebView().evaluateJavascript(
-                              "if(window.__onLikkhoSafRestoreResult) window.__onLikkhoSafRestoreResult(" + success + ", " + (b64.isEmpty() ? "''" : "atob('" + b64 + "')") + ");",
+                              "if(window.__onLikkhoSafRestoreResult) window.__onLikkhoSafRestoreResult(" + success + ", " + payloadJs + ");",
                               null
                           );
                       }
@@ -2615,25 +2652,25 @@ jobs:
           ./gradlew assembleRelease assembleDebug bundleRelease
 
           mkdir -p release-apks
-          # Find and package Release APK (v1.6.1) - STRICTLY SIGNED ONLY
+          # Find and package Release APK (v1.6.2) - STRICTLY SIGNED ONLY
           if [ -f app/build/outputs/apk/release/app-release.apk ]; then
-            cp app/build/outputs/apk/release/app-release.apk release-apks/likkho-release-v1.6.1.apk
+            cp app/build/outputs/apk/release/app-release.apk release-apks/likkho-release-v1.6.2.apk
           else
             echo "::error::FATAL: Signed release APK (app-release.apk) not found. Unsigned APK will not be uploaded."
             exit 1
           fi
 
-          # Find and package Release AAB (Android App Bundle v1.6.1) - STRICTLY SIGNED ONLY
+          # Find and package Release AAB (Android App Bundle v1.6.2) - STRICTLY SIGNED ONLY
           if [ -f app/build/outputs/bundle/release/app-release.aab ]; then
-            cp app/build/outputs/bundle/release/app-release.aab release-apks/likkho-release-v1.6.1.aab
+            cp app/build/outputs/bundle/release/app-release.aab release-apks/likkho-release-v1.6.2.aab
           else
             echo "::error::FATAL: Signed release AAB (app-release.aab) not found. Unsigned AAB will not be uploaded."
             exit 1
           fi
 
-          # Find and package Debug APK (v1.6.1)
+          # Find and package Debug APK (v1.6.2)
           if [ -f app/build/outputs/apk/debug/app-debug.apk ]; then
-            cp app/build/outputs/apk/debug/app-debug.apk release-apks/likkho-debug-v1.6.1.apk
+            cp app/build/outputs/apk/debug/app-debug.apk release-apks/likkho-debug-v1.6.2.apk
           fi
 
           ls -la release-apks/
@@ -2641,46 +2678,47 @@ jobs:
       - name: Upload Release APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: likkho-release-v1.6.1-apk
-          path: android/release-apks/likkho-release-v1.6.1.apk
+          name: likkho-release-v1.6.2-apk
+          path: android/release-apks/likkho-release-v1.6.2.apk
           retention-days: 30
 
       - name: Upload Release AAB Bundle Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: likkho-release-v1.6.1-aab
-          path: android/release-apks/likkho-release-v1.6.1.aab
+          name: likkho-release-v1.6.2-aab
+          path: android/release-apks/likkho-release-v1.6.2.aab
           retention-days: 30
 
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: likkho-debug-v1.6.1-apk
-          path: android/release-apks/likkho-debug-v1.6.1.apk
+          name: likkho-debug-v1.6.2-apk
+          path: android/release-apks/likkho-debug-v1.6.2.apk
           retention-days: 30
 
-      - name: Publish GitHub Release (v1.6.1)
+      - name: Publish GitHub Release (v1.6.2)
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
         with:
-          tag_name: v1.6.1
-          name: "Likkho v1.6.1 (Patch Update) - First-Try SAF Vault Restore & Streamlined Diary Vault Unlock"
+          tag_name: v1.6.2
+          name: "Likkho v1.6.2 (Patch Update) - Bug Fixes, Long-Press Quick Note Shortcut & Synced Notes"
           body: |
-            ## Likkho v1.6.1 Release Notes
+            ## Likkho v1.6.2 Release Notes
             
             ### 🛠️ Bug Fixes & Improvements in this Patch Update:
-            - **First-Attempt Backup Restore Fix**: Resolved the issue where restoring backed-up diaries via Android SAF showed `"No backup found to restore."` on the first try and required a second attempt. Chunked binary vault backups (`LKSTRM01`/`LKSTRM02`) and file-size metadata queries now resolve and stream seamlessly on the very first attempt.
-            - **Streamlined Backed-up Diaries Unlock UI**: Removed the unnecessary biometrics unlock button next to the encryption key input when unlocking Backed-up Diaries Vault.
-            - **Key & Vault Error Clarity**: Wrong Encryption Key errors during restore are surfaced directly instead of being masked by fallback error banners.
+            - **App Icon Long-Press Shortcut & Quick Settings Tile Fix**: Added native Android App Launcher Long-Press Shortcut (`Create Quick Note`) and replaced the Quick Settings monochrome tile icon so it renders cleanly across Android themes.
+            - **Quick Notes Bridge & Live Sync**: Fixed Quick Note launch intent consumption, escaped notification callbacks, and synced notification/modal updates live with Settings.
+            - **SAF UTF-8 Restore & Chunked Vault Frame Fix**: Fixed UTF-8 decoding for legacy JSON SAF restores and fixed extended frame-header handling in chunked binary vault restores.
+            - **Passcode & TypeScript Strictness**: Ensured biometric callback cleanup on unmount and resolved all strict TypeScript unused/cleanup errors.
             
             ### 📦 Release Downloads:
-            - **Signed Release APK**: `likkho-release-v1.6.1.apk`
-            - **Signed Google Play App Bundle**: `likkho-release-v1.6.1.aab`
-            - **Debug APK**: `likkho-debug-v1.6.1.apk`
+            - **Signed Release APK**: `likkho-release-v1.6.2.apk`
+            - **Signed Google Play App Bundle**: `likkho-release-v1.6.2.aab`
+            - **Debug APK**: `likkho-debug-v1.6.2.apk`
           files: |
-            android/release-apks/likkho-release-v1.6.1.apk
-            android/release-apks/likkho-release-v1.6.1.aab
-            android/release-apks/likkho-debug-v1.6.1.apk
+            android/release-apks/likkho-release-v1.6.2.apk
+            android/release-apks/likkho-release-v1.6.2.aab
+            android/release-apks/likkho-debug-v1.6.2.apk
           draft: false
           prerelease: false
         env:

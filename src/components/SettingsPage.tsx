@@ -214,7 +214,12 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   );
 
   useEffect(() => {
-    setQuickNotes(getQuickNotes(vaultMode));
+    const syncQuickNotes = () => setQuickNotes(getQuickNotes(vaultMode));
+    syncQuickNotes();
+    window.addEventListener('likkho-quick-notes-changed', syncQuickNotes);
+    return () => {
+      window.removeEventListener('likkho-quick-notes-changed', syncQuickNotes);
+    };
   }, [vaultMode, showQuickNotesPage]);
 
   // 10-second long press on "Set Passcode" button (only in Primary Vault when Primary Passcode is already active)

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Download, ExternalLink, X, Sparkles, Check, AlertCircle } from 'lucide-react';
+import { Download, ExternalLink, X, Sparkles, Check } from 'lucide-react';
 import { AppUpdateInfo } from '../utils/appUpdateChecker';
 
 interface AppUpdateModalProps {

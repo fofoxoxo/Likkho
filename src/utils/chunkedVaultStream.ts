@@ -661,7 +661,6 @@ export async function restoreFromStreamSource(
     let salt: Uint8Array;
     let iterations: number;
     let hash: 'SHA-256' | 'SHA-512';
-    let baseIv: Uint8Array;
 
     if (version === 1 || initialHeaderBytes[7] === 0x31) {
       // Legacy LKSTRM01 V1 header: 42 bytes, fixed 100k iterations, SHA-256
@@ -669,7 +668,6 @@ export async function restoreFromStreamSource(
       salt = initialHeaderBytes.subarray(10, 26);
       iterations = hDv.getUint32(26, false) || 100000;
       hash = 'SHA-256';
-      baseIv = initialHeaderBytes.subarray(30, 42);
     } else {
       // LKSTRM02 V2 header: 44 bytes, dynamic iterations & hash
       if (fileSize < 44) return null;
@@ -678,7 +676,6 @@ export async function restoreFromStreamSource(
       iterations = hDv.getUint32(26, false);
       const hashId = initialHeaderBytes[30];
       hash = hashId === 2 ? 'SHA-512' : 'SHA-256';
-      baseIv = initialHeaderBytes.subarray(32, 44);
     }
 
     const aesKey = await deriveStreamAesKey(passphrase, salt, vaultMode, iterations, hash);
@@ -693,19 +690,21 @@ export async function restoreFromStreamSource(
     while (cursor < fileSize) {
       // Read frame header prefix (up to 300 bytes)
       const readLen = Math.min(300, fileSize - cursor);
-      const frameHeaderBytes = await reader.readSlice(cursor, readLen);
+      let frameHeaderBytes = await reader.readSlice(cursor, readLen);
       if (frameHeaderBytes.length < 25) break;
 
-      const dv = new DataView(frameHeaderBytes.buffer, frameHeaderBytes.byteOffset, frameHeaderBytes.byteLength);
+      let dv = new DataView(frameHeaderBytes.buffer, frameHeaderBytes.byteOffset, frameHeaderBytes.byteLength);
       let offset = 0;
       const recordType = frameHeaderBytes[offset++];
       const idLen = dv.getUint16(offset, false);
       offset += 2;
 
-      if (offset + idLen > frameHeaderBytes.length) {
+      if (offset + idLen + 26 > frameHeaderBytes.length) {
         // Very long ID header safety
-        const extendedHeaderBytes = await reader.readSlice(cursor, Math.min(offset + idLen + 50, fileSize - cursor));
-        if (extendedHeaderBytes.length < offset + idLen + 24) break;
+        const extendedHeaderBytes = await reader.readSlice(cursor, Math.min(offset + idLen + 120, fileSize - cursor));
+        if (extendedHeaderBytes.length < offset + idLen + 26) break;
+        frameHeaderBytes = extendedHeaderBytes;
+        dv = new DataView(frameHeaderBytes.buffer, frameHeaderBytes.byteOffset, frameHeaderBytes.byteLength);
       }
 
       const id = dec.decode(frameHeaderBytes.subarray(offset, offset + idLen));
@@ -719,6 +718,13 @@ export async function restoreFromStreamSource(
 
       const mimeLen = dv.getUint16(offset, false);
       offset += 2;
+
+      if (offset + mimeLen + 16 > frameHeaderBytes.length) {
+        const extendedMimeHeaderBytes = await reader.readSlice(cursor, Math.min(offset + mimeLen + 32, fileSize - cursor));
+        if (extendedMimeHeaderBytes.length < offset + mimeLen + 16) break;
+        frameHeaderBytes = extendedMimeHeaderBytes;
+        dv = new DataView(frameHeaderBytes.buffer, frameHeaderBytes.byteOffset, frameHeaderBytes.byteLength);
+      }
 
       const mimeType = dec.decode(frameHeaderBytes.subarray(offset, offset + mimeLen));
       offset += mimeLen;

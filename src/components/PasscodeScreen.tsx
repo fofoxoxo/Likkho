@@ -128,6 +128,7 @@ export const PasscodeScreen: React.FC<PasscodeScreenProps> = ({
       }
     };
 
+    let timer: number | undefined;
     // Prompt biometric authentication ONLY ONCE when the lock screen first opens (if not in cooldown)
     if (
       biometricsEnabled &&
@@ -136,17 +137,17 @@ export const PasscodeScreen: React.FC<PasscodeScreenProps> = ({
       window.LikkhoNative?.authenticateBiometric
     ) {
       hasAutoPromptedRef.current = true;
-      const timer = window.setTimeout(() => {
+      timer = window.setTimeout(() => {
         if (getRemainingPasscodeCooldownSeconds() === 0) {
           window.LikkhoNative?.authenticateBiometric?.();
         }
       }, 220);
-      return () => {
-        window.clearTimeout(timer);
-      };
     }
 
     return () => {
+      if (timer !== undefined) {
+        window.clearTimeout(timer);
+      }
       window.__onLikkhoBiometricResult = undefined;
     };
   }, [biometricsEnabled]);
