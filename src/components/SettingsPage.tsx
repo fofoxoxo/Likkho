@@ -1686,7 +1686,6 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
         <BackedUpDiariesModal
           vaultMode={vaultMode}
           savedKeyHash={savedKeyHash}
-          biometricsEnabled={biometricsEnabled}
           onClose={() => setShowBackedUpDiariesModal(false)}
           onRestoreSingleDiary={onRestoreSingleDiary}
           onGoToBackupRestore={() => {

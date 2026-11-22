@@ -912,6 +912,52 @@ export async function performStreamingVaultBackup(
  * - Low-RAM StreamSliceReader: reads frame-by-frame on demand via native SAF or OPFS/Blob slices.
  * - Automatically falls back to legacy single-envelope restore if older backup is loaded.
  */
+async function tryNativeSafStreamingRestore(
+  passphrase: string,
+  vaultMode: VaultMode
+): Promise<VaultBackupBundle | null> {
+  if (
+    !window.LikkhoNative ||
+    typeof window.LikkhoNative.getSafBackupFileSize !== 'function' ||
+    typeof window.LikkhoNative.readSafBackupSlice !== 'function'
+  ) {
+    return null;
+  }
+
+  const fileSize = window.LikkhoNative.getSafBackupFileSize(vaultMode);
+  if (fileSize <= 0) {
+    return null;
+  }
+
+  // Read first 44 bytes to check if it's chunked stream
+  const firstSliceB64 = window.LikkhoNative.readSafBackupSlice(0, 44, vaultMode);
+  if (firstSliceB64 && (firstSliceB64.startsWith('ERROR:') || firstSliceB64.startsWith('__ERROR'))) {
+    throw new Error(`SAF storage read error: ${firstSliceB64}`);
+  }
+  if (!firstSliceB64) {
+    return null;
+  }
+
+  const firstBytes = base64ToUint8ArrayChunk(firstSliceB64);
+  if (isChunkedStreamMagic(firstBytes)) {
+    // Low-RAM StreamSliceReader: frame-by-frame reads directly through SAF ParcelFileDescriptor
+    const safReader: StreamSliceReader = {
+      size: fileSize,
+      async readSlice(offset: number, length: number): Promise<Uint8Array> {
+        const b64 = window.LikkhoNative!.readSafBackupSlice!(offset, length, vaultMode);
+        if (!b64 || b64.startsWith('ERROR:') || b64.startsWith('__ERROR')) {
+          throw new Error(`SAF storage read failed at offset ${offset}: ${b64 || 'empty response'}`);
+        }
+        return base64ToUint8ArrayChunk(b64);
+      },
+    };
+    const res = await restoreFromStreamSource(safReader, passphrase, vaultMode);
+    if (res) return res;
+  }
+
+  return null;
+}
+
 export async function performStreamingVaultRestore(
   passphrase: string,
   vaultMode: VaultMode = 'primary'
@@ -920,39 +966,14 @@ export async function performStreamingVaultRestore(
 
   // 1. Check Native Android SAF
   if (window.LikkhoNative) {
-    if (
-      typeof window.LikkhoNative.getSafBackupFileSize === 'function' &&
-      typeof window.LikkhoNative.readSafBackupSlice === 'function'
-    ) {
-      const fileSize = window.LikkhoNative.getSafBackupFileSize(vaultMode);
-      if (fileSize > 0) {
-        // Read first 44 bytes to check if it's chunked stream
-        const firstSliceB64 = window.LikkhoNative.readSafBackupSlice(0, 44, vaultMode);
-        if (firstSliceB64 && !firstSliceB64.startsWith('ERROR:') && !firstSliceB64.startsWith('__ERROR')) {
-          const firstBytes = base64ToUint8ArrayChunk(firstSliceB64);
-          if (isChunkedStreamMagic(firstBytes)) {
-            // Low-RAM StreamSliceReader: frame-by-frame reads directly through SAF ParcelFileDescriptor
-            const safReader: StreamSliceReader = {
-              size: fileSize,
-              async readSlice(offset: number, length: number): Promise<Uint8Array> {
-                const b64 = window.LikkhoNative!.readSafBackupSlice!(offset, length, vaultMode);
-                if (!b64 || b64.startsWith('ERROR:') || b64.startsWith('__ERROR')) {
-                  throw new Error(`SAF storage read failed at offset ${offset}: ${b64 || 'empty response'}`);
-                }
-                return base64ToUint8ArrayChunk(b64);
-              },
-            };
-            const res = await restoreFromStreamSource(safReader, passphrase, vaultMode);
-            if (res) return res;
-          }
-        } else if (firstSliceB64 && (firstSliceB64.startsWith('ERROR:') || firstSliceB64.startsWith('__ERROR'))) {
-          throw new Error(`SAF storage read error: ${firstSliceB64}`);
-        }
-      }
+    const directStreamRes = await tryNativeSafStreamingRestore(passphrase, vaultMode);
+    if (directStreamRes) {
+      return directStreamRes;
     }
 
-    // Fallback to legacy SAF read
+    // Fallback: prompt SAF folder selection / legacy SAF read
     if (typeof window.LikkhoNative.restoreBackupViaSaf === 'function') {
+      markExternalFilePickerPending();
       const safEnvelope = await new Promise<string>((resolve) => {
         window.__onLikkhoSafRestoreResult = (success: boolean, payload?: string) => {
           window.__onLikkhoSafRestoreResult = undefined;
@@ -960,18 +981,39 @@ export async function performStreamingVaultRestore(
           else resolve('');
         };
         window.LikkhoNative?.restoreBackupViaSaf?.(vaultMode);
+      }).finally(() => {
+        clearExternalFilePickerPending();
       });
-      if (safEnvelope) {
+
+      if (safEnvelope === '__SAF_STREAM_READY__') {
+        const streamAfterPick = await tryNativeSafStreamingRestore(passphrase, vaultMode);
+        if (streamAfterPick) {
+          return streamAfterPick;
+        }
+      } else if (safEnvelope) {
         try {
           return await decryptVaultBundle(safEnvelope, passphrase, vaultMode);
-        } catch {
+        } catch (decryptErr) {
+          if (
+            decryptErr instanceof Error &&
+            decryptErr.message.includes('Incorrect Encryption Key')
+          ) {
+            throw decryptErr;
+          }
           // try stream if base64
           try {
             const raw = base64ToUint8ArrayChunk(safEnvelope);
             const blob = new Blob([raw as unknown as BlobPart]);
             const sRes = await restoreFromStreamSource(blob, passphrase, vaultMode);
             if (sRes) return sRes;
-          } catch {}
+          } catch (streamErr) {
+            if (
+              streamErr instanceof Error &&
+              streamErr.message.includes('Incorrect Encryption Key')
+            ) {
+              throw streamErr;
+            }
+          }
         }
       }
     }
@@ -997,13 +1039,27 @@ export async function performStreamingVaultRestore(
           // If not stream, try legacy
           const text = await file.text();
           return await decryptVaultBundle(text, passphrase, vaultMode);
-        } catch {}
+        } catch (opfsFileErr) {
+          if (
+            opfsFileErr instanceof Error &&
+            opfsFileErr.message.includes('Incorrect Encryption Key')
+          ) {
+            throw opfsFileErr;
+          }
+        }
       }
     }
-  } catch {}
+  } catch (opfsErr) {
+    if (
+      opfsErr instanceof Error &&
+      opfsErr.message.includes('Incorrect Encryption Key')
+    ) {
+      throw opfsErr;
+    }
+  }
 
-  // 3. Fallback to existing readFromPrivateSpecialFolder (legacy IndexedDB)
-  const legacy = await readFromPrivateSpecialFolder(vaultMode);
+  // 3. Fallback to existing readFromPrivateSpecialFolder (legacy IndexedDB, without re-triggering SAF picker)
+  const legacy = await readFromPrivateSpecialFolder(vaultMode, Boolean(window.LikkhoNative));
   if (legacy.encryptedEnvelope) {
     return await decryptVaultBundle(legacy.encryptedEnvelope, passphrase, vaultMode);
   }
@@ -1111,7 +1167,8 @@ export async function writeToPrivateSpecialFolder(
  * - Secondary / Decoy Vault: `<ChosenBaseDir>/.likkho_decoy_backups/decoy_vault.db`
  */
 export async function readFromPrivateSpecialFolder(
-  vaultMode: VaultMode = 'primary'
+  vaultMode: VaultMode = 'primary',
+  skipNativeSaf: boolean = false
 ): Promise<{
   metadata: EncryptedVaultMetadata;
   encryptedEnvelope: string | null;
@@ -1120,7 +1177,7 @@ export async function readFromPrivateSpecialFolder(
   const defaultPath = `SAF/${cfg.safFolderName}/${cfg.dbFilename}`;
 
   // 1. Check Native Android SAF backup first
-  if (window.LikkhoNative) {
+  if (window.LikkhoNative && !skipNativeSaf) {
     if (typeof window.LikkhoNative.restoreBackupViaSaf === 'function') {
       const safEnvelope = await new Promise<string>((resolve) => {
         window.__onLikkhoSafRestoreResult = (success: boolean, payload?: string) => {

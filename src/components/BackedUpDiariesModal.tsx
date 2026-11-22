@@ -9,7 +9,6 @@ import {
   Lock,
   Unlock,
   KeyRound,
-  Fingerprint,
   RotateCcw,
   AlertTriangle,
   CheckCircle2,
@@ -40,7 +39,6 @@ import { acquireAudioPlaybackUrl, releaseAudioPlaybackUrl } from '../utils/audio
 interface BackedUpDiariesModalProps {
   vaultMode: VaultMode;
   savedKeyHash: string | null;
-  biometricsEnabled: boolean;
   onClose: () => void;
   onRestoreSingleDiary?: (log: DiaryLog) => void;
   onGoToBackupRestore?: () => void;
@@ -49,7 +47,6 @@ interface BackedUpDiariesModalProps {
 export const BackedUpDiariesModal: React.FC<BackedUpDiariesModalProps> = ({
   vaultMode,
   savedKeyHash,
-  biometricsEnabled,
   onClose,
   onRestoreSingleDiary,
   onGoToBackupRestore,
@@ -207,28 +204,6 @@ export const BackedUpDiariesModal: React.FC<BackedUpDiariesModalProps> = ({
       }
     } finally {
       setIsBusy(false);
-    }
-  };
-
-  const handleBiometricUnlock = () => {
-    if (
-      typeof window !== 'undefined' &&
-      window.LikkhoNative &&
-      typeof window.LikkhoNative.authenticateBiometric === 'function'
-    ) {
-      window.__onLikkhoBiometricResult = (success: boolean) => {
-        window.__onLikkhoBiometricResult = undefined;
-        if (success) {
-          if (savedKeyHash && passphrase) {
-            handleUnlockVault();
-          } else {
-            setSuccessMessage('Biometric verified. Please enter encryption key.');
-          }
-        } else {
-          setErrorMessage('Biometric verification failed.');
-        }
-      };
-      window.LikkhoNative.authenticateBiometric();
     }
   };
 
@@ -404,11 +379,11 @@ export const BackedUpDiariesModal: React.FC<BackedUpDiariesModalProps> = ({
                 </div>
               </div>
 
-              <div className="flex items-center gap-2 pt-2">
+              <div className="pt-2">
                 <button
                   type="submit"
                   disabled={isBusy || cooldownSec > 0 || !passphrase.trim()}
-                  className="flex h-11 flex-1 items-center justify-center gap-2 bg-[#3366cc] px-4 text-xs font-semibold text-white hover:bg-[#2a56b0] disabled:opacity-50"
+                  className="flex h-11 w-full items-center justify-center gap-2 bg-[#3366cc] px-4 text-xs font-semibold text-white hover:bg-[#2a56b0] disabled:opacity-50"
                 >
                   <Unlock className="h-4 w-4" />
                   <span>
@@ -419,18 +394,6 @@ export const BackedUpDiariesModal: React.FC<BackedUpDiariesModalProps> = ({
                       : 'Unlock & Read Diaries'}
                   </span>
                 </button>
-
-                {biometricsEnabled && (
-                  <button
-                    type="button"
-                    onClick={handleBiometricUnlock}
-                    disabled={isBusy}
-                    className="flex h-11 w-11 items-center justify-center border border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[#3366cc] hover:border-[#3366cc]"
-                    title="Unlock with Biometrics"
-                  >
-                    <Fingerprint className="h-5 w-5" />
-                  </button>
-                )}
               </div>
             </form>
           </div>
