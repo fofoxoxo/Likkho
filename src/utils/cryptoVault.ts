@@ -155,6 +155,7 @@ declare global {
       setNativeAudioSpeed?: (rate: number) => void;
       stopNativeAudio?: (audioId?: string) => void;
       notifyAppReady?: () => void;
+      closeQuickNotePopup?: (showToast?: boolean) => void;
     };
     __handleLikkhoAndroidBack?: () => string;
     __onLikkhoQuickNoteDone?: (noteId: string) => void;

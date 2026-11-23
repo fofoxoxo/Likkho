@@ -1078,6 +1078,7 @@ jobs:
               private volatile String pendingIncomingShareJson = null;
               private volatile boolean pendingQuickNoteLaunch = false;
               private volatile boolean pendingNewDiaryLaunch = false;
+              private volatile boolean pendingCloseAfterQuickNoteNotif = false;
               private String pendingNotifNoteId = null;
               private String pendingNotifTitle = null;
               private String pendingNotifItemsJson = null;
@@ -1566,7 +1567,11 @@ jobs:
                   if ("quick_note".equals(intent.getStringExtra("action")) ||
                       "com.likkho.diary.ACTION_QUICK_NOTE".equals(intent.getAction()) ||
                       (intent.getData() != null && "quick_note".equals(intent.getData().getQueryParameter("action")))) {
+                      pendingCloseAfterQuickNoteNotif = false;
                       pendingQuickNoteLaunch = true;
+                      intent.setAction(Intent.ACTION_MAIN);
+                      intent.removeExtra("action");
+                      intent.setData(null);
                       try {
                           if (activeBiometricCancelSignal != null && !activeBiometricCancelSignal.isCanceled()) {
                               activeBiometricCancelSignal.cancel();
@@ -1578,6 +1583,9 @@ jobs:
                       "com.likkho.diary.ACTION_NEW_DIARY".equals(intent.getAction()) ||
                       (intent.getData() != null && "new_diary".equals(intent.getData().getQueryParameter("action")))) {
                       pendingNewDiaryLaunch = true;
+                      intent.setAction(Intent.ACTION_MAIN);
+                      intent.removeExtra("action");
+                      intent.setData(null);
                       notifyWebViewNewDiaryLaunch();
                   }
               }
@@ -3254,6 +3262,53 @@ jobs:
                       }
                       return false;
                   }
+
+                  @JavascriptInterface
+                  public void closeQuickNotePopup(final boolean showSavedToast) {
+                      runOnUiThread(() -> {
+                          pendingQuickNoteLaunch = false;
+                          if (showSavedToast) {
+                              Toast.makeText(MainActivity.this, "Quick Note saved to notification", Toast.LENGTH_SHORT).show();
+                          }
+                          if (pendingNotifNoteId != null) {
+                              pendingCloseAfterQuickNoteNotif = true;
+                              return;
+                          }
+                          minimizeQuickNoteHost();
+                      });
+                  }
+              }
+
+              private void minimizeQuickNoteHost() {
+                  runOnUiThread(() -> {
+                      try {
+                          pendingQuickNoteLaunch = false;
+                          dismissActionModeAndClearSelection();
+                          Intent cur = getIntent();
+                          if (cur != null) {
+                              cur.setAction(Intent.ACTION_MAIN);
+                              cur.removeExtra("action");
+                              cur.setData(null);
+                          }
+                          android.view.inputmethod.InputMethodManager imm =
+                              (android.view.inputmethod.InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+                          View focused = getCurrentFocus();
+                          if (imm != null) {
+                              if (focused != null) {
+                                  imm.hideSoftInputFromWindow(focused.getWindowToken(), 0);
+                              } else if (bridge != null && bridge.getWebView() != null) {
+                                  imm.hideSoftInputFromWindow(bridge.getWebView().getWindowToken(), 0);
+                              }
+                          }
+                          if (!moveTaskToBack(true)) {
+                              finish();
+                          }
+                      } catch (Exception e) {
+                          try {
+                              finish();
+                          } catch (Exception ignored) {}
+                      }
+                  });
               }
 
               private void postQuickNoteNotificationInternal(String noteId, String title, String itemsJson) {
@@ -3636,12 +3691,16 @@ jobs:
                           pendingNotifTitle = null;
                           pendingNotifItemsJson = null;
                       }
+                      if (pendingCloseAfterQuickNoteNotif) {
+                          pendingCloseAfterQuickNoteNotif = false;
+                          new Handler(Looper.getMainLooper()).postDelayed(this::minimizeQuickNoteHost, 120);
+                      }
                   }
               }
           }
           EOF
 
-      - name: Build Android Debug APK (v1.8.0)
+      - name: Build Android Debug APK (v1.8.1)
         working-directory: ./android
         env:
           GRADLE_OPTS: "-Dorg.gradle.internal.http.connectionTimeout=180000 -Dorg.gradle.internal.http.socketTimeout=180000 -Dorg.gradle.daemon=false"
@@ -3651,7 +3710,7 @@ jobs:
 
           mkdir -p release-apks
           if [ -f app/build/outputs/apk/debug/app-debug.apk ]; then
-            cp app/build/outputs/apk/debug/app-debug.apk release-apks/likkho-debug-v1.8.0.apk
+            cp app/build/outputs/apk/debug/app-debug.apk release-apks/likkho-debug-v1.8.1.apk
           else
             echo "::error::FATAL: Debug APK (app-debug.apk) not found."
             exit 1
@@ -3661,11 +3720,11 @@ jobs:
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: likkho-debug-v1.8.0-apk
-          path: android/release-apks/likkho-debug-v1.8.0.apk
+          name: likkho-debug-v1.8.1-apk
+          path: android/release-apks/likkho-debug-v1.8.1.apk
           retention-days: 30
 
-      - name: Build Android Release APK & Release AAB (v1.8.0)
+      - name: Build Android Release APK & Release AAB (v1.8.1)
         if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || (github.event_name == 'workflow_dispatch' && inputs.build_release == true)
         working-directory: ./android
         env:
@@ -3685,14 +3744,14 @@ jobs:
 
           mkdir -p release-apks
           if [ -f app/build/outputs/apk/release/app-release.apk ]; then
-            cp app/build/outputs/apk/release/app-release.apk release-apks/likkho-release-v1.8.0.apk
+            cp app/build/outputs/apk/release/app-release.apk release-apks/likkho-release-v1.8.1.apk
           else
             echo "::error::FATAL: Signed release APK (app-release.apk) not found. Unsigned APK will not be uploaded."
             exit 1
           fi
 
           if [ -f app/build/outputs/bundle/release/app-release.aab ]; then
-            cp app/build/outputs/bundle/release/app-release.aab release-apks/likkho-release-v1.8.0.aab
+            cp app/build/outputs/bundle/release/app-release.aab release-apks/likkho-release-v1.8.1.aab
           else
             echo "::error::FATAL: Signed release AAB (app-release.aab) not found. Unsigned AAB will not be uploaded."
             exit 1
@@ -3704,43 +3763,39 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || (github.event_name == 'workflow_dispatch' && inputs.build_release == true)
         uses: actions/upload-artifact@v4
         with:
-          name: likkho-release-v1.8.0-apk
-          path: android/release-apks/likkho-release-v1.8.0.apk
+          name: likkho-release-v1.8.1-apk
+          path: android/release-apks/likkho-release-v1.8.1.apk
           retention-days: 30
 
       - name: Upload Release AAB Bundle Artifact
         if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || (github.event_name == 'workflow_dispatch' && inputs.build_release == true)
         uses: actions/upload-artifact@v4
         with:
-          name: likkho-release-v1.8.0-aab
-          path: android/release-apks/likkho-release-v1.8.0.aab
+          name: likkho-release-v1.8.1-aab
+          path: android/release-apks/likkho-release-v1.8.1.aab
           retention-days: 30
 
-      - name: Publish GitHub Release (v1.8.0)
+      - name: Publish GitHub Release (v1.8.1)
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || (github.event_name == 'workflow_dispatch' && inputs.build_release == true)
         with:
-          tag_name: v1.8.0
-          name: "Likkho v1.8.0 (Minor Update) - Native Engine Upgrade, Home Widget, Share to Likkho & Zero-Flash Launch"
+          tag_name: v1.8.1
+          name: "Likkho v1.8.1 (Patch Update) - Quick Note Auto-Close & Lockscreen Bypass Fix"
           body: |
-            ## Likkho v1.8.0 Release Notes
+            ## Likkho v1.8.1 Release Notes
 
-            ### ✨ What's New in This Minor Update:
-            - **Canvas Image RAM & Preview Virtualization:** Lightweight preview cache with viewport-aware loading & automatic memory cleanup when exiting a diary.
-            - **Native Haptics & Smooth Keyboard Animation:** Hardware Android haptic feedback, touch responsiveness polish, and frame-synced keyboard padding in fullscreen mode.
-            - **Native Disk Audio Streaming & Notification Controls:** Canvas voice/audio notes stream via Android `MediaPlayer` with Play/Pause and Stop notification shade controls.
-            - **Android Home Screen Widget & Shortcuts:** Live Quick Note display on home screen with one-tap **`+ Quick Note`** and **`+ Diary`** buttons, plus a **`New Diary`** launcher shortcut.
-            - **Share to Likkho:** Share images or text/links directly from Gallery, Chrome, or WhatsApp into an editable new diary draft (respecting passcode lockscreen).
-            - **Zero-Flash Cold Launch:** Theme-matched pre-paint background with a native Likkho splash veil for flash-free startup in Light & Dark modes.
+            ### 🛠️ Patch Fix:
+            - **Quick Note Popup Auto-Close & No Lockscreen Redirect:** Saving or closing Quick Notes launched from a Home Screen Shortcut, Quick Settings Tile, or Home Widget now cleanly dismisses the popup, hides the keyboard, posts the notification, and returns directly to where you were—without getting stuck or redirecting to the App Lock Screen.
+            - **Flexible Quick Note Save:** Allows saving quick notes created with a title, content, or both, while clearing stale launcher intents and handling Android notification permission prompts smoothly before closing.
 
             ### 📦 Release Downloads:
-            - **Signed Release APK**: `likkho-release-v1.8.0.apk`
-            - **Signed Google Play App Bundle**: `likkho-release-v1.8.0.aab`
-            - **Debug APK**: `likkho-debug-v1.8.0.apk`
+            - **Signed Release APK**: `likkho-release-v1.8.1.apk`
+            - **Signed Google Play App Bundle**: `likkho-release-v1.8.1.aab`
+            - **Debug APK**: `likkho-debug-v1.8.1.apk`
           files: |
-            android/release-apks/likkho-release-v1.8.0.apk
-            android/release-apks/likkho-release-v1.8.0.aab
-            android/release-apks/likkho-debug-v1.8.0.apk
+            android/release-apks/likkho-release-v1.8.1.apk
+            android/release-apks/likkho-release-v1.8.1.aab
+            android/release-apks/likkho-debug-v1.8.1.apk
           draft: false
           prerelease: false
         env:

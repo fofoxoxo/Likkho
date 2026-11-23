@@ -351,16 +351,79 @@ export default function App() {
     preview: string;
   } | null>(null);
 
-  // Global Quick Note creator modal (triggered from Home screen shortcut, Quick Settings tile, or notification)
+  // Global Quick Note creator modal (triggered from Home screen shortcut, Quick Settings tile, widget, or notification)
   const [showGlobalQuickNoteModal, setShowGlobalQuickNoteModal] = useState<boolean>(() =>
     detectQuickNoteLaunchSync()
   );
+  const [isClosingQuickNotePopup, setIsClosingQuickNotePopup] = useState<boolean>(false);
+  const dismissQuickNoteFallbackTimerRef = useRef<number | null>(null);
   const [pendingNewDiaryIntent, setPendingNewDiaryIntent] = useState<boolean>(false);
   const [pendingIncomingSharePayload, setPendingIncomingSharePayload] =
     useState<IncomingSharePayload | null>(null);
   const [startShareDraftEdit, setStartShareDraftEdit] = useState<boolean>(false);
   const [workspaceSessionSeq, setWorkspaceSessionSeq] = useState<number>(0);
   const isProcessingShareRef = useRef<boolean>(false);
+
+  const handleDismissGlobalQuickNote = (wasSaved: boolean) => {
+    try {
+      window.getSelection()?.removeAllRanges();
+      if (document.activeElement && 'blur' in document.activeElement) {
+        (document.activeElement as HTMLElement).blur();
+      }
+      window.LikkhoNative?.clearNativeSelectionAndActionMode?.();
+      window.LikkhoNative?.cancelBiometricPrompt?.();
+    } catch {
+      // ignore
+    }
+
+    const hasNativeClose =
+      typeof window !== 'undefined' &&
+      typeof window.LikkhoNative?.closeQuickNotePopup === 'function';
+
+    if (hasNativeClose) {
+      // Keep opaque privacy shield active until Android backgrounds Activity (`visibilitychange: hidden`)
+      // so the App Lock Screen / Biometric Prompt NEVER flashes after Quick Note Save/Cancel.
+      setIsClosingQuickNotePopup(true);
+      setShowGlobalQuickNoteModal(false);
+      if (dismissQuickNoteFallbackTimerRef.current) {
+        window.clearTimeout(dismissQuickNoteFallbackTimerRef.current);
+      }
+      dismissQuickNoteFallbackTimerRef.current = window.setTimeout(() => {
+        setIsClosingQuickNotePopup(false);
+      }, 5000);
+      window.setTimeout(() => {
+        try {
+          window.LikkhoNative?.closeQuickNotePopup?.(wasSaved);
+        } catch {
+          // ignore
+        }
+      }, 60);
+    } else {
+      setIsClosingQuickNotePopup(false);
+      setShowGlobalQuickNoteModal(false);
+    }
+  };
+
+  // Reset Quick Note closing shield once the app actually moves to the background (ready for next normal launch lockscreen)
+  useEffect(() => {
+    const handleVisibilityReset = () => {
+      if (document.visibilityState === 'hidden') {
+        if (dismissQuickNoteFallbackTimerRef.current) {
+          window.clearTimeout(dismissQuickNoteFallbackTimerRef.current);
+          dismissQuickNoteFallbackTimerRef.current = null;
+        }
+        setIsClosingQuickNotePopup(false);
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityReset);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityReset);
+      if (dismissQuickNoteFallbackTimerRef.current) {
+        window.clearTimeout(dismissQuickNoteFallbackTimerRef.current);
+        dismissQuickNoteFallbackTimerRef.current = null;
+      }
+    };
+  }, []);
 
   // Sync latest Quick Note to Android Home Screen Widget whenever vault changes
   useEffect(() => {
@@ -426,6 +489,11 @@ export default function App() {
       }
 
       if (isQuickNoteLaunch) {
+        if (dismissQuickNoteFallbackTimerRef.current) {
+          window.clearTimeout(dismissQuickNoteFallbackTimerRef.current);
+          dismissQuickNoteFallbackTimerRef.current = null;
+        }
+        setIsClosingQuickNotePopup(false);
         window.LikkhoNative?.cancelBiometricPrompt?.();
         setShowGlobalQuickNoteModal(true);
       } else if (isNewDiaryLaunch) {
@@ -461,6 +529,11 @@ export default function App() {
 
     // Global callback from Android Quick Settings tile, widget, or shortcut
     window.__onLikkhoOpenQuickNoteCreator = () => {
+      if (dismissQuickNoteFallbackTimerRef.current) {
+        window.clearTimeout(dismissQuickNoteFallbackTimerRef.current);
+        dismissQuickNoteFallbackTimerRef.current = null;
+      }
+      setIsClosingQuickNotePopup(false);
       window.LikkhoNative?.cancelBiometricPrompt?.();
       setShowGlobalQuickNoteModal(true);
       return 'OPENED';
@@ -1089,6 +1162,10 @@ export default function App() {
   // "User agar App me homepage ke alawa kisi aur page par ho to back karne par pahle homepage par aayega fir back hoga"
   useEffect(() => {
     window.__handleLikkhoAndroidBack = () => {
+      if (showGlobalQuickNoteModal) {
+        handleDismissGlobalQuickNote(false);
+        return 'HANDLED';
+      }
       if (pendingUnlockDiary) {
         setPendingUnlockDiary(null);
         return 'HANDLED';
@@ -1146,7 +1223,7 @@ export default function App() {
     return () => {
       window.removeEventListener('popstate', handlePopState);
     };
-  }, [route, isSearchOpen, exportingLog, pendingDeleteLog, pendingUnlockDiary]);
+  }, [route, isSearchOpen, exportingLog, pendingDeleteLog, pendingUnlockDiary, showGlobalQuickNoteModal]);
 
   const navigateTo = (target: PageRoute, logToEdit: DiaryLog | null = null) => {
     setOpenMenuLogId(null);
@@ -1453,16 +1530,16 @@ export default function App() {
         </div>
       )}
 
-      {/* Opaque privacy shield while Quick Note Creator opens directly over a locked vault (prevents diary leak and suppresses Lockscreen + Biometrics) */}
-      {showGlobalQuickNoteModal && isLocked && effectivePrimaryPin && (
+      {/* Opaque privacy shield while Quick Note Creator opens or dismisses directly over a locked vault (prevents diary leak and suppresses Lockscreen + Biometrics) */}
+      {(showGlobalQuickNoteModal || isClosingQuickNotePopup) && isLocked && effectivePrimaryPin && (
         <div
           className="fixed inset-0 z-[100] bg-[var(--wiki-bg)]"
           aria-hidden="true"
         />
       )}
 
-      {/* Instant Lock & Launch Lock Overlay — Hidden when Quick Note modal is opened directly from Home Screen Shortcut / Quick Settings Tile */}
-      {isLocked && effectivePrimaryPin && !showGlobalQuickNoteModal && (
+      {/* Instant Lock & Launch Lock Overlay — Hidden when Quick Note modal is opened or dismissing directly from Home Screen Shortcut / Quick Settings Tile */}
+      {isLocked && effectivePrimaryPin && !showGlobalQuickNoteModal && !isClosingQuickNotePopup && (
         <div className="fixed inset-0 z-[100] flex h-full w-full flex-col bg-[var(--wiki-bg)]">
           <PasscodeScreen
             savedPasscode={savedPasscode || ''}
@@ -2170,10 +2247,10 @@ export default function App() {
         />
       )}
 
-      {/* Global Quick Note Creator Modal (from Quick Settings Tile or Home Screen Shortcut) */}
+      {/* Global Quick Note Creator Modal (from Quick Settings Tile, Widget, or Home Screen Shortcut) */}
       {showGlobalQuickNoteModal && (
         <QuickNoteCreatorModal
-          onClose={() => setShowGlobalQuickNoteModal(false)}
+          onClose={() => handleDismissGlobalQuickNote(false)}
           onSave={(newNote) => {
             const compulsoryNote = {
               ...newNote,
@@ -2189,7 +2266,7 @@ export default function App() {
                 detail: { noteId: compulsoryNote.id },
               })
             );
-            setShowGlobalQuickNoteModal(false);
+            handleDismissGlobalQuickNote(true);
           }}
         />
       )}

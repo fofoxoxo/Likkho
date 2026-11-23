@@ -48,6 +48,7 @@ export const QuickNoteCreatorModal: React.FC<QuickNoteCreatorModalProps> = ({
 
   const [newTodoInput, setNewTodoInput] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string>('');
+  const isSubmittingRef = React.useRef<boolean>(false);
 
   const handleAddTodoItem = () => {
     if (!newTodoInput.trim()) return;
@@ -80,11 +81,24 @@ export const QuickNoteCreatorModal: React.FC<QuickNoteCreatorModalProps> = ({
     setItems((prev) => prev.filter((item) => item.id !== id));
   };
 
+  const handleDismissModal = () => {
+    try {
+      if (document.activeElement && 'blur' in document.activeElement) {
+        (document.activeElement as HTMLElement).blur();
+      }
+    } catch {
+      // ignore
+    }
+    onClose();
+  };
+
   const handleFormSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmittingRef.current) return;
 
     let finalItems: QuickNoteItem[] = [];
     let finalContent = content.trim();
+    const trimmedTitle = title.trim();
 
     if (isChecklist) {
       finalItems = items
@@ -106,12 +120,14 @@ export const QuickNoteCreatorModal: React.FC<QuickNoteCreatorModalProps> = ({
       }
       finalContent = finalItems.map((i) => (i.done ? `[x] ${i.text}` : `[ ] ${i.text}`)).join('\n');
     } else {
-      if (!finalContent) {
+      if (!finalContent && !trimmedTitle) {
         triggerHaptic('reject');
-        setErrorMsg('Please enter note content.');
+        setErrorMsg('Please enter a note title or content.');
         return;
       }
-      const lines = finalContent.split('\n').map((l) => l.trim()).filter((l) => l.length > 0);
+      const lines = finalContent
+        ? finalContent.split('\n').map((l) => l.trim()).filter((l) => l.length > 0)
+        : [];
       finalItems = lines.map((line, idx) => ({
         id: `line_${idx}`,
         text: line,
@@ -119,7 +135,16 @@ export const QuickNoteCreatorModal: React.FC<QuickNoteCreatorModalProps> = ({
       }));
     }
 
-    const finalTitle = title.trim() || defaultTitle();
+    isSubmittingRef.current = true;
+    try {
+      if (document.activeElement && 'blur' in document.activeElement) {
+        (document.activeElement as HTMLElement).blur();
+      }
+    } catch {
+      // ignore
+    }
+
+    const finalTitle = trimmedTitle || defaultTitle();
     const noteId =
       initialNote?.id ||
       `qn_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
@@ -156,7 +181,7 @@ export const QuickNoteCreatorModal: React.FC<QuickNoteCreatorModalProps> = ({
 
           <button
             type="button"
-            onClick={onClose}
+            onClick={handleDismissModal}
             className="flex min-h-[44px] min-w-[44px] items-center justify-center text-[var(--wiki-muted)] hover:text-[var(--wiki-text)]"
             aria-label="Close"
           >
@@ -293,7 +318,7 @@ export const QuickNoteCreatorModal: React.FC<QuickNoteCreatorModalProps> = ({
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={onClose}
+                onClick={handleDismissModal}
                 className="h-10 border border-[var(--wiki-border)] bg-[var(--wiki-bg)] px-3.5 text-xs font-medium text-[var(--wiki-text)] hover:bg-[var(--wiki-surface)]"
               >
                 Cancel
