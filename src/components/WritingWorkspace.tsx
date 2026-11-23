@@ -23,6 +23,7 @@ import {
   ArrowRight,
   MoveHorizontal,
   MoveVertical,
+  Loader2,
 } from 'lucide-react';
 import {
   AudioFormatOption,
@@ -139,6 +140,139 @@ function formatTimeStamp(ms: number): string {
   });
 }
 
+interface CanvasDraggableImageCardProps {
+  img: CanvasDraggableImage;
+  resolvedSrc: string | null;
+  isReadingMode: boolean;
+  isSelected: boolean;
+  onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => void;
+  onPointerMove: (e: React.PointerEvent<HTMLDivElement>) => void;
+  onPointerUp: (e: React.PointerEvent<HTMLDivElement>) => void;
+  onPointerCancel: (e: React.PointerEvent<HTMLDivElement>) => void;
+  onClick: (e: React.MouseEvent<HTMLDivElement>) => void;
+}
+
+const CanvasDraggableImageCard: React.FC<CanvasDraggableImageCardProps> = ({
+  img,
+  resolvedSrc,
+  isReadingMode,
+  isSelected,
+  onPointerDown,
+  onPointerMove,
+  onPointerUp,
+  onPointerCancel,
+  onClick,
+}) => {
+  const imgRef = useRef<HTMLImageElement | null>(null);
+  const [isLoaded, setIsLoaded] = useState<boolean>(false);
+  const [hasError, setHasError] = useState<boolean>(false);
+
+  const isValidRenderableSrc = Boolean(
+    resolvedSrc &&
+      (resolvedSrc.startsWith('blob:') ||
+        resolvedSrc.startsWith('data:') ||
+        resolvedSrc.startsWith('http') ||
+        resolvedSrc.startsWith('/'))
+  );
+
+  useEffect(() => {
+    setHasError(false);
+    if (!isValidRenderableSrc) {
+      setIsLoaded(false);
+      return;
+    }
+    if (imgRef.current && imgRef.current.complete && imgRef.current.naturalWidth > 0) {
+      setIsLoaded(true);
+    } else {
+      setIsLoaded(false);
+    }
+  }, [resolvedSrc, isValidRenderableSrc]);
+
+  const isBehindText = img.layer === 'background';
+  const computedZIndex = isSelected ? 25 : isBehindText ? 5 : 20;
+  const fallbackHeight = Math.max(84, img.height || Math.round(img.width * 0.72));
+  const showSkeleton = !hasError && (!isValidRenderableSrc || !isLoaded);
+
+  return (
+    <div
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerCancel}
+      onClick={onClick}
+      style={{
+        position: 'absolute',
+        left: `${img.x}px`,
+        top: `${img.y}px`,
+        width: `${img.width}px`,
+        minHeight: showSkeleton ? `${fallbackHeight}px` : undefined,
+        opacity: img.opacity ?? 1,
+        transform: `rotate(${img.rotation || 0}deg)`,
+        transformOrigin: 'center center',
+        zIndex: computedZIndex,
+      }}
+      className={`group touch-none select-none ${
+        isReadingMode
+          ? 'pointer-events-none'
+          : isSelected
+          ? 'cursor-move ring-2 ring-[#3366cc]'
+          : 'cursor-move hover:ring-1 hover:ring-[var(--wiki-border)]'
+      }`}
+    >
+      {showSkeleton && (
+        <div
+          style={{ height: `${fallbackHeight}px` }}
+          className="flex w-full animate-pulse flex-col items-center justify-center gap-2 border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3 text-center"
+        >
+          <div className="flex h-8 w-8 items-center justify-center border border-[var(--wiki-border)] bg-[var(--wiki-bg)]">
+            <ImagePlus className="h-4 w-4 text-[var(--wiki-muted)]" />
+          </div>
+          <div className="space-y-1.5 w-3/4 max-w-[140px]">
+            <div className="mx-auto h-2 w-4/5 rounded-xs bg-[var(--wiki-border)]/70" />
+            <div className="mx-auto h-1.5 w-3/5 rounded-xs bg-[var(--wiki-border)]/50" />
+          </div>
+          <span className="text-[10px] font-medium text-[var(--wiki-muted)]">
+            Loading image...
+          </span>
+        </div>
+      )}
+
+      {hasError && (
+        <div
+          style={{ height: `${fallbackHeight}px` }}
+          className="flex w-full flex-col items-center justify-center gap-1 border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3 text-center"
+        >
+          <ImagePlus className="h-4 w-4 text-[var(--wiki-muted)]" />
+          <span className="text-[10px] font-medium text-[var(--wiki-muted)]">
+            Image unavailable
+          </span>
+        </div>
+      )}
+
+      {isValidRenderableSrc && (
+        <img
+          ref={imgRef}
+          src={resolvedSrc || undefined}
+          alt="Canvas media"
+          referrerPolicy="no-referrer"
+          draggable={false}
+          onLoad={() => {
+            setIsLoaded(true);
+            setHasError(false);
+          }}
+          onError={() => {
+            setHasError(true);
+            setIsLoaded(false);
+          }}
+          className={`block h-auto w-full pointer-events-none transition-opacity duration-150 ${
+            showSkeleton || hasError ? 'opacity-0 absolute inset-0' : 'opacity-100'
+          }`}
+        />
+      )}
+    </div>
+  );
+};
+
 export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
   vaultMode = 'primary',
   initialLog,
@@ -227,6 +361,10 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
 
   // Trigger re-render whenever an image Object URL is resolved from IndexedDB
   const [, setMediaResolveTick] = useState<number>(0);
+  const [pendingCanvasMediaSkeleton, setPendingCanvasMediaSkeleton] = useState<{
+    kind: 'image' | 'audio';
+    label?: string;
+  } | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -2326,53 +2464,26 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
             }
           }}
         >
-          {/* Free-Draggable, Pinch-Resizable & Pinch-Rotatable Images Layer on Canvas */}
-          {canvasImages.map((img) => {
-            const isSelected = !isReadingMode && selectedCanvasImgId === img.id;
-            const isBehindText = img.layer === 'background';
-            const computedZIndex = isSelected ? 25 : isBehindText ? 5 : 20;
-
-            return (
-              <div
-                key={img.id}
-                onPointerDown={(e) => handleStartDragImage(e, img)}
-                onPointerMove={handleMoveDragImage}
-                onPointerUp={handleEndDragImage}
-                onPointerCancel={handleEndDragImage}
-                onClick={(e) => {
-                  if (isReadingMode) return;
-                  e.stopPropagation();
-                  setSelectedCanvasImgId(img.id);
-                  setSelectedCanvasAudioId(null);
-                }}
-                style={{
-                  position: 'absolute',
-                  left: `${img.x}px`,
-                  top: `${img.y}px`,
-                  width: `${img.width}px`,
-                  opacity: img.opacity ?? 1,
-                  transform: `rotate(${img.rotation || 0}deg)`,
-                  transformOrigin: 'center center',
-                  zIndex: computedZIndex,
-                }}
-                className={`group touch-none select-none ${
-                  isReadingMode
-                    ? 'pointer-events-none'
-                    : isSelected
-                    ? 'cursor-move ring-2 ring-[#3366cc]'
-                    : 'cursor-move hover:ring-1 hover:ring-[var(--wiki-border)]'
-                }`}
-              >
-                <img
-                  src={getImageObjectUrl(img.dataUrl) || img.dataUrl}
-                  alt="Canvas media"
-                  referrerPolicy="no-referrer"
-                  draggable={false}
-                  className="block h-auto w-full pointer-events-none"
-                />
-              </div>
-            );
-          })}
+          {/* Free-Draggable, Pinch-Resizable & Pinch-Rotatable Images Layer on Canvas (with Skeleton Loader while hydrating/decoding) */}
+          {canvasImages.map((img) => (
+            <CanvasDraggableImageCard
+              key={img.id}
+              img={img}
+              resolvedSrc={getImageObjectUrl(img.dataUrl) || img.dataUrl}
+              isReadingMode={isReadingMode}
+              isSelected={!isReadingMode && selectedCanvasImgId === img.id}
+              onPointerDown={(e) => handleStartDragImage(e, img)}
+              onPointerMove={handleMoveDragImage}
+              onPointerUp={handleEndDragImage}
+              onPointerCancel={handleEndDragImage}
+              onClick={(e) => {
+                if (isReadingMode) return;
+                e.stopPropagation();
+                setSelectedCanvasImgId(img.id);
+                setSelectedCanvasAudioId(null);
+              }}
+            />
+          ))}
 
           {/* Opaque Red Audio Players on Canvas — Activated ONLY via Double-Tap (No Drag/Pinch on Canvas) */}
           {audioAttachments.map((aud) => (
@@ -2386,6 +2497,54 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
               }}
             />
           ))}
+
+          {/* Pending Image / Audio Processing Skeleton Card while media is compressing or saving to IndexedDB */}
+          {pendingCanvasMediaSkeleton && (
+            <div
+              style={{
+                position: 'absolute',
+                left: '24px',
+                top: pendingCanvasMediaSkeleton.kind === 'audio' ? '120px' : '36px',
+                width: pendingCanvasMediaSkeleton.kind === 'audio' ? '270px' : '220px',
+                height: pendingCanvasMediaSkeleton.kind === 'audio' ? '64px' : '165px',
+                zIndex: 30,
+              }}
+              className={
+                pendingCanvasMediaSkeleton.kind === 'audio'
+                  ? 'pointer-events-none flex animate-pulse items-center gap-3 border border-[#8e1b1b] bg-[#b32424] px-3 text-white shadow-md'
+                  : 'pointer-events-none flex animate-pulse flex-col items-center justify-center gap-2 border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3 text-center shadow-sm'
+              }
+            >
+              {pendingCanvasMediaSkeleton.kind === 'audio' ? (
+                <>
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center bg-white/15">
+                    <Loader2 className="h-4 w-4 animate-spin text-white" />
+                  </div>
+                  <div className="min-w-0 flex-1 space-y-1.5">
+                    <div className="h-2.5 w-32 rounded-xs bg-white/30" />
+                    <div className="text-[10px] font-medium text-white/85 truncate">
+                      {pendingCanvasMediaSkeleton.label
+                        ? `Preparing ${pendingCanvasMediaSkeleton.label}...`
+                        : 'Preparing audio card...'}
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <Loader2 className="h-5 w-5 animate-spin text-[#3366cc]" />
+                  <div className="w-3/4 max-w-[140px] space-y-1.5">
+                    <div className="mx-auto h-2 w-4/5 rounded-xs bg-[var(--wiki-border)]/70" />
+                    <div className="mx-auto h-1.5 w-3/5 rounded-xs bg-[var(--wiki-border)]/50" />
+                  </div>
+                  <span className="text-[10px] font-medium text-[var(--wiki-muted)] truncate max-w-full">
+                    {pendingCanvasMediaSkeleton.label
+                      ? `Loading ${pendingCanvasMediaSkeleton.label}...`
+                      : 'Processing image...'}
+                  </span>
+                </>
+              )}
+            </div>
+          )}
 
           <div className="relative z-10 mx-auto max-w-3xl pointer-events-none">
             {/* Rich Text Editable Canvas */}
@@ -2562,31 +2721,37 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
             });
           }}
           onAddAudioAttachment={async (aud) => {
-            let targetAud = { ...aud };
-            if (aud.dataUrl && aud.dataUrl.startsWith('data:')) {
-              const persisted = await persistAudioAttachment(aud.id, aud.dataUrl);
-              targetAud.audioUri = persisted.audioUri;
-              targetAud.dataUrl = persisted.dataUrl;
+            setPendingCanvasMediaSkeleton({ kind: 'audio', label: aud.name });
+            try {
+              let targetAud = { ...aud };
+              if (aud.dataUrl && aud.dataUrl.startsWith('data:')) {
+                const persisted = await persistAudioAttachment(aud.id, aud.dataUrl);
+                targetAud.audioUri = persisted.audioUri;
+                targetAud.dataUrl = persisted.dataUrl;
+              }
+              setAudioAttachments((prev) => {
+                const next: CanvasAudioAttachment[] = [
+                  ...prev,
+                  {
+                    ...targetAud,
+                    x: 24 + (prev.length * 18) % 90,
+                    y: 120 + (prev.length * 76) % 260,
+                    width: 270,
+                    height: 56,
+                    rotation: 0,
+                    playbackRate: 1,
+                    layer: 'foreground',
+                  },
+                ];
+                pushCanvasSnapshot({ audioAttachments: next });
+                return next;
+              });
+              selectAudioCardSafely(aud.id);
+            } finally {
+              setPendingCanvasMediaSkeleton(null);
             }
-            setAudioAttachments((prev) => {
-              const next: CanvasAudioAttachment[] = [
-                ...prev,
-                {
-                  ...targetAud,
-                  x: 24 + (prev.length * 18) % 90,
-                  y: 120 + (prev.length * 76) % 260,
-                  width: 270,
-                  height: 56,
-                  rotation: 0,
-                  playbackRate: 1,
-                  layer: 'foreground',
-                },
-              ];
-              pushCanvasSnapshot({ audioAttachments: next });
-              return next;
-            });
-            selectAudioCardSafely(aud.id);
           }}
+          onMediaLoadingChange={setPendingCanvasMediaSkeleton}
           customFonts={customFonts}
           onAddCustomFont={onAddCustomFont}
           micSettings={micSettings}

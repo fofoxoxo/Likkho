@@ -63,7 +63,7 @@ export const QuickNotesPage: React.FC<QuickNotesPageProps> = ({
 
     const targetNote = updated.find((n) => n.id === noteId);
     if (targetNote) {
-      syncQuickNoteToNotification(targetNote.isDone ? null : targetNote);
+      syncQuickNoteToNotification(targetNote.isDone ? null : targetNote, targetNote.id);
     }
   };
 
@@ -87,7 +87,7 @@ export const QuickNotesPage: React.FC<QuickNotesPageProps> = ({
     const targetNote = updated.find((n) => n.id === noteId);
     if (targetNote) {
       if (targetNote.isDone) {
-        syncQuickNoteToNotification(null);
+        syncQuickNoteToNotification(null, targetNote.id);
         showToast('Note marked as completed.');
       } else {
         syncQuickNoteToNotification(targetNote);
@@ -113,7 +113,10 @@ export const QuickNotesPage: React.FC<QuickNotesPageProps> = ({
 
     const targetNote = updated.find((n) => n.id === noteId);
     if (targetNote) {
-      syncQuickNoteToNotification(targetNote.isPinnedToNotification ? targetNote : null);
+      syncQuickNoteToNotification(
+        targetNote.isPinnedToNotification ? targetNote : null,
+        targetNote.id
+      );
       showToast(
         targetNote.isPinnedToNotification
           ? 'Pinned to Android Notification bar.'
@@ -125,7 +128,7 @@ export const QuickNotesPage: React.FC<QuickNotesPageProps> = ({
   const handleDeleteNote = (noteId: string) => {
     const target = notes.find((n) => n.id === noteId);
     if (target) {
-      syncQuickNoteToNotification(null);
+      syncQuickNoteToNotification(null, target.id);
     }
     const filtered = notes.filter((n) => n.id !== noteId);
     onUpdateNotes(filtered);
@@ -150,7 +153,7 @@ export const QuickNotesPage: React.FC<QuickNotesPageProps> = ({
       syncQuickNoteToNotification(saved);
       showToast('Quick Note saved & posted to Android Notification.');
     } else {
-      syncQuickNoteToNotification(null);
+      syncQuickNoteToNotification(null, saved.id);
       showToast('Quick Note saved.');
     }
 

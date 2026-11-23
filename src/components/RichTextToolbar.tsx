@@ -112,6 +112,7 @@ interface RichTextToolbarProps {
   onChangeDiaryLockPin?: (pin: string | null) => void;
   onImportDocument?: (title: string, html: string, editableImages?: string[]) => void;
   currentLogId?: string;
+  onMediaLoadingChange?: (loading: { kind: 'image' | 'audio'; label?: string } | null) => void;
 }
 
 interface ActiveFormats {
@@ -209,6 +210,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
   onChangeDiaryLockPin,
   onImportDocument,
   currentLogId,
+  onMediaLoadingChange,
 }) => {
   const [showColorPicker, setShowColorPicker] = useState<'text' | 'highlight' | null>(null);
   const [showLinkInput, setShowLinkInput] = useState<boolean>(false);
@@ -1902,6 +1904,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
     setShowMediaPickerMenu(false);
+    onMediaLoadingChange?.({ kind: 'image', label: file.name });
     try {
       const processed = await processImageFileToBlob(file, 2560);
       if (onInsertRawCanvasImage) {
@@ -1919,11 +1922,13 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
       }
     } catch (err) {
       console.error('Failed to process image:', err);
+    } finally {
+      onMediaLoadingChange?.(null);
     }
     e.target.value = '';
   };
 
-  const handleMediaAudioPicked = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleMediaAudioPicked = async (e: React.ChangeEvent<HTMLInputElement>) => {
     clearExternalFilePickerPending();
     const file = e.target.files?.[0];
     if (!file) return;
@@ -1933,16 +1938,21 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     if (onOpenMediaAudioStudio) {
       onOpenMediaAudioStudio('', file.name, ext, file);
     } else {
-      const newId = `aud_${Date.now()}`;
-      saveAudioBlobToStore(newId, file);
-      onAddAudioAttachment({
-        id: newId,
-        name: file.name,
-        format: ext,
-        dataUrl: '',
-        createdAt: Date.now(),
-      });
-      showBriefHint(`Attached audio: ${file.name}`);
+      onMediaLoadingChange?.({ kind: 'audio', label: file.name });
+      try {
+        const newId = `aud_${Date.now()}`;
+        await saveAudioBlobToStore(newId, file);
+        onAddAudioAttachment({
+          id: newId,
+          name: file.name,
+          format: ext,
+          dataUrl: '',
+          createdAt: Date.now(),
+        });
+        showBriefHint(`Attached audio: ${file.name}`);
+      } finally {
+        onMediaLoadingChange?.(null);
+      }
     }
     e.target.value = '';
   };

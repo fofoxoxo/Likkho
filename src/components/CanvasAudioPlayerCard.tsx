@@ -3,6 +3,7 @@ import { Play, Pause, Loader2 } from 'lucide-react';
 import { CanvasAudioAttachment } from '../utils/cryptoVault';
 import {
   acquireAudioPlaybackUrl,
+  getAudioBlobFromStore,
   releaseAudioPlaybackUrl,
 } from '../utils/audioStorage';
 
@@ -47,13 +48,37 @@ export const CanvasAudioPlayerCard: React.FC<CanvasAudioPlayerCardProps> = ({
   const lastTapTimeRef = useRef<number>(0);
   const activeBlobUrlRef = useRef<string | null>(null);
 
-  // Solution 2: Lazy Loading (On-Demand Initialization)
-  // Initially false so NO audio element, buffers, or decoders are created in RAM!
+  // Lazy Loading (On-Demand Initialization) + Skeleton Hydration feedback
   const [isAudioLoaded, setIsAudioLoaded] = useState<boolean>(false);
+  const [isHydratingCard, setIsHydratingCard] = useState<boolean>(() =>
+    Boolean(audio.id && !audio.audioUri && !audio.dataUrl)
+  );
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [currentTime, setCurrentTime] = useState<number>(0);
   const [duration, setDuration] = useState<number>(audio.durationSec || 0);
+
+  // Verify IndexedDB audio availability on mount so card displays a skeleton loader until ready
+  useEffect(() => {
+    let active = true;
+    if (!audio.id || audio.audioUri || audio.dataUrl) {
+      setIsHydratingCard(false);
+      return;
+    }
+
+    setIsHydratingCard(true);
+    getAudioBlobFromStore(audio.id)
+      .catch(() => null)
+      .finally(() => {
+        if (active) {
+          setIsHydratingCard(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [audio.id, audio.audioUri, audio.dataUrl]);
 
   // Sync playbackRate when changed from toolbar
   useEffect(() => {
@@ -63,8 +88,7 @@ export const CanvasAudioPlayerCard: React.FC<CanvasAudioPlayerCardProps> = ({
     }
   }, [audio.playbackRate]);
 
-  // Solution 3: Proper Memory Cleanup and Revoking Blob URLs
-  // Cleanup audio element and revoke object URL helper
+  // Memory Cleanup and Revoking Blob URLs
   const teardownAudioPlayback = () => {
     const el = audioElRef.current;
     if (el) {
@@ -112,6 +136,16 @@ export const CanvasAudioPlayerCard: React.FC<CanvasAudioPlayerCardProps> = ({
         setDuration(el.duration);
       }
     };
+    const onWaiting = () => {
+      setIsLoading(true);
+    };
+    const onCanPlay = () => {
+      setIsLoading(false);
+    };
+    const onPlaying = () => {
+      setIsLoading(false);
+      setIsPlaying(true);
+    };
     const onTimeUpdate = () => {
       setCurrentTime(el.currentTime || 0);
     };
@@ -127,6 +161,9 @@ export const CanvasAudioPlayerCard: React.FC<CanvasAudioPlayerCardProps> = ({
     };
 
     el.addEventListener('loadedmetadata', onLoadedMetadata);
+    el.addEventListener('waiting', onWaiting);
+    el.addEventListener('canplay', onCanPlay);
+    el.addEventListener('playing', onPlaying);
     el.addEventListener('timeupdate', onTimeUpdate);
     el.addEventListener('ended', onEnded);
     el.addEventListener('pause', onPause);
@@ -135,6 +172,9 @@ export const CanvasAudioPlayerCard: React.FC<CanvasAudioPlayerCardProps> = ({
 
     return () => {
       el.removeEventListener('loadedmetadata', onLoadedMetadata);
+      el.removeEventListener('waiting', onWaiting);
+      el.removeEventListener('canplay', onCanPlay);
+      el.removeEventListener('playing', onPlaying);
       el.removeEventListener('timeupdate', onTimeUpdate);
       el.removeEventListener('ended', onEnded);
       el.removeEventListener('pause', onPause);
@@ -146,6 +186,8 @@ export const CanvasAudioPlayerCard: React.FC<CanvasAudioPlayerCardProps> = ({
   const togglePlayPause = async (e: React.MouseEvent) => {
     e.stopPropagation();
 
+    if (isHydratingCard) return;
+
     if (isPlaying) {
       const el = audioElRef.current;
       if (el) {
@@ -155,7 +197,7 @@ export const CanvasAudioPlayerCard: React.FC<CanvasAudioPlayerCardProps> = ({
       return;
     }
 
-    // Solution 2 & 3: On-demand load only when Play button is pressed!
+    // On-demand load only when Play button is pressed
     if (!isAudioLoaded || !audioElRef.current?.src) {
       setIsLoading(true);
       // Stop all other audio cards first (guarantee at most 1 audio stream in memory)
@@ -194,6 +236,8 @@ export const CanvasAudioPlayerCard: React.FC<CanvasAudioPlayerCardProps> = ({
                 setIsLoading(false);
                 setIsPlaying(false);
               });
+          } else {
+            setIsLoading(false);
           }
         }, 10);
       } catch (err) {
@@ -232,8 +276,9 @@ export const CanvasAudioPlayerCard: React.FC<CanvasAudioPlayerCardProps> = ({
   const rotationDeg = audio.rotation ?? 0;
   const effectiveDuration = duration > 0 ? duration : audio.durationSec || 1;
   const createdAtLabel = formatAudioCreatedAtStamp(audio.createdAt);
+  const showSkeleton = isHydratingCard || isLoading;
 
-  // Strictly ONLY Double-Tap activates editing tools on the Audio Player!
+  // Strictly ONLY Double-Tap activates editing tools on the Audio Player
   const handlePointerUpDoubleTap = (e: React.PointerEvent<HTMLDivElement>) => {
     const target = e.target as HTMLElement;
     if (target.closest('[data-audio-control="true"]')) {
@@ -259,6 +304,7 @@ export const CanvasAudioPlayerCard: React.FC<CanvasAudioPlayerCardProps> = ({
   return (
     <div
       data-canvas-audio-card="true"
+      aria-busy={showSkeleton}
       contentEditable={false}
       onPointerDown={(e) => {
         const target = e.target as HTMLElement;
@@ -300,7 +346,7 @@ export const CanvasAudioPlayerCard: React.FC<CanvasAudioPlayerCardProps> = ({
           : 'cursor-pointer pointer-events-auto'
       }`}
     >
-      {/* Solution 2: Hidden native HTML5 Audio Engine mounted only when loaded on-demand */}
+      {/* Hidden native HTML5 Audio Engine mounted only when loaded on-demand */}
       {isAudioLoaded && (
         <audio
           ref={audioElRef}
@@ -309,50 +355,67 @@ export const CanvasAudioPlayerCard: React.FC<CanvasAudioPlayerCardProps> = ({
         />
       )}
 
-      {/* Opaque Red Rectangular Body: Play/Pause Button BEFORE the Slider */}
-      <div className="flex items-center gap-2.5 w-full">
-        <button
-          type="button"
-          data-audio-control="true"
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={togglePlayPause}
-          disabled={isLoading}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-none border border-white/40 bg-[#8e1b1b] text-white hover:bg-[#751515] active:scale-95 transition-transform disabled:opacity-75"
-          title={isPlaying ? 'Pause' : 'Play'}
-          aria-label={isPlaying ? 'Pause audio' : 'Play audio'}
-        >
-          {isLoading ? (
+      {showSkeleton ? (
+        /* Skeleton Loader UI while audio card is hydrating or buffering */
+        <div className="flex items-center gap-2.5 w-full animate-pulse">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center border border-white/30 bg-white/15">
             <Loader2 className="h-4 w-4 animate-spin text-white" />
-          ) : isPlaying ? (
-            <Pause className="h-4 w-4 fill-current" />
-          ) : (
-            <Play className="h-4 w-4 fill-current ml-0.5" />
-          )}
-        </button>
-
-        <div className="flex flex-1 flex-col gap-1 min-w-0">
-          <input
-            type="range"
-            data-audio-control="true"
-            onPointerDown={(e) => e.stopPropagation()}
-            min={0}
-            max={effectiveDuration}
-            step={0.1}
-            value={Math.min(currentTime, effectiveDuration)}
-            onChange={handleSeek}
-            className="h-1.5 w-full cursor-pointer accent-white"
-          />
-          <div className="flex items-center justify-between font-wiki-mono text-[10px] leading-tight text-white/95">
-            <span className="truncate max-w-[115px] font-semibold">{audio.name}</span>
-            <span className="shrink-0">
-              {formatAudioSeconds(currentTime)} / {formatAudioSeconds(effectiveDuration)}
-            </span>
           </div>
-          <div className="font-wiki-mono text-[9px] leading-tight text-white/85 truncate">
-            {createdAtLabel}
+          <div className="flex flex-1 flex-col gap-1.5 min-w-0">
+            <div className="h-1.5 w-full bg-white/30" />
+            <div className="flex items-center justify-between gap-2">
+              <div className="h-2.5 w-24 bg-white/25" />
+              <div className="h-2.5 w-14 bg-white/25" />
+            </div>
+            <div className="text-[9px] font-wiki-mono text-white/85 truncate">
+              {isLoading ? 'Loading audio...' : 'Preparing audio card...'}
+            </div>
           </div>
         </div>
-      </div>
+      ) : (
+        /* Opaque Red Rectangular Body: Play/Pause Button BEFORE the Slider */
+        <div className="flex items-center gap-2.5 w-full">
+          <button
+            type="button"
+            data-audio-control="true"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={togglePlayPause}
+            disabled={isLoading}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-none border border-white/40 bg-[#8e1b1b] text-white hover:bg-[#751515] active:scale-95 transition-transform disabled:opacity-75"
+            title={isPlaying ? 'Pause' : 'Play'}
+            aria-label={isPlaying ? 'Pause audio' : 'Play audio'}
+          >
+            {isPlaying ? (
+              <Pause className="h-4 w-4 fill-current" />
+            ) : (
+              <Play className="h-4 w-4 fill-current ml-0.5" />
+            )}
+          </button>
+
+          <div className="flex flex-1 flex-col gap-1 min-w-0">
+            <input
+              type="range"
+              data-audio-control="true"
+              onPointerDown={(e) => e.stopPropagation()}
+              min={0}
+              max={effectiveDuration}
+              step={0.1}
+              value={Math.min(currentTime, effectiveDuration)}
+              onChange={handleSeek}
+              className="h-1.5 w-full cursor-pointer accent-white"
+            />
+            <div className="flex items-center justify-between font-wiki-mono text-[10px] leading-tight text-white/95">
+              <span className="truncate max-w-[115px] font-semibold">{audio.name}</span>
+              <span className="shrink-0">
+                {formatAudioSeconds(currentTime)} / {formatAudioSeconds(effectiveDuration)}
+              </span>
+            </div>
+            <div className="font-wiki-mono text-[9px] leading-tight text-white/85 truncate">
+              {createdAtLabel}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

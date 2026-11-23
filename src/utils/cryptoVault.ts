@@ -127,11 +127,12 @@ declare global {
       ) => void;
       cancelQuickNoteNotification?: (noteId: string) => void;
       createHomeScreenShortcut?: () => boolean;
+      hasPendingQuickNoteAction?: () => boolean;
       consumePendingQuickNoteAction?: () => boolean;
     };
     __handleLikkhoAndroidBack?: () => string;
     __onLikkhoQuickNoteDone?: (noteId: string) => void;
-    __onLikkhoOpenQuickNoteCreator?: () => void;
+    __onLikkhoOpenQuickNoteCreator?: () => string | void;
     __onLikkhoBiometricResult?: (success: boolean, msg?: string) => void;
     __onLikkhoDeviceLockBackupResult?: (success: boolean, message?: string) => void;
     __onLikkhoVaultFilePicked?: (envelope: string) => void;

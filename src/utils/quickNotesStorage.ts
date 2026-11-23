@@ -55,13 +55,21 @@ export function saveQuickNotes(notes: QuickNote[], vaultMode: VaultMode = 'prima
 /**
  * Syncs active quick note to the Android / System Notification Bar
  */
-export function syncQuickNoteToNotification(note: QuickNote | null): void {
+export function syncQuickNoteToNotification(
+  note: QuickNote | null,
+  cancelNoteId?: string
+): void {
   if (typeof window === 'undefined') return;
 
   if (!note || note.isDone || !note.isPinnedToNotification) {
     // Cancel notification if note is null or done
-    if (window.LikkhoNative && typeof window.LikkhoNative.cancelQuickNoteNotification === 'function') {
-      window.LikkhoNative.cancelQuickNoteNotification(note ? note.id : '');
+    const idToCancel = note ? note.id : cancelNoteId || '';
+    if (
+      idToCancel &&
+      window.LikkhoNative &&
+      typeof window.LikkhoNative.cancelQuickNoteNotification === 'function'
+    ) {
+      window.LikkhoNative.cancelQuickNoteNotification(idToCancel);
     }
     return;
   }
@@ -90,7 +98,7 @@ export function syncQuickNoteToNotification(note: QuickNote | null): void {
   }
 
   // 2. Web Notification fallback
-  if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+  const showWebNotification = () => {
     try {
       let bodyText = '';
       if (note.isChecklist) {
@@ -108,6 +116,20 @@ export function syncQuickNoteToNotification(note: QuickNote | null): void {
       });
     } catch {
       // ignore
+    }
+  };
+
+  if (typeof Notification !== 'undefined') {
+    if (Notification.permission === 'granted') {
+      showWebNotification();
+    } else if (Notification.permission === 'default') {
+      Notification.requestPermission()
+        .then((perm) => {
+          if (perm === 'granted') {
+            showWebNotification();
+          }
+        })
+        .catch(() => {});
     }
   }
 }
@@ -150,7 +172,7 @@ export function markQuickNoteDone(noteId: string, vaultMode: VaultMode = 'primar
 
   saveQuickNotes(next, vaultMode);
   if (updatedNote) {
-    syncQuickNoteToNotification(null);
+    syncQuickNoteToNotification(null, noteId);
   }
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent('likkho-quick-notes-changed', { detail: { noteId } }));

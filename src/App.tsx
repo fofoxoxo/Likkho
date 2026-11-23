@@ -48,7 +48,6 @@ import { SettingsPage } from './components/SettingsPage';
 import { BackupRestorePage } from './components/BackupRestorePage';
 import { PasscodeScreen } from './components/PasscodeScreen';
 import { persistAudioAttachment } from './utils/audioStorage';
-import { buildWelcomeStarterLogs } from './utils/starterDiaryGuide';
 import {
   shareDiaryAsLikkhoArchive,
   unpackLikkhoBase64Payload,
@@ -99,17 +98,36 @@ const DEFAULT_MIC_SETTINGS: MicRecordingSettings = {
   bitRate: 128000,
 };
 
-const INITIAL_STARTER_LOGS: DiaryLog[] = buildWelcomeStarterLogs();
+const STARTER_LOG_IDS = new Set([
+  'log_starter_1',
+  'log_starter_welcome_guide_v1',
+]);
 
-function upgradeLegacyStarterLogsIfNeeded(list: DiaryLog[]): DiaryLog[] {
-  if (
-    list.length === 1 &&
-    (list[0].id === 'log_starter_1' ||
-      list[0].id === 'log_starter_welcome_guide_v1')
-  ) {
-    return INITIAL_STARTER_LOGS;
+function stripStarterGuideLogs(list: DiaryLog[]): DiaryLog[] {
+  return list.filter((item) => !STARTER_LOG_IDS.has(item.id));
+}
+
+function detectQuickNoteLaunchSync(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    const urlParams = new URLSearchParams(window.location.search);
+    if (
+      urlParams.get('action') === 'quick_note' ||
+      window.location.hash.includes('quick_note')
+    ) {
+      return true;
+    }
+    if (
+      window.LikkhoNative &&
+      typeof window.LikkhoNative.hasPendingQuickNoteAction === 'function' &&
+      window.LikkhoNative.hasPendingQuickNoteAction()
+    ) {
+      return true;
+    }
+  } catch {
+    // ignore
   }
-  return list;
+  return false;
 }
 
 function getFallbackMonographPfp(): string {
@@ -159,12 +177,13 @@ export default function App() {
     try {
       const saved = localStorage.getItem(STORAGE_LOGS_KEY);
       if (saved) {
-        return upgradeLegacyStarterLogsIfNeeded(JSON.parse(saved));
+        const parsed = JSON.parse(saved);
+        return Array.isArray(parsed) ? stripStarterGuideLogs(parsed) : [];
       }
     } catch {
       // ignore
     }
-    return INITIAL_STARTER_LOGS;
+    return [];
   });
 
   const [customFonts, setCustomFonts] = useState<CustomFontItem[]>([]);
@@ -308,7 +327,16 @@ export default function App() {
   } | null>(null);
 
   // Global Quick Note creator modal (triggered from Home screen shortcut, Quick Settings tile, or notification)
-  const [showGlobalQuickNoteModal, setShowGlobalQuickNoteModal] = useState<boolean>(false);
+  const [showGlobalQuickNoteModal, setShowGlobalQuickNoteModal] = useState<boolean>(() =>
+    detectQuickNoteLaunchSync()
+  );
+
+  // Ensure any native biometric prompt is cancelled whenever Quick Note Creator opens
+  useEffect(() => {
+    if (showGlobalQuickNoteModal) {
+      window.LikkhoNative?.cancelBiometricPrompt?.();
+    }
+  }, [showGlobalQuickNoteModal]);
 
   // Check for Quick Note launch action (Home Screen Shortcut, Quick Settings Tile, or notification action)
   useEffect(() => {
@@ -335,6 +363,7 @@ export default function App() {
       }
 
       if (isQuickNoteLaunch) {
+        window.LikkhoNative?.cancelBiometricPrompt?.();
         setShowGlobalQuickNoteModal(true);
       }
     };
@@ -345,6 +374,7 @@ export default function App() {
 
     // Global callback from Android Quick Settings tile or shortcut
     window.__onLikkhoOpenQuickNoteCreator = () => {
+      window.LikkhoNative?.cancelBiometricPrompt?.();
       setShowGlobalQuickNoteModal(true);
       return 'OPENED';
     };
@@ -477,17 +507,13 @@ export default function App() {
     }
 
     // 2. Load initial logs from isolated localStorage before IDB resolves
-    let initialLocalLogs: DiaryLog[] =
-      vaultMode === 'decoy' ? [] : INITIAL_STARTER_LOGS;
+    let initialLocalLogs: DiaryLog[] = [];
     try {
       const raw = localStorage.getItem(logsStorageKey);
       if (raw) {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed)) {
-          initialLocalLogs =
-            vaultMode === 'primary'
-              ? upgradeLegacyStarterLogsIfNeeded(parsed)
-              : parsed;
+          initialLocalLogs = stripStarterGuideLogs(parsed);
         }
       }
     } catch {
@@ -513,12 +539,10 @@ export default function App() {
         if (candidateLogs && Array.isArray(candidateLogs)) {
           // Automatic migration of legacy dataURLs to IndexedDB Blob store
           const { logs: migratedLogs, migratedCount } = await migrateLogsMediaToBlobStore(candidateLogs);
-          const finalLogs =
-            vaultMode === 'primary'
-              ? upgradeLegacyStarterLogsIfNeeded(migratedLogs)
-              : migratedLogs;
+          const finalLogs = stripStarterGuideLogs(migratedLogs);
+          const starterRemoved = finalLogs.length !== candidateLogs.length;
           setLogs(finalLogs);
-          if (migratedCount > 0) {
+          if (migratedCount > 0 || starterRemoved) {
             await saveActiveAppStateToIDB(idbLogsKey, finalLogs, vaultMode);
             await saveAppSpecificInternalFile(idbLogsKey, finalLogs, vaultMode);
             try {
@@ -1231,8 +1255,16 @@ export default function App() {
         </div>
       )}
 
-      {/* Instant Lock & Launch Lock Overlay — Rendered as a top-level overlay so the active Canvas / Workspace is NEVER unmounted or lost when locked! */}
-      {isLocked && effectivePrimaryPin && (
+      {/* Opaque privacy shield while Quick Note Creator opens directly over a locked vault (prevents diary leak and suppresses Lockscreen + Biometrics) */}
+      {showGlobalQuickNoteModal && isLocked && effectivePrimaryPin && (
+        <div
+          className="fixed inset-0 z-[100] bg-[var(--wiki-bg)]"
+          aria-hidden="true"
+        />
+      )}
+
+      {/* Instant Lock & Launch Lock Overlay — Hidden when Quick Note modal is opened directly from Home Screen Shortcut / Quick Settings Tile */}
+      {isLocked && effectivePrimaryPin && !showGlobalQuickNoteModal && (
         <div className="fixed inset-0 z-[100] flex h-full w-full flex-col bg-[var(--wiki-bg)]">
           <PasscodeScreen
             savedPasscode={savedPasscode || ''}
@@ -1942,15 +1974,18 @@ export default function App() {
         <QuickNoteCreatorModal
           onClose={() => setShowGlobalQuickNoteModal(false)}
           onSave={(newNote) => {
+            const compulsoryNote = {
+              ...newNote,
+              isDone: false,
+              isPinnedToNotification: true,
+            };
             const currentList = getQuickNotes(vaultMode);
-            const nextList = [newNote, ...currentList];
+            const nextList = [compulsoryNote, ...currentList];
             saveQuickNotes(nextList, vaultMode);
-            if (newNote.isPinnedToNotification && !newNote.isDone) {
-              syncQuickNoteToNotification(newNote);
-            }
+            syncQuickNoteToNotification(compulsoryNote);
             window.dispatchEvent(
               new CustomEvent('likkho-quick-notes-changed', {
-                detail: { noteId: newNote.id },
+                detail: { noteId: compulsoryNote.id },
               })
             );
             setShowGlobalQuickNoteModal(false);
