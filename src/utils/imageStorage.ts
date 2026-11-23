@@ -15,9 +15,15 @@ import { saveAudioBlobToStore } from './audioStorage';
 
 const IMAGE_DB_NAME = 'likkho_image_media_vault_v1';
 const IMAGE_STORE_NAME = 'image_blobs';
+const PREVIEW_DB_NAME = 'likkho_image_preview_cache_v1';
+const PREVIEW_STORE_NAME = 'image_previews';
+const MAX_ACTIVE_PREVIEW_URLS = 40;
 
 // Map of currently active Object URLs: mediaRef -> blobUrl
 const activeImageObjectUrls = new Map<string, string>();
+// LRU map of lightweight downsampled canvas/avatar preview Object URLs
+const activePreviewObjectUrls = new Map<string, string>();
+const inFlightPreviewPromises = new Map<string, Promise<string>>();
 // Caches for true original and stored byte sizes
 const imageOriginalByteSizeCache = new Map<string, number>();
 const imageBlobByteSizeCache = new Map<string, number>();
@@ -80,6 +86,7 @@ export async function resolveImageOriginalByteSize(idOrUrl: string | null | unde
 }
 
 let dbPromise: Promise<IDBDatabase> | null = null;
+let previewDbPromise: Promise<IDBDatabase> | null = null;
 
 function getImageDB(): Promise<IDBDatabase> {
   if (dbPromise) return dbPromise;
@@ -100,6 +107,69 @@ function getImageDB(): Promise<IDBDatabase> {
     }
   });
   return dbPromise;
+}
+
+function getPreviewDB(): Promise<IDBDatabase> {
+  if (previewDbPromise) return previewDbPromise;
+  previewDbPromise = new Promise((resolve, reject) => {
+    try {
+      const request = indexedDB.open(PREVIEW_DB_NAME, 1);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains(PREVIEW_STORE_NAME)) {
+          db.createObjectStore(PREVIEW_STORE_NAME);
+        }
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+      request.onblocked = () => reject(new Error('Preview IndexedDB blocked'));
+    } catch (err) {
+      reject(err);
+    }
+  });
+  return previewDbPromise;
+}
+
+async function getPreviewBlobFromStore(key: string): Promise<Blob | null> {
+  try {
+    const db = await getPreviewDB();
+    return await new Promise<Blob | null>((resolve, reject) => {
+      const tx = db.transaction(PREVIEW_STORE_NAME, 'readonly');
+      const req = tx.objectStore(PREVIEW_STORE_NAME).get(key);
+      req.onsuccess = () => resolve((req.result as Blob) || null);
+      req.onerror = () => reject(req.error);
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function savePreviewBlobToStore(key: string, blob: Blob): Promise<void> {
+  try {
+    const db = await getPreviewDB();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(PREVIEW_STORE_NAME, 'readwrite');
+      tx.objectStore(PREVIEW_STORE_NAME).put(blob, key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch {
+    // non-fatal cache write failure
+  }
+}
+
+async function deletePreviewBlobFromStore(key: string): Promise<void> {
+  try {
+    const db = await getPreviewDB();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(PREVIEW_STORE_NAME, 'readwrite');
+      tx.objectStore(PREVIEW_STORE_NAME).delete(key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch {
+    // ignore
+  }
 }
 
 /**
@@ -154,6 +224,8 @@ export async function deleteImageBlobFromStore(id: string): Promise<void> {
       }
       activeImageObjectUrls.delete(id);
     }
+    releaseCanvasPreviewUrl(id);
+    await deletePreviewBlobFromStore(id);
 
     const db = await getImageDB();
     await new Promise<void>((resolve, reject) => {
@@ -230,7 +302,189 @@ export async function saveImageBlobAndGetRef(
 }
 
 /**
- * Releases a specific cached Object URL to free RAM.
+ * Touches or inserts a preview Object URL into the bounded LRU cache so WebView GPU memory stays capped.
+ */
+function setBoundedPreviewObjectUrl(id: string, url: string): void {
+  if (activePreviewObjectUrls.has(id)) {
+    const prev = activePreviewObjectUrls.get(id)!;
+    activePreviewObjectUrls.delete(id);
+    if (prev !== url) {
+      try {
+        URL.revokeObjectURL(prev);
+      } catch {
+        // ignore
+      }
+    }
+  }
+  activePreviewObjectUrls.set(id, url);
+  while (activePreviewObjectUrls.size > MAX_ACTIVE_PREVIEW_URLS) {
+    const oldestKey = activePreviewObjectUrls.keys().next().value as string | undefined;
+    if (!oldestKey) break;
+    const oldestUrl = activePreviewObjectUrls.get(oldestKey);
+    activePreviewObjectUrls.delete(oldestKey);
+    if (oldestUrl) {
+      try {
+        URL.revokeObjectURL(oldestUrl);
+      } catch {
+        // ignore
+      }
+    }
+  }
+}
+
+/**
+ * Downscales a stored high-res Blob into a compact canvas preview Blob without touching the original file.
+ */
+async function createCompactPreviewBlob(sourceBlob: Blob, maxDimension: number): Promise<Blob> {
+  // Already tiny (< 65 KB) or vector SVG: reuse directly without re-encoding
+  if (sourceBlob.size <= 65 * 1024 || sourceBlob.type === 'image/svg+xml') {
+    return sourceBlob;
+  }
+
+  let bmp: ImageBitmap | null = null;
+  try {
+    if (typeof createImageBitmap === 'function') {
+      bmp = await createImageBitmap(sourceBlob);
+      const maxSide = Math.max(bmp.width, bmp.height);
+      if (maxSide <= maxDimension && sourceBlob.size <= 140 * 1024) {
+        return sourceBlob;
+      }
+      const scale = maxSide > maxDimension && maxSide > 0 ? maxDimension / maxSide : 1;
+      const targetW = Math.max(1, Math.round(bmp.width * scale));
+      const targetH = Math.max(1, Math.round(bmp.height * scale));
+      const canvas = document.createElement('canvas');
+      canvas.width = targetW;
+      canvas.height = targetH;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return sourceBlob;
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'medium';
+      ctx.drawImage(bmp, 0, 0, targetW, targetH);
+
+      const outMime = sourceBlob.type === 'image/png' ? 'image/webp' : 'image/jpeg';
+      const encoded = await new Promise<Blob | null>((resolve) => {
+        canvas.toBlob((b) => resolve(b), outMime, 0.82);
+      });
+      return encoded && encoded.size < sourceBlob.size ? encoded : sourceBlob;
+    }
+  } catch {
+    // fallback cleanly to original blob
+  } finally {
+    if (bmp) {
+      try {
+        bmp.close();
+      } catch {
+        // ignore
+      }
+    }
+  }
+  return sourceBlob;
+}
+
+/**
+ * Synchronous lookup for a lightweight canvas preview Object URL (or direct URL/dataURL).
+ */
+export function getCanvasPreviewUrl(mediaRef: string | null | undefined): string {
+  if (!mediaRef) return '';
+  if (
+    mediaRef.startsWith('data:') ||
+    mediaRef.startsWith('blob:') ||
+    mediaRef.startsWith('http://') ||
+    mediaRef.startsWith('https://') ||
+    mediaRef.startsWith('/')
+  ) {
+    return mediaRef;
+  }
+  const existing = activePreviewObjectUrls.get(mediaRef);
+  if (existing) {
+    // Refresh LRU order
+    activePreviewObjectUrls.delete(mediaRef);
+    activePreviewObjectUrls.set(mediaRef, existing);
+    return existing;
+  }
+  return activeImageObjectUrls.get(mediaRef) || '';
+}
+
+/**
+ * Lazily resolves & caches a lightweight downsampled preview Object URL for canvas/avatar display.
+ * Keeps original multi-MB images out of WebView GPU rasterization while preserving originals in IndexedDB.
+ */
+export async function ensureCanvasPreviewUrl(
+  mediaRef: string | null | undefined,
+  maxPreviewPx: number = 720
+): Promise<string> {
+  if (!mediaRef) return '';
+  if (
+    mediaRef.startsWith('data:') ||
+    mediaRef.startsWith('blob:') ||
+    mediaRef.startsWith('http://') ||
+    mediaRef.startsWith('https://') ||
+    mediaRef.startsWith('/')
+  ) {
+    return mediaRef;
+  }
+
+  const existing = getCanvasPreviewUrl(mediaRef);
+  if (existing) return existing;
+
+  const inflight = inFlightPreviewPromises.get(mediaRef);
+  if (inflight) return inflight;
+
+  const task = (async () => {
+    try {
+      // 1. Try persistent disk preview cache first (zero full-res decode cost!)
+      let previewBlob = await getPreviewBlobFromStore(mediaRef);
+      if (!previewBlob) {
+        // 2. Load original blob once, downsample into compact preview, and persist preview
+        const fullBlob = await getImageBlobFromStore(mediaRef);
+        if (!fullBlob) return '';
+        cacheImageSize(mediaRef, fullBlob.size);
+        previewBlob = await createCompactPreviewBlob(fullBlob, maxPreviewPx);
+        await savePreviewBlobToStore(mediaRef, previewBlob);
+      }
+      const previewUrl = URL.createObjectURL(previewBlob);
+      setBoundedPreviewObjectUrl(mediaRef, previewUrl);
+      return previewUrl;
+    } catch {
+      return '';
+    } finally {
+      inFlightPreviewPromises.delete(mediaRef);
+    }
+  })();
+
+  inFlightPreviewPromises.set(mediaRef, task);
+  return task;
+}
+
+/**
+ * Releases a single lightweight preview Object URL to immediately free WebView RAM.
+ */
+export function releaseCanvasPreviewUrl(id: string | null | undefined): void {
+  if (!id) return;
+  const url = activePreviewObjectUrls.get(id);
+  if (url) {
+    try {
+      URL.revokeObjectURL(url);
+    } catch {
+      // ignore
+    }
+    activePreviewObjectUrls.delete(id);
+  }
+}
+
+/**
+ * Releases multiple preview and/or full Object URLs when closing a diary workspace.
+ */
+export function releaseCanvasPreviewUrls(ids: Array<string | null | undefined>): void {
+  for (const id of ids) {
+    if (!id) continue;
+    releaseCanvasPreviewUrl(id);
+    releaseImageObjectUrl(id);
+  }
+}
+
+/**
+ * Releases a specific cached full Object URL to free RAM.
  */
 export function releaseImageObjectUrl(id: string): void {
   const url = activeImageObjectUrls.get(id);
@@ -245,7 +499,7 @@ export function releaseImageObjectUrl(id: string): void {
 }
 
 /**
- * Revokes all image Object URLs across the app.
+ * Revokes all image and preview Object URLs across the app.
  */
 export function releaseAllImageObjectUrls(): void {
   activeImageObjectUrls.forEach((url) => {
@@ -256,6 +510,14 @@ export function releaseAllImageObjectUrls(): void {
     }
   });
   activeImageObjectUrls.clear();
+  activePreviewObjectUrls.forEach((url) => {
+    try {
+      URL.revokeObjectURL(url);
+    } catch {
+      // ignore
+    }
+  });
+  activePreviewObjectUrls.clear();
 }
 
 /**
@@ -382,31 +644,27 @@ export async function processImageFileToBlob(
 }
 
 /**
- * Preloads all media references in logs so their Object URLs are instantly ready.
+ * Preloads ONLY tiny homepage avatar/PFP thumbnails on startup/restore.
+ * Heavy canvas images & canvas backgrounds stay on disk until that diary is opened!
  */
 export async function preloadLogImages(logs: DiaryLog[]): Promise<void> {
-  const idsToLoad = new Set<string>();
+  const pfpIdsToLoad = new Set<string>();
 
   for (const log of logs) {
-    if (log.pfpDataUrl && !log.pfpDataUrl.startsWith('data:') && !log.pfpDataUrl.startsWith('blob:') && !log.pfpDataUrl.startsWith('http')) {
-      idsToLoad.add(log.pfpDataUrl);
-    }
-    if (log.canvasBgDataUrl && !log.canvasBgDataUrl.startsWith('data:') && !log.canvasBgDataUrl.startsWith('blob:') && !log.canvasBgDataUrl.startsWith('http')) {
-      idsToLoad.add(log.canvasBgDataUrl);
-    }
-    if (Array.isArray(log.canvasImages)) {
-      for (const img of log.canvasImages) {
-        if (img.dataUrl && !img.dataUrl.startsWith('data:') && !img.dataUrl.startsWith('blob:') && !img.dataUrl.startsWith('http')) {
-          idsToLoad.add(img.dataUrl);
-        }
-      }
+    if (
+      log.pfpDataUrl &&
+      !log.pfpDataUrl.startsWith('data:') &&
+      !log.pfpDataUrl.startsWith('blob:') &&
+      !log.pfpDataUrl.startsWith('http')
+    ) {
+      pfpIdsToLoad.add(log.pfpDataUrl);
     }
   }
 
   await Promise.all(
-    Array.from(idsToLoad).map(async (id) => {
-      if (!activeImageObjectUrls.has(id)) {
-        await ensureImageObjectUrl(id);
+    Array.from(pfpIdsToLoad).map(async (id) => {
+      if (!activePreviewObjectUrls.has(id) && !activeImageObjectUrls.has(id)) {
+        await ensureCanvasPreviewUrl(id, 192);
       }
     })
   );

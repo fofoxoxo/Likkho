@@ -33,7 +33,7 @@ import {
   recordPasscodeFailure,
   resetPasscodeFailures,
 } from '../utils/cryptoVault';
-import { getImageObjectUrl } from '../utils/imageStorage';
+import { ensureCanvasPreviewUrl, getCanvasPreviewUrl } from '../utils/imageStorage';
 import { acquireAudioPlaybackUrl, releaseAudioPlaybackUrl } from '../utils/audioStorage';
 
 interface BackedUpDiariesModalProps {
@@ -121,17 +121,37 @@ export const BackedUpDiariesModal: React.FC<BackedUpDiariesModalProps> = ({
       setReadingDiaryUnlocked(false);
     }
 
-    // Resolve Image URLs
+    // Resolve Lightweight Image Preview URLs lazily for backed-up diary viewer
+    let imgsCancelled = false;
     const newImgUrls: Record<string, string> = {};
-    if (readingLog.canvasImages && Array.isArray(readingLog.canvasImages)) {
-      for (const img of readingLog.canvasImages) {
+    const imgs = readingLog.canvasImages;
+    if (imgs && Array.isArray(imgs)) {
+      for (const img of imgs) {
         if (img.dataUrl) {
-          const url = getImageObjectUrl(img.dataUrl);
-          if (url) newImgUrls[img.id] = url;
+          const cached = getCanvasPreviewUrl(img.dataUrl);
+          if (cached) newImgUrls[img.id] = cached;
         }
       }
+      setImageUrls(newImgUrls);
+      (async () => {
+        let updated = false;
+        const nextMap: Record<string, string> = { ...newImgUrls };
+        for (const img of imgs) {
+          if (img.dataUrl && !nextMap[img.id]) {
+            const url = await ensureCanvasPreviewUrl(img.dataUrl, 720);
+            if (url) {
+              nextMap[img.id] = url;
+              updated = true;
+            }
+          }
+        }
+        if (!imgsCancelled && updated) {
+          setImageUrls(nextMap);
+        }
+      })();
+    } else {
+      setImageUrls(newImgUrls);
     }
-    setImageUrls(newImgUrls);
 
     // Resolve Audio URLs
     const newAudioUrls: Record<string, string> = {};
@@ -149,6 +169,9 @@ export const BackedUpDiariesModal: React.FC<BackedUpDiariesModalProps> = ({
         setAudioUrls(newAudioUrls);
       })();
     }
+    return () => {
+      imgsCancelled = true;
+    };
   }, [readingLog]);
 
   const handleUnlockVault = async (e?: React.FormEvent) => {

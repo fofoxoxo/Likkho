@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import {
   CanvasAudioAttachment,
+  CanvasDraggableImage,
   CustomFontItem,
   DiaryLog,
   MicRecordingSettings,
@@ -54,7 +55,10 @@ import {
 } from './utils/likkhoShareArchive';
 import {
   getImageObjectUrl,
+  getCanvasPreviewUrl,
   migrateLogsMediaToBlobStore,
+  dataUrlToBlob,
+  processImageFileToBlob,
 } from './utils/imageStorage';
 import { AppUpdateModal } from './components/AppUpdateModal';
 import { checkForAppUpdate, AppUpdateInfo } from './utils/appUpdateChecker';
@@ -64,6 +68,7 @@ import {
   saveQuickNotes,
   markQuickNoteDone,
   syncQuickNoteToNotification,
+  syncActiveNoteToHomeWidget,
 } from './utils/quickNotesStorage';
 import {
   saveAppSpecificInternalFile,
@@ -130,6 +135,25 @@ function detectQuickNoteLaunchSync(): boolean {
   return false;
 }
 
+interface IncomingSharePayload {
+  title: string;
+  text: string;
+  imageDataUrl: string;
+}
+
+function convertPlainTextToParagraphHtml(rawText: string): string {
+  const trimmed = (rawText || '').trim();
+  if (!trimmed) return '';
+  const lines = trimmed.split(/\r?\n/);
+  const parts: string[] = [];
+  for (const line of lines) {
+    const p = document.createElement('p');
+    p.textContent = line.length > 0 ? line : '\u00A0';
+    parts.push(p.outerHTML);
+  }
+  return parts.join('');
+}
+
 function getFallbackMonographPfp(): string {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
     <rect width="120" height="120" fill="#FFFFFF" stroke="#a2a9b1" stroke-width="2"/>
@@ -172,6 +196,7 @@ export default function App() {
   // Active Vault Mode ('primary' -> real_vault.db, 'decoy' -> decoy_vault.db)
   const [vaultMode, setVaultMode] = useState<VaultMode>('primary');
   const isVaultHydratedRef = useRef<boolean>(false);
+  const [vaultHydratedSeq, setVaultHydratedSeq] = useState<number>(0);
 
   const [logs, setLogs] = useState<DiaryLog[]>(() => {
     try {
@@ -330,6 +355,32 @@ export default function App() {
   const [showGlobalQuickNoteModal, setShowGlobalQuickNoteModal] = useState<boolean>(() =>
     detectQuickNoteLaunchSync()
   );
+  const [pendingNewDiaryIntent, setPendingNewDiaryIntent] = useState<boolean>(false);
+  const [pendingIncomingSharePayload, setPendingIncomingSharePayload] =
+    useState<IncomingSharePayload | null>(null);
+  const [startShareDraftEdit, setStartShareDraftEdit] = useState<boolean>(false);
+  const [workspaceSessionSeq, setWorkspaceSessionSeq] = useState<number>(0);
+  const isProcessingShareRef = useRef<boolean>(false);
+
+  // Sync latest Quick Note to Android Home Screen Widget whenever vault changes
+  useEffect(() => {
+    syncActiveNoteToHomeWidget(getQuickNotes(vaultMode));
+  }, [vaultMode]);
+
+  // Dismiss Android Native Launch Veil immediately after React paints first UI frame (zero white/homepage flash)
+  useEffect(() => {
+    let raf1 = 0;
+    let raf2 = 0;
+    raf1 = window.requestAnimationFrame(() => {
+      raf2 = window.requestAnimationFrame(() => {
+        window.LikkhoNative?.notifyAppReady?.();
+      });
+    });
+    return () => {
+      window.cancelAnimationFrame(raf1);
+      window.cancelAnimationFrame(raf2);
+    };
+  }, []);
 
   // Ensure any native biometric prompt is cancelled whenever Quick Note Creator opens
   useEffect(() => {
@@ -338,17 +389,22 @@ export default function App() {
     }
   }, [showGlobalQuickNoteModal]);
 
-  // Check for Quick Note launch action (Home Screen Shortcut, Quick Settings Tile, or notification action)
+  // Check for Quick Note launch action, New Diary action, and Share-to-Likkho incoming intents
   useEffect(() => {
-    const checkQuickNoteLaunch = () => {
+    const checkQuickNoteAndIntentActions = () => {
       let isQuickNoteLaunch = false;
+      let isNewDiaryLaunch = false;
       if (typeof window !== 'undefined') {
         const urlParams = new URLSearchParams(window.location.search);
-        if (urlParams.get('action') === 'quick_note' || window.location.hash.includes('quick_note')) {
+        const actionParam = urlParams.get('action');
+        if (actionParam === 'quick_note' || window.location.hash.includes('quick_note')) {
           isQuickNoteLaunch = true;
+        } else if (actionParam === 'new_diary' || window.location.hash.includes('new_diary')) {
+          isNewDiaryLaunch = true;
+        }
+        if (isQuickNoteLaunch || isNewDiaryLaunch) {
           try {
-            const cleanUrl = window.location.pathname;
-            window.history.replaceState({}, '', cleanUrl);
+            window.history.replaceState({}, '', window.location.pathname);
           } catch {
             // ignore
           }
@@ -361,22 +417,63 @@ export default function App() {
       ) {
         isQuickNoteLaunch = true;
       }
+      if (
+        window.LikkhoNative &&
+        typeof window.LikkhoNative.consumePendingNewDiaryAction === 'function' &&
+        window.LikkhoNative.consumePendingNewDiaryAction()
+      ) {
+        isNewDiaryLaunch = true;
+      }
 
       if (isQuickNoteLaunch) {
         window.LikkhoNative?.cancelBiometricPrompt?.();
         setShowGlobalQuickNoteModal(true);
+      } else if (isNewDiaryLaunch) {
+        setPendingNewDiaryIntent(true);
+      }
+
+      // Check for Share-to-Likkho (text/plain or image/* from other apps)
+      try {
+        if (
+          window.LikkhoNative &&
+          typeof window.LikkhoNative.consumePendingIncomingShare === 'function'
+        ) {
+          const rawShare = window.LikkhoNative.consumePendingIncomingShare();
+          if (rawShare && rawShare.trim().startsWith('{')) {
+            const parsed = JSON.parse(rawShare) as Partial<IncomingSharePayload>;
+            if (parsed.title || parsed.text || parsed.imageDataUrl) {
+              setPendingIncomingSharePayload({
+                title: parsed.title || '',
+                text: parsed.text || '',
+                imageDataUrl: parsed.imageDataUrl || '',
+              });
+            }
+          }
+        }
+      } catch {
+        // ignore invalid share JSON
       }
     };
 
-    checkQuickNoteLaunch();
-    window.addEventListener('focus', checkQuickNoteLaunch);
-    document.addEventListener('visibilitychange', checkQuickNoteLaunch);
+    checkQuickNoteAndIntentActions();
+    window.addEventListener('focus', checkQuickNoteAndIntentActions);
+    document.addEventListener('visibilitychange', checkQuickNoteAndIntentActions);
 
-    // Global callback from Android Quick Settings tile or shortcut
+    // Global callback from Android Quick Settings tile, widget, or shortcut
     window.__onLikkhoOpenQuickNoteCreator = () => {
       window.LikkhoNative?.cancelBiometricPrompt?.();
       setShowGlobalQuickNoteModal(true);
       return 'OPENED';
+    };
+
+    window.__onLikkhoNewDiaryAction = () => {
+      setPendingNewDiaryIntent(true);
+      return 'QUEUED';
+    };
+
+    window.__onLikkhoIncomingShareAvailable = () => {
+      checkQuickNoteAndIntentActions();
+      return 'RECEIVED';
     };
 
     // Global callback from Android Notification Action: "Done"
@@ -385,12 +482,111 @@ export default function App() {
     };
 
     return () => {
-      window.removeEventListener('focus', checkQuickNoteLaunch);
-      document.removeEventListener('visibilitychange', checkQuickNoteLaunch);
+      window.removeEventListener('focus', checkQuickNoteAndIntentActions);
+      document.removeEventListener('visibilitychange', checkQuickNoteAndIntentActions);
       delete window.__onLikkhoOpenQuickNoteCreator;
+      delete window.__onLikkhoNewDiaryAction;
+      delete window.__onLikkhoIncomingShareAvailable;
       delete window.__onLikkhoQuickNoteDone;
     };
   }, [vaultMode]);
+
+  // Execute queued New Diary intent or Share-to-Likkho draft ONLY after vault is unlocked and hydrated
+  useEffect(() => {
+    if (isLocked || vaultHydratedSeq === 0) return;
+
+    if (pendingIncomingSharePayload && !isProcessingShareRef.current) {
+      isProcessingShareRef.current = true;
+      const payload = pendingIncomingSharePayload;
+      setPendingIncomingSharePayload(null);
+
+      (async () => {
+        setExportProcessingBanner('Preparing shared content...');
+        try {
+          const nowMs = Date.now();
+          const canvasImages: CanvasDraggableImage[] = [];
+
+          if (payload.imageDataUrl) {
+            const imgBlob = await dataUrlToBlob(payload.imageDataUrl);
+            const processed = await processImageFileToBlob(imgBlob, 2560);
+            const displayW = 240;
+            const displayH =
+              processed.width > 0
+                ? Math.max(80, Math.round((processed.height / processed.width) * displayW))
+                : 180;
+            canvasImages.push({
+              id: `img_${nowMs}`,
+              dataUrl: processed.id,
+              x: 24,
+              y: 120,
+              width: displayW,
+              height: displayH,
+              opacity: 1,
+              rotation: 0,
+              layer: 'foreground',
+              sizeBytes: processed.sizeBytes,
+              originalSizeBytes: processed.originalSizeBytes,
+            });
+          }
+
+          const contentHtml = convertPlainTextToParagraphHtml(payload.text);
+          const cleanPreviewText = (payload.text || '').replace(/\s+/g, ' ').trim();
+          const plainPreview = cleanPreviewText
+            ? cleanPreviewText.slice(0, 140)
+            : canvasImages.length > 0
+            ? 'Shared image'
+            : 'Shared note';
+
+          const draftLog: DiaryLog = {
+            id: `log_${nowMs}_${Math.random().toString(36).slice(2, 7)}`,
+            heading: (payload.title || '').trim(),
+            contentHtml,
+            plainPreview,
+            pfpDataUrl: null,
+            createdAt: nowMs,
+            updatedAt: nowMs,
+            dateStamp: new Date(nowMs).toLocaleDateString('en-IN', {
+              day: '2-digit',
+              month: 'short',
+              year: 'numeric',
+            }),
+            timeStamp: new Date(nowMs).toLocaleTimeString('en-IN', {
+              hour: '2-digit',
+              minute: '2-digit',
+              hour12: true,
+            }),
+            reminderAt: null,
+            canvasImages,
+          };
+
+          setShowGlobalQuickNoteModal(false);
+          setEditingLog(draftLog);
+          setStartShareDraftEdit(true);
+          setWorkspaceSessionSeq((s) => s + 1);
+          setRoute('workspace');
+          setExportProcessingBanner(null);
+          setExportStatusBanner('Shared content ready to edit & save.');
+          window.setTimeout(() => setExportStatusBanner(null), 3000);
+        } catch {
+          setExportProcessingBanner(null);
+          setExportStatusBanner('Could not open shared content.');
+          window.setTimeout(() => setExportStatusBanner(null), 3000);
+        } finally {
+          isProcessingShareRef.current = false;
+        }
+      })();
+      return;
+    }
+
+    if (pendingNewDiaryIntent) {
+      setPendingNewDiaryIntent(false);
+      setShowGlobalQuickNoteModal(false);
+      setEditingLog(null);
+      setStartShareDraftEdit(false);
+      setWorkspaceSessionSeq((s) => s + 1);
+      setRoute('workspace');
+    }
+  }, [isLocked, vaultHydratedSeq, pendingNewDiaryIntent, pendingIncomingSharePayload]);
 
   // Poll cooldown timer when Locked Diary modal is open
   useEffect(() => {
@@ -563,6 +759,7 @@ export default function App() {
       })
       .finally(() => {
         isVaultHydratedRef.current = true;
+        setVaultHydratedSeq((s) => s + 1);
       });
   }, [vaultMode]);
 
@@ -953,6 +1150,7 @@ export default function App() {
 
   const navigateTo = (target: PageRoute, logToEdit: DiaryLog | null = null) => {
     setOpenMenuLogId(null);
+    setStartShareDraftEdit(false);
     if (target === 'home') {
       setRoute('home');
       setEditingLog(null);
@@ -1285,8 +1483,10 @@ export default function App() {
 
       {route === 'workspace' ? (
         <WritingWorkspace
+          key={`ws-${workspaceSessionSeq}`}
           vaultMode={vaultMode}
           initialLog={editingLog}
+          startInEditMode={startShareDraftEdit}
           onSaveLog={handleUpsertLog}
           onDeleteLog={requestDeleteLogConfirmation}
           onExitWithoutSave={() => navigateTo('home')}
@@ -1534,6 +1734,7 @@ export default function App() {
             ) : (
               sortedLogs.map((log) => {
                 const avatarSrc =
+                  getCanvasPreviewUrl(log.pfpDataUrl) ||
                   getImageObjectUrl(log.pfpDataUrl) ||
                   log.pfpDataUrl ||
                   getFallbackMonographPfp();

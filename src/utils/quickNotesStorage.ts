@@ -43,6 +43,37 @@ export function getQuickNotes(vaultMode: VaultMode = 'primary'): QuickNote[] {
   }
 }
 
+export function syncActiveNoteToHomeWidget(notes: QuickNote[]): void {
+  if (typeof window === 'undefined') return;
+  if (!window.LikkhoNative || typeof window.LikkhoNative.syncHomeWidgetQuickNote !== 'function') {
+    return;
+  }
+  try {
+    const activeNotes = notes.filter((n) => !n.isDone);
+    const chosen =
+      activeNotes.find((n) => n.isPinnedToNotification) || activeNotes[0] || null;
+    if (!chosen) {
+      window.LikkhoNative.syncHomeWidgetQuickNote('', '');
+      return;
+    }
+
+    const title = (chosen.title || 'Quick Note').trim();
+    let summary = '';
+    if (chosen.isChecklist && chosen.items && chosen.items.length > 0) {
+      const pending = chosen.items.filter((i) => !i.done).map((i) => `☐ ${i.text}`);
+      const done = chosen.items.filter((i) => i.done).map((i) => `☑ ${i.text}`);
+      summary = [...pending, ...done].join(' · ');
+    } else if (chosen.content && chosen.content.trim()) {
+      summary = chosen.content.replace(/\s+/g, ' ').trim();
+    } else if (chosen.items && chosen.items.length > 0) {
+      summary = chosen.items.map((i) => i.text).join(' · ');
+    }
+    window.LikkhoNative.syncHomeWidgetQuickNote(title, summary.slice(0, 220));
+  } catch {
+    // ignore widget sync errors
+  }
+}
+
 export function saveQuickNotes(notes: QuickNote[], vaultMode: VaultMode = 'primary'): void {
   if (typeof window === 'undefined') return;
   try {
@@ -50,6 +81,7 @@ export function saveQuickNotes(notes: QuickNote[], vaultMode: VaultMode = 'prima
   } catch (err) {
     console.warn('Failed to save quick notes:', err);
   }
+  syncActiveNoteToHomeWidget(notes);
 }
 
 /**

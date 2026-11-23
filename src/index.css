@@ -37,11 +37,16 @@
     min-height: 100vh;
     height: 100dvh;
     overflow: hidden;
+    overscroll-behavior: none;
     background-color: var(--wiki-bg);
     color: var(--wiki-text);
     font-family: var(--font-sans-wiki);
     -webkit-tap-highlight-color: transparent;
     transition: background-color 0.15s ease, color 0.15s ease;
+  }
+
+  button, a, [role="button"] {
+    touch-action: manipulation;
   }
 
   #root {

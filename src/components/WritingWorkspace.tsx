@@ -57,7 +57,9 @@ import {
 } from '../utils/audioStorage';
 import {
   getImageObjectUrl,
-  ensureImageObjectUrl,
+  getCanvasPreviewUrl,
+  ensureCanvasPreviewUrl,
+  releaseCanvasPreviewUrls,
   processImageFileToBlob,
   getCachedImageByteSize,
   resolveImageOriginalByteSize,
@@ -68,6 +70,7 @@ import {
   lockAndMaskSpoilerElement,
 } from '../utils/spoilerCipher';
 import { renderLatexExpressionToHtml } from '../utils/latexMathEngine';
+import { triggerHaptic } from '../utils/haptics';
 
 interface WritingWorkspaceProps {
   vaultMode?: VaultMode;
@@ -79,6 +82,7 @@ interface WritingWorkspaceProps {
   onAddCustomFont: (font: CustomFontItem) => void;
   micSettings: MicRecordingSettings;
   registerBackHandler?: (fn: () => void) => void;
+  startInEditMode?: boolean;
 }
 
 interface CanvasHistorySnapshot {
@@ -142,7 +146,7 @@ function formatTimeStamp(ms: number): string {
 
 interface CanvasDraggableImageCardProps {
   img: CanvasDraggableImage;
-  resolvedSrc: string | null;
+  scrollRootRef: React.RefObject<HTMLDivElement | null>;
   isReadingMode: boolean;
   isSelected: boolean;
   onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => void;
@@ -154,7 +158,7 @@ interface CanvasDraggableImageCardProps {
 
 const CanvasDraggableImageCard: React.FC<CanvasDraggableImageCardProps> = ({
   img,
-  resolvedSrc,
+  scrollRootRef,
   isReadingMode,
   isSelected,
   onPointerDown,
@@ -163,12 +167,77 @@ const CanvasDraggableImageCard: React.FC<CanvasDraggableImageCardProps> = ({
   onPointerCancel,
   onClick,
 }) => {
+  const cardRef = useRef<HTMLDivElement | null>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
+  const [isNearViewport, setIsNearViewport] = useState<boolean>(true);
+  const [resolvedSrc, setResolvedSrc] = useState<string>(() =>
+    getCanvasPreviewUrl(img.dataUrl) || getImageObjectUrl(img.dataUrl) || ''
+  );
   const [isLoaded, setIsLoaded] = useState<boolean>(false);
   const [hasError, setHasError] = useState<boolean>(false);
 
+  // Viewport Virtualization: unload off-screen GPU textures (>360px away) and re-hydrate smoothly near viewport
+  useEffect(() => {
+    const el = cardRef.current;
+    if (!el || typeof IntersectionObserver === 'undefined') {
+      setIsNearViewport(true);
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (entry) {
+          setIsNearViewport(entry.isIntersecting);
+        }
+      },
+      {
+        root: scrollRootRef.current || null,
+        rootMargin: '360px 0px',
+        threshold: 0,
+      }
+    );
+
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [scrollRootRef]);
+
+  // Lazy preview hydration only while near viewport (crisp 2x Retina preview, capped at 720px)
+  useEffect(() => {
+    let active = true;
+    if (!isNearViewport || !img.dataUrl) {
+      return () => {
+        active = false;
+      };
+    }
+
+    const cached = getCanvasPreviewUrl(img.dataUrl) || getImageObjectUrl(img.dataUrl);
+    if (cached) {
+      setResolvedSrc(cached);
+      return () => {
+        active = false;
+      };
+    }
+
+    const targetPreviewPx = Math.min(
+      720,
+      Math.max(360, Math.round((img.width || 240) * (window.devicePixelRatio || 2)))
+    );
+
+    ensureCanvasPreviewUrl(img.dataUrl, targetPreviewPx).then((url) => {
+      if (active && url) {
+        setResolvedSrc(url);
+      }
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [img.dataUrl, img.width, isNearViewport]);
+
   const isValidRenderableSrc = Boolean(
-    resolvedSrc &&
+    isNearViewport &&
+      resolvedSrc &&
       (resolvedSrc.startsWith('blob:') ||
         resolvedSrc.startsWith('data:') ||
         resolvedSrc.startsWith('http') ||
@@ -195,6 +264,7 @@ const CanvasDraggableImageCard: React.FC<CanvasDraggableImageCardProps> = ({
 
   return (
     <div
+      ref={cardRef}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
@@ -256,6 +326,7 @@ const CanvasDraggableImageCard: React.FC<CanvasDraggableImageCardProps> = ({
           alt="Canvas media"
           referrerPolicy="no-referrer"
           draggable={false}
+          decoding="async"
           onLoad={() => {
             setIsLoaded(true);
             setHasError(false);
@@ -283,14 +354,17 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
   onAddCustomFont,
   micSettings,
   registerBackHandler,
+  startInEditMode = false,
 }) => {
   const stableLogIdRef = useRef<string>(
     initialLog?.id || `log_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
   );
   const stableCreatedAtRef = useRef<number>(initialLog?.createdAt || Date.now());
 
-  // Saved diaries open in Reading Mode by default; new diaries open in Editing Mode
-  const [isReadingMode, setIsReadingMode] = useState<boolean>(() => Boolean(initialLog));
+  // Saved diaries open in Reading Mode by default; new/shared drafts open in Editing Mode
+  const [isReadingMode, setIsReadingMode] = useState<boolean>(
+    () => Boolean(initialLog) && !startInEditMode
+  );
 
   const [heading, setHeading] = useState<string>(initialLog?.heading || '');
   const [pfpDataUrl, setPfpDataUrl] = useState<string | null>(
@@ -368,31 +442,43 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
 
   useEffect(() => {
     let active = true;
-    const resolveImages = async () => {
+    const resolveWorkspaceHeaderAndBg = async () => {
       let needsRerender = false;
-      if (pfpDataUrl && !getImageObjectUrl(pfpDataUrl)) {
-        await ensureImageObjectUrl(pfpDataUrl);
+      if (pfpDataUrl && !getCanvasPreviewUrl(pfpDataUrl) && !getImageObjectUrl(pfpDataUrl)) {
+        await ensureCanvasPreviewUrl(pfpDataUrl, 192);
         needsRerender = true;
       }
-      if (canvasBgDataUrl && !getImageObjectUrl(canvasBgDataUrl)) {
-        await ensureImageObjectUrl(canvasBgDataUrl);
+      if (
+        canvasBgDataUrl &&
+        !getCanvasPreviewUrl(canvasBgDataUrl) &&
+        !getImageObjectUrl(canvasBgDataUrl)
+      ) {
+        await ensureCanvasPreviewUrl(canvasBgDataUrl, 1080);
         needsRerender = true;
-      }
-      for (const im of canvasImages) {
-        if (im.dataUrl && !getImageObjectUrl(im.dataUrl)) {
-          await ensureImageObjectUrl(im.dataUrl);
-          needsRerender = true;
-        }
       }
       if (active && needsRerender) {
         setMediaResolveTick((t) => t + 1);
       }
     };
-    resolveImages();
+    resolveWorkspaceHeaderAndBg();
     return () => {
       active = false;
     };
-  }, [pfpDataUrl, canvasBgDataUrl, canvasImages]);
+  }, [pfpDataUrl, canvasBgDataUrl]);
+
+  // Release canvas preview & image Object URLs from RAM immediately when closing a diary workspace
+  const latestMediaRefsForCleanupRef = useRef<string[]>([]);
+  latestMediaRefsForCleanupRef.current = [
+    ...(canvasBgDataUrl ? [canvasBgDataUrl] : []),
+    ...canvasImages.map((im) => im.dataUrl).filter(Boolean),
+  ];
+  useEffect(() => {
+    return () => {
+      if (latestMediaRefsForCleanupRef.current.length > 0) {
+        releaseCanvasPreviewUrls(latestMediaRefsForCleanupRef.current);
+      }
+    };
+  }, []);
 
   // Free-dragging + 2-finger pinch resize & rotate state for Canvas Images
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
@@ -413,6 +499,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
 
   const selectAudioCardSafely = (audioId: string) => {
     lastAudioSelectTimestampRef.current = Date.now();
+    triggerHaptic('tap');
     setSelectedCanvasAudioId(audioId);
     setSelectedCanvasImgId(null);
   };
@@ -1353,8 +1440,10 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
       !initialLog || contentEdited
     );
     if (!hasAnyEntry) {
+      triggerHaptic('reject');
       return;
     }
+    triggerHaptic('confirm');
     scheduleAndroidNativeReminder(
       log.id,
       `Likkho: ${log.heading}`,
@@ -1546,6 +1635,9 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     if (isReadingMode) return;
     e.stopPropagation();
     e.currentTarget.setPointerCapture(e.pointerId);
+    if (selectedCanvasImgId !== img.id) {
+      triggerHaptic('tap');
+    }
     setSelectedCanvasImgId(img.id);
     setSelectedCanvasAudioId(null);
 
@@ -1791,7 +1883,10 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
           {initialLog && onDeleteLog && (
             <button
               type="button"
-              onClick={() => onDeleteLog(initialLog.id)}
+              onClick={() => {
+                triggerHaptic('heavy');
+                onDeleteLog(initialLog.id);
+              }}
               className="flex h-10 w-9 items-center justify-center border border-transparent text-[var(--wiki-muted)] hover:text-[#b32424]"
               title="Delete entry"
               aria-label="Delete entry"
@@ -1802,7 +1897,10 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
 
           <button
             type="button"
-            onClick={() => setShowReminderModal(true)}
+            onClick={() => {
+              triggerHaptic('tick');
+              setShowReminderModal(true);
+            }}
             className={`flex h-10 items-center gap-1 border px-2.5 text-xs font-medium transition-colors ${
               reminderAt && reminderAt > Date.now()
                 ? 'border-[#3366cc] bg-[#3366cc]/10 text-[#3366cc]'
@@ -1821,7 +1919,10 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
           {isReadingMode ? (
             <button
               type="button"
-              onClick={() => setIsReadingMode(false)}
+              onClick={() => {
+                triggerHaptic('tap');
+                setIsReadingMode(false);
+              }}
               className="flex h-10 items-center gap-1.5 bg-[#3366cc] px-3.5 text-xs font-semibold text-white hover:bg-[#2a56b0] active:scale-[0.98] transition-all"
             >
               <Pencil className="h-4 w-4" />
@@ -2435,7 +2536,11 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
           <div
             className="pointer-events-none absolute inset-0 z-0 bg-cover bg-center bg-no-repeat"
             style={{
-              backgroundImage: `url(${getImageObjectUrl(canvasBgDataUrl) || canvasBgDataUrl})`,
+              backgroundImage: `url(${
+                getCanvasPreviewUrl(canvasBgDataUrl) ||
+                getImageObjectUrl(canvasBgDataUrl) ||
+                canvasBgDataUrl
+              })`,
               opacity: canvasBgOpacity,
             }}
           />
@@ -2464,12 +2569,12 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
             }
           }}
         >
-          {/* Free-Draggable, Pinch-Resizable & Pinch-Rotatable Images Layer on Canvas (with Skeleton Loader while hydrating/decoding) */}
+          {/* Free-Draggable, Pinch-Resizable & Pinch-Rotatable Images Layer on Canvas (Lightweight Preview + Viewport Virtualization) */}
           {canvasImages.map((img) => (
             <CanvasDraggableImageCard
               key={img.id}
               img={img}
-              resolvedSrc={getImageObjectUrl(img.dataUrl) || img.dataUrl}
+              scrollRootRef={canvasContainerRef}
               isReadingMode={isReadingMode}
               isSelected={!isReadingMode && selectedCanvasImgId === img.id}
               onPointerDown={(e) => handleStartDragImage(e, img)}

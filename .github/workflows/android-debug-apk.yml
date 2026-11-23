@@ -8,6 +8,12 @@ on:
   pull_request:
     branches: [ main, master ]
   workflow_dispatch:
+    inputs:
+      build_release:
+        description: 'Build & publish signed Release APK/AAB (only when releasing a version)'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -117,16 +123,23 @@ jobs:
             sed -i 's/<\/activity>/    <intent-filter>\n                <action android:name="android.intent.action.VIEW" \/>\n                <action android:name="android.intent.action.EDIT" \/>\n                <category android:name="android.intent.category.DEFAULT" \/>\n                <category android:name="android.intent.category.BROWSABLE" \/>\n                <data android:scheme="content" \/>\n                <data android:scheme="file" \/>\n                <data android:mimeType="*\/*" \/>\n                <data android:host="*" \/>\n                <data android:pathSuffix=".likkho" \/>\n                <data android:pathPattern=".*\\.likkho" \/>\n                <data android:pathPattern=".*\\..*\\.likkho" \/>\n                <data android:pathPattern=".*\\..*\\..*\\.likkho" \/>\n                <data android:pathPattern=".*\\..*\\..*\\..*\\.likkho" \/>\n            <\/intent-filter>\n            <intent-filter>\n                <action android:name="android.intent.action.VIEW" \/>\n                <action android:name="android.intent.action.EDIT" \/>\n                <category android:name="android.intent.category.DEFAULT" \/>\n                <category android:name="android.intent.category.BROWSABLE" \/>\n                <data android:scheme="content" \/>\n                <data android:scheme="file" \/>\n                <data android:mimeType="application\/x-likkho" \/>\n                <data android:mimeType="application\/vnd.likkho.diary" \/>\n            <\/intent-filter>\n            <intent-filter>\n                <action android:name="android.intent.action.VIEW" \/>\n                <category android:name="android.intent.category.DEFAULT" \/>\n                <category android:name="android.intent.category.BROWSABLE" \/>\n                <data android:scheme="content" \/>\n                <data android:scheme="file" \/>\n                <data android:mimeType="application\/x-likkho" \/>\n                <data android:mimeType="application\/octet-stream" \/>\n                <data android:mimeType="application\/zip" \/>\n                <data android:mimeType="application\/vnd.likkho.diary" \/>\n                <data android:pathSuffix=".likkho" \/>\n                <data android:pathPattern=".*\\.likkho" \/>\n            <\/intent-filter>\n        <\/activity>/' "$MANIFEST"
           fi
 
+          if ! grep -q "android.intent.action.SEND" "$MANIFEST"; then
+            sed -i 's/<\/activity>/    <intent-filter>\n                <action android:name="android.intent.action.SEND" \/>\n                <category android:name="android.intent.category.DEFAULT" \/>\n                <data android:mimeType="text\/plain" \/>\n                <data android:mimeType="image\/*" \/>\n            <\/intent-filter>\n        <\/activity>/' "$MANIFEST"
+          fi
+
           if ! grep -q "android.app.shortcuts" "$MANIFEST"; then
             sed -i 's/<\/activity>/    <meta-data android:name="android.app.shortcuts" android:resource="@xml\/shortcuts" \/>\n        <\/activity>/' "$MANIFEST"
           fi
 
-          mkdir -p android/app/src/main/res/xml android/app/src/main/res/values
+          mkdir -p android/app/src/main/res/xml android/app/src/main/res/values android/app/src/main/res/layout android/app/src/main/res/drawable
           cat << 'EOF' > android/app/src/main/res/values/likkho_strings.xml
           <?xml version="1.0" encoding="utf-8"?>
           <resources>
               <string name="quick_note_short_label">Quick Note</string>
               <string name="quick_note_long_label">Create Quick Note</string>
+              <string name="new_diary_short_label">New Diary</string>
+              <string name="new_diary_long_label">Write New Diary</string>
+              <string name="widget_description">Latest Quick Note &amp; one-tap Diary / Quick Note capture</string>
           </resources>
           EOF
 
@@ -144,7 +157,158 @@ jobs:
                       android:targetPackage="com.likkho.diary"
                       android:targetClass="com.likkho.diary.MainActivity" />
               </shortcut>
+              <shortcut
+                  android:shortcutId="new_diary"
+                  android:enabled="true"
+                  android:icon="@android:drawable/ic_input_add"
+                  android:shortcutShortLabel="@string/new_diary_short_label"
+                  android:shortcutLongLabel="@string/new_diary_long_label">
+                  <intent
+                      android:action="com.likkho.diary.ACTION_NEW_DIARY"
+                      android:targetPackage="com.likkho.diary"
+                      android:targetClass="com.likkho.diary.MainActivity" />
+              </shortcut>
           </shortcuts>
+          EOF
+
+          cat << 'EOF' > android/app/src/main/res/drawable/likkho_widget_bg.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+              <solid android:color="#FFFFFF" />
+              <stroke android:width="1dp" android:color="#A2A9B1" />
+              <corners android:radius="4dp" />
+          </shape>
+          EOF
+
+          cat << 'EOF' > android/app/src/main/res/drawable/likkho_widget_btn_primary.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+              <solid android:color="#3366CC" />
+              <corners android:radius="3dp" />
+          </shape>
+          EOF
+
+          cat << 'EOF' > android/app/src/main/res/drawable/likkho_widget_btn_secondary.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+              <solid android:color="#F8F9FA" />
+              <stroke android:width="1dp" android:color="#A2A9B1" />
+              <corners android:radius="3dp" />
+          </shape>
+          EOF
+
+          cat << 'EOF' > android/app/src/main/res/layout/likkho_widget_layout.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+              android:id="@+id/widget_root"
+              android:layout_width="match_parent"
+              android:layout_height="match_parent"
+              android:background="@drawable/likkho_widget_bg"
+              android:orientation="vertical"
+              android:padding="12dp">
+
+              <LinearLayout
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:gravity="center_vertical"
+                  android:orientation="horizontal">
+
+                  <LinearLayout
+                      android:layout_width="0dp"
+                      android:layout_height="wrap_content"
+                      android:layout_weight="1"
+                      android:orientation="vertical">
+
+                      <TextView
+                          android:layout_width="wrap_content"
+                          android:layout_height="wrap_content"
+                          android:fontFamily="serif"
+                          android:text="Likkho"
+                          android:textColor="#000000"
+                          android:textSize="16sp"
+                          android:textStyle="bold" />
+
+                      <TextView
+                          android:layout_width="wrap_content"
+                          android:layout_height="wrap_content"
+                          android:text="Quick Capture"
+                          android:textColor="#54595D"
+                          android:textSize="10sp" />
+                  </LinearLayout>
+
+                  <TextView
+                      android:id="@+id/widget_btn_new_diary"
+                      android:layout_width="wrap_content"
+                      android:layout_height="30dp"
+                      android:layout_marginEnd="6dp"
+                      android:background="@drawable/likkho_widget_btn_secondary"
+                      android:gravity="center"
+                      android:paddingStart="10dp"
+                      android:paddingEnd="10dp"
+                      android:text="+ Diary"
+                      android:textColor="#202122"
+                      android:textSize="11sp"
+                      android:textStyle="bold" />
+
+                  <TextView
+                      android:id="@+id/widget_btn_quick_note"
+                      android:layout_width="wrap_content"
+                      android:layout_height="30dp"
+                      android:background="@drawable/likkho_widget_btn_primary"
+                      android:gravity="center"
+                      android:paddingStart="10dp"
+                      android:paddingEnd="10dp"
+                      android:text="+ Quick Note"
+                      android:textColor="#FFFFFF"
+                      android:textSize="11sp"
+                      android:textStyle="bold" />
+              </LinearLayout>
+
+              <TextView
+                  android:layout_width="match_parent"
+                  android:layout_height="1dp"
+                  android:layout_marginTop="8dp"
+                  android:layout_marginBottom="8dp"
+                  android:background="#EAECF0" />
+
+              <TextView
+                  android:id="@+id/widget_note_title"
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:ellipsize="end"
+                  android:maxLines="1"
+                  android:text="No active quick note"
+                  android:textColor="#000000"
+                  android:textSize="13sp"
+                  android:textStyle="bold" />
+
+              <TextView
+                  android:id="@+id/widget_note_body"
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:layout_marginTop="2dp"
+                  android:ellipsize="end"
+                  android:maxLines="2"
+                  android:text="Tap + Quick Note to pin a note here &amp; notification"
+                  android:textColor="#54595D"
+                  android:textSize="11sp" />
+          </LinearLayout>
+          EOF
+
+          cat << 'EOF' > android/app/src/main/res/xml/likkho_widget_info.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+              android:description="@string/widget_description"
+              android:initialLayout="@layout/likkho_widget_layout"
+              android:minHeight="110dp"
+              android:minResizeHeight="80dp"
+              android:minResizeWidth="180dp"
+              android:minWidth="250dp"
+              android:resizeMode="horizontal|vertical"
+              android:targetCellHeight="2"
+              android:targetCellWidth="4"
+              android:updatePeriodMillis="1800000"
+              android:widgetCategory="home_screen" />
           EOF
 
           if [ -f android/app/src/main/res/xml/file_paths.xml ]; then
@@ -186,9 +350,9 @@ jobs:
           </resources>
           EOF
 
-          # Register ReminderReceiver, QuickNoteReceiver, MicForegroundService and QuickNoteTileService inside <application>
-          if ! grep -q "QuickNoteTileService" "$MANIFEST"; then
-            sed -i 's/<\/application>/    <receiver android:name=".ReminderReceiver" android:exported="false" \/>\n        <receiver android:name=".QuickNoteReceiver" android:exported="false" \/>\n        <service android:name=".MicForegroundService" android:exported="false" android:stopWithTask="false" android:foregroundServiceType="microphone" \/>\n        <service android:name=".QuickNoteTileService" android:label="Quick Note" android:icon="@android:drawable\/ic_menu_edit" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE" android:exported="true">\n            <intent-filter>\n                <action android:name="android.service.quicksettings.action.QS_TILE" \/>\n            <\/intent-filter>\n        <\/service>\n    <\/application>/' "$MANIFEST"
+          # Register ReminderReceiver, QuickNoteReceiver, AudioControlReceiver, LikkhoWidgetProvider, MicForegroundService and QuickNoteTileService inside <application>
+          if ! grep -q "LikkhoWidgetProvider" "$MANIFEST"; then
+            sed -i 's/<\/application>/    <receiver android:name=".ReminderReceiver" android:exported="false" \/>\n        <receiver android:name=".QuickNoteReceiver" android:exported="false" \/>\n        <receiver android:name=".AudioControlReceiver" android:exported="false" \/>\n        <receiver android:name=".LikkhoWidgetProvider" android:exported="true" android:label="Likkho Quick Note \&amp; Diary">\n            <intent-filter>\n                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" \/>\n            <\/intent-filter>\n            <meta-data android:name="android.appwidget.provider" android:resource="@xml\/likkho_widget_info" \/>\n        <\/receiver>\n        <service android:name=".MicForegroundService" android:exported="false" android:stopWithTask="false" android:foregroundServiceType="microphone" \/>\n        <service android:name=".QuickNoteTileService" android:label="Quick Note" android:icon="@android:drawable\/ic_menu_edit" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE" android:exported="true">\n            <intent-filter>\n                <action android:name="android.service.quicksettings.action.QS_TILE" \/>\n            <\/intent-filter>\n        <\/service>\n    <\/application>/' "$MANIFEST"
           fi
 
           # Set Likkho launcher icon (white background with black "Likkho" text) in density-specific mipmap folders only
@@ -306,7 +470,124 @@ jobs:
           }
           EOF
 
-          # 1c. Create QuickNoteTileService.java for Android Quick Settings Shade Tile
+          # 1c. Create AudioControlReceiver.java for Audio Playback Notification controls (Play/Pause & Stop)
+          cat << 'EOF' > "$PKG_DIR/AudioControlReceiver.java"
+          package com.likkho.diary;
+
+          import android.content.BroadcastReceiver;
+          import android.content.Context;
+          import android.content.Intent;
+
+          public class AudioControlReceiver extends BroadcastReceiver {
+              public static final String ACTION_TOGGLE = "com.likkho.diary.ACTION_AUDIO_TOGGLE";
+              public static final String ACTION_STOP = "com.likkho.diary.ACTION_AUDIO_STOP";
+
+              @Override
+              public void onReceive(Context context, Intent intent) {
+                  if (intent == null || MainActivity.currentInstance == null) return;
+                  String action = intent.getAction();
+                  if (ACTION_TOGGLE.equals(action)) {
+                      MainActivity.currentInstance.toggleNativeAudioFromNotification();
+                  } else if (ACTION_STOP.equals(action)) {
+                      MainActivity.currentInstance.stopNativeAudioPlayback(null);
+                  }
+              }
+          }
+          EOF
+
+          # 1c2. Create LikkhoWidgetProvider.java for Home Screen Widget
+          cat << 'EOF' > "$PKG_DIR/LikkhoWidgetProvider.java"
+          package com.likkho.diary;
+
+          import android.app.PendingIntent;
+          import android.appwidget.AppWidgetManager;
+          import android.appwidget.AppWidgetProvider;
+          import android.content.ComponentName;
+          import android.content.Context;
+          import android.content.Intent;
+          import android.content.SharedPreferences;
+          import android.widget.RemoteViews;
+
+          public class LikkhoWidgetProvider extends AppWidgetProvider {
+              @Override
+              public void onUpdate(Context context, AppWidgetManager appWidgetManager, int[] appWidgetIds) {
+                  for (int appWidgetId : appWidgetIds) {
+                      updateSingleWidget(context, appWidgetManager, appWidgetId);
+                  }
+              }
+
+              public static void updateAllWidgets(Context context) {
+                  if (context == null) return;
+                  try {
+                      AppWidgetManager manager = AppWidgetManager.getInstance(context);
+                      if (manager == null) return;
+                      int[] ids = manager.getAppWidgetIds(new ComponentName(context, LikkhoWidgetProvider.class));
+                      if (ids != null && ids.length > 0) {
+                          for (int id : ids) {
+                              updateSingleWidget(context, manager, id);
+                          }
+                      }
+                  } catch (Exception ignored) {}
+              }
+
+              private static void updateSingleWidget(Context context, AppWidgetManager manager, int widgetId) {
+                  RemoteViews views = new RemoteViews(context.getPackageName(), R.layout.likkho_widget_layout);
+
+                  SharedPreferences prefs = context.getSharedPreferences("likkho_saf_prefs", Context.MODE_PRIVATE);
+                  String title = prefs.getString("widget_quick_note_title", "");
+                  String body = prefs.getString("widget_quick_note_body", "");
+
+                  if (title == null || title.trim().isEmpty()) {
+                      views.setTextViewText(R.id.widget_note_title, "No active quick note");
+                      views.setTextViewText(R.id.widget_note_body, "Tap + Quick Note to pin a note here & notification");
+                  } else {
+                      views.setTextViewText(R.id.widget_note_title, title.trim());
+                      views.setTextViewText(
+                          R.id.widget_note_body,
+                          (body != null && !body.trim().isEmpty()) ? body.trim() : "Pinned quick note"
+                      );
+                  }
+
+                  Intent openAppIntent = new Intent(context, MainActivity.class);
+                  openAppIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                  PendingIntent openAppPi = PendingIntent.getActivity(
+                      context,
+                      301,
+                      openAppIntent,
+                      PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+                  );
+                  views.setOnClickPendingIntent(R.id.widget_root, openAppPi);
+
+                  Intent newDiaryIntent = new Intent(context, MainActivity.class);
+                  newDiaryIntent.setAction("com.likkho.diary.ACTION_NEW_DIARY");
+                  newDiaryIntent.putExtra("action", "new_diary");
+                  newDiaryIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                  PendingIntent newDiaryPi = PendingIntent.getActivity(
+                      context,
+                      302,
+                      newDiaryIntent,
+                      PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+                  );
+                  views.setOnClickPendingIntent(R.id.widget_btn_new_diary, newDiaryPi);
+
+                  Intent quickNoteIntent = new Intent(context, MainActivity.class);
+                  quickNoteIntent.setAction("com.likkho.diary.ACTION_QUICK_NOTE");
+                  quickNoteIntent.putExtra("action", "quick_note");
+                  quickNoteIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                  PendingIntent quickNotePi = PendingIntent.getActivity(
+                      context,
+                      303,
+                      quickNoteIntent,
+                      PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+                  );
+                  views.setOnClickPendingIntent(R.id.widget_btn_quick_note, quickNotePi);
+
+                  manager.updateAppWidget(widgetId, views);
+              }
+          }
+          EOF
+
+          # 1d. Create QuickNoteTileService.java for Android Quick Settings Shade Tile
           cat << 'EOF' > "$PKG_DIR/QuickNoteTileService.java"
           package com.likkho.diary;
 
@@ -667,6 +948,8 @@ jobs:
           import android.app.NotificationChannel;
           import android.app.NotificationManager;
           import android.app.PendingIntent;
+          import android.appwidget.AppWidgetManager;
+          import android.content.ComponentName;
           import android.content.ContentResolver;
           import android.content.ContentValues;
           import android.content.Context;
@@ -676,28 +959,50 @@ jobs:
           import android.content.pm.ShortcutInfo;
           import android.content.pm.ShortcutManager;
           import android.database.Cursor;
+          import android.graphics.Bitmap;
+          import android.graphics.BitmapFactory;
+          import android.graphics.Color;
+          import android.graphics.Typeface;
+          import android.graphics.drawable.ColorDrawable;
           import android.graphics.drawable.Icon;
           import android.hardware.biometrics.BiometricManager;
           import android.hardware.biometrics.BiometricPrompt;
+          import android.media.AudioAttributes;
+          import android.media.MediaPlayer;
+          import android.media.PlaybackParams;
           import android.net.Uri;
           import android.os.Build;
           import android.os.Bundle;
           import android.os.CancellationSignal;
           import android.os.Environment;
+          import android.os.Handler;
+          import android.os.Looper;
           import android.provider.DocumentsContract;
           import android.provider.MediaStore;
+          import android.provider.OpenableColumns;
           import android.util.Base64;
+          import android.view.Gravity;
+          import android.view.HapticFeedbackConstants;
+          import android.view.View;
+          import android.view.ViewGroup;
           import android.webkit.JavascriptInterface;
           import android.webkit.PermissionRequest;
           import android.webkit.ValueCallback;
           import android.webkit.WebChromeClient;
           import android.webkit.WebView;
+          import android.widget.FrameLayout;
+          import android.widget.LinearLayout;
+          import android.widget.TextView;
           import android.widget.Toast;
           import androidx.activity.OnBackPressedCallback;
+          import androidx.annotation.NonNull;
           import androidx.core.app.ActivityCompat;
           import androidx.core.app.NotificationCompat;
           import androidx.core.content.ContextCompat;
+          import androidx.core.view.ViewCompat;
           import androidx.core.view.WindowCompat;
+          import androidx.core.view.WindowInsetsAnimationCompat;
+          import androidx.core.view.WindowInsetsCompat;
           import androidx.core.view.WindowInsetsControllerCompat;
           import com.getcapacitor.BridgeActivity;
           import org.json.JSONArray;
@@ -770,11 +1075,38 @@ jobs:
               private boolean isFullScreenEnabled = false;
               private android.view.View recentsPrivacyOverlayView = null;
               private volatile String pendingIncomingLikkhoBase64 = null;
+              private volatile String pendingIncomingShareJson = null;
               private volatile boolean pendingQuickNoteLaunch = false;
+              private volatile boolean pendingNewDiaryLaunch = false;
               private String pendingNotifNoteId = null;
               private String pendingNotifTitle = null;
               private String pendingNotifItemsJson = null;
               private android.view.ActionMode currentActionMode = null;
+              private View nativeLaunchOverlayView = null;
+              private volatile boolean launchOverlayDismissed = false;
+
+              // Native Audio Streaming Engine (0-RAM WebView playback + Notification controls)
+              private MediaPlayer nativeMediaPlayer = null;
+              private String activeAudioId = null;
+              private String activeAudioTitle = "Likkho Audio";
+              private float activeAudioSpeed = 1.0f;
+              private final Handler audioProgressHandler = new Handler(Looper.getMainLooper());
+              private final Runnable audioProgressRunnable = new Runnable() {
+                  @Override
+                  public void run() {
+                      if (nativeMediaPlayer != null && activeAudioId != null) {
+                          try {
+                              boolean playing = nativeMediaPlayer.isPlaying();
+                              int posMs = nativeMediaPlayer.getCurrentPosition();
+                              int durMs = nativeMediaPlayer.getDuration();
+                              emitNativeAudioProgress(activeAudioId, posMs / 1000.0, Math.max(0, durMs) / 1000.0, playing, false);
+                              if (playing) {
+                                  audioProgressHandler.postDelayed(this, 250);
+                              }
+                          } catch (Exception ignored) {}
+                      }
+                  }
+              };
 
               @Override
               public void onActionModeStarted(android.view.ActionMode mode) {
@@ -810,18 +1142,113 @@ jobs:
                   });
               }
 
+              private void showNativeLaunchOverlay(final String bgHex, final boolean isDark) {
+                  try {
+                      if (nativeLaunchOverlayView != null || launchOverlayDismissed) return;
+                      ViewGroup rootContent = findViewById(android.R.id.content);
+                      if (rootContent == null) return;
+
+                      FrameLayout veil = new FrameLayout(this);
+                      veil.setBackgroundColor(Color.parseColor(bgHex));
+                      veil.setClickable(true);
+                      veil.setFocusable(false);
+
+                      LinearLayout centerCol = new LinearLayout(this);
+                      centerCol.setOrientation(LinearLayout.VERTICAL);
+                      centerCol.setGravity(Gravity.CENTER);
+
+                      TextView wordmark = new TextView(this);
+                      wordmark.setText("Likkho");
+                      wordmark.setTypeface(Typeface.SERIF, Typeface.BOLD);
+                      wordmark.setTextSize(30);
+                      wordmark.setTextColor(Color.parseColor(isDark ? "#E6EDF3" : "#000000"));
+                      wordmark.setGravity(Gravity.CENTER);
+
+                      TextView subtitle = new TextView(this);
+                      subtitle.setText("Personal Knowledge Diary");
+                      subtitle.setTextSize(11);
+                      subtitle.setTextColor(Color.parseColor(isDark ? "#8B949E" : "#54595D"));
+                      subtitle.setGravity(Gravity.CENTER);
+                      LinearLayout.LayoutParams subLp = new LinearLayout.LayoutParams(
+                          ViewGroup.LayoutParams.WRAP_CONTENT,
+                          ViewGroup.LayoutParams.WRAP_CONTENT
+                      );
+                      subLp.topMargin = 10;
+                      subtitle.setLayoutParams(subLp);
+
+                      centerCol.addView(wordmark);
+                      centerCol.addView(subtitle);
+
+                      FrameLayout.LayoutParams centerLp = new FrameLayout.LayoutParams(
+                          ViewGroup.LayoutParams.WRAP_CONTENT,
+                          ViewGroup.LayoutParams.WRAP_CONTENT,
+                          Gravity.CENTER
+                      );
+                      veil.addView(centerCol, centerLp);
+
+                      rootContent.addView(
+                          veil,
+                          new FrameLayout.LayoutParams(
+                              ViewGroup.LayoutParams.MATCH_PARENT,
+                              ViewGroup.LayoutParams.MATCH_PARENT
+                          )
+                      );
+                      nativeLaunchOverlayView = veil;
+
+                      new Handler(Looper.getMainLooper()).postDelayed(this::dismissNativeLaunchOverlay, 650);
+                  } catch (Exception ignored) {}
+              }
+
+              private void dismissNativeLaunchOverlay() {
+                  runOnUiThread(() -> {
+                      if (launchOverlayDismissed) return;
+                      launchOverlayDismissed = true;
+                      final View overlay = nativeLaunchOverlayView;
+                      if (overlay == null) return;
+                      nativeLaunchOverlayView = null;
+                      try {
+                          overlay.animate()
+                              .alpha(0f)
+                              .setDuration(140)
+                              .withEndAction(() -> {
+                                  try {
+                                      android.view.ViewParent p = overlay.getParent();
+                                      if (p instanceof ViewGroup) {
+                                          ((ViewGroup) p).removeView(overlay);
+                                      }
+                                  } catch (Exception ignored) {}
+                              })
+                              .start();
+                      } catch (Exception e) {
+                          try {
+                              android.view.ViewParent p = overlay.getParent();
+                              if (p instanceof ViewGroup) {
+                                  ((ViewGroup) p).removeView(overlay);
+                              }
+                          } catch (Exception ignored) {}
+                      }
+                  });
+              }
+
               @Override
               public void onCreate(Bundle savedInstanceState) {
                   // Disable Android System Dark Mode (Night Mode) override at Activity level so Likkho controls its own Light/Dark status & navigation bars
                   androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_NO);
+
+                  // Read persisted theme BEFORE super.onCreate so initial window frame matches Light or Dark Mode with zero white flash
+                  SharedPreferences earlyPrefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+                  currentStatusBarHex = earlyPrefs.getString(KEY_STATUS_BAR_HEX, "#f8f9fa");
+                  currentNavBarHex = earlyPrefs.getString(KEY_NAV_BAR_HEX, "#ffffff");
+                  currentDarkIconsOnLightBar = earlyPrefs.getBoolean(KEY_DARK_ICONS_ON_LIGHT, true);
+                  isFullScreenEnabled = earlyPrefs.getBoolean(KEY_FULLSCREEN_ENABLED, false);
+                  try {
+                      if (getWindow() != null) {
+                          getWindow().setBackgroundDrawable(new ColorDrawable(Color.parseColor(currentNavBarHex)));
+                      }
+                  } catch (Exception ignored) {}
+
                   super.onCreate(savedInstanceState);
                   currentInstance = this;
-
-                  SharedPreferences initPrefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
-                  currentStatusBarHex = initPrefs.getString(KEY_STATUS_BAR_HEX, "#f8f9fa");
-                  currentNavBarHex = initPrefs.getString(KEY_NAV_BAR_HEX, "#ffffff");
-                  currentDarkIconsOnLightBar = initPrefs.getBoolean(KEY_DARK_ICONS_ON_LIGHT, true);
-                  isFullScreenEnabled = initPrefs.getBoolean(KEY_FULLSCREEN_ENABLED, false);
 
                   if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && getWindow() != null) {
                       getWindow().getDecorView().setForceDarkAllowed(false);
@@ -830,11 +1257,12 @@ jobs:
                   // Configure seamless Android OS Status Bar & Navigation Bar colors from the very first frame (no top/bottom mismatched gaps)
                   applyWindowSystemBarsColor(currentStatusBarHex, currentNavBarHex, currentDarkIconsOnLightBar);
                   applyWindowFullScreenMode(isFullScreenEnabled);
+                  showNativeLaunchOverlay(currentNavBarHex, !currentDarkIconsOnLightBar);
 
                   // Restore persisted App Passcode Protection state immediately on launch:
                   // - If Passcode is enabled: sets FLAG_SECURE (blocks screenshots & screen recording on every page + blanks Recent Apps preview) + Android 13+ setRecentsScreenshotEnabled(false)
                   // - If Passcode is NOT enabled: clears FLAG_SECURE so screenshots & screen recording are allowed
-                  isAppPasscodeProtected = initPrefs.getBoolean(KEY_PASSCODE_PROTECTED, false);
+                  isAppPasscodeProtected = earlyPrefs.getBoolean(KEY_PASSCODE_PROTECTED, false);
                   applyAppPasscodeProtection(isAppPasscodeProtected);
 
                   if (this.bridge != null && this.bridge.getWebView() != null) {
@@ -854,12 +1282,44 @@ jobs:
                       webView.setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null);
                       webView.setFocusable(true);
                       webView.setFocusableInTouchMode(true);
+                      webView.setHapticFeedbackEnabled(true);
+                      webView.setOverScrollMode(View.OVER_SCROLL_IF_CONTENT_SCROLLS);
+                      webView.setVerticalScrollBarEnabled(false);
                       webView.getSettings().setJavaScriptEnabled(true);
                       webView.getSettings().setDomStorageEnabled(true);
                       webView.getSettings().setAllowFileAccess(true);
                       webView.getSettings().setAllowContentAccess(true);
+                      webView.getSettings().setCacheMode(android.webkit.WebSettings.LOAD_DEFAULT);
                       webView.getSettings().setMediaPlaybackRequiresUserGesture(false);
                       webView.addJavascriptInterface(new LikkhoAndroidBridge(), "LikkhoNative");
+
+                      // Smooth frame-synced Gboard / IME animation for fullscreen mode without toolbar overlap
+                      ViewCompat.setWindowInsetsAnimationCallback(
+                          webView,
+                          new WindowInsetsAnimationCompat.Callback(WindowInsetsAnimationCompat.Callback.DISPATCH_MODE_CONTINUE_ON_SUBTREE) {
+                              @NonNull
+                              @Override
+                              public WindowInsetsCompat onProgress(
+                                  @NonNull WindowInsetsCompat insets,
+                                  @NonNull List<WindowInsetsAnimationCompat> runningAnimations
+                              ) {
+                                  if (isFullScreenEnabled) {
+                                      int imeBottom = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom;
+                                      webView.setPadding(0, 0, 0, Math.max(0, imeBottom));
+                                  } else if (webView.getPaddingBottom() != 0) {
+                                      webView.setPadding(0, 0, 0, 0);
+                                  }
+                                  return insets;
+                              }
+
+                              @Override
+                              public void onEnd(@NonNull WindowInsetsAnimationCompat animation) {
+                                  if (!isFullScreenEnabled && webView.getPaddingBottom() != 0) {
+                                      webView.setPadding(0, 0, 0, 0);
+                                  }
+                              }
+                          }
+                      );
 
                       // Check if Likkho was launched by tapping a .likkho file or Quick Settings/Shortcut
                       handleIncomingLikkhoIntent(getIntent());
@@ -941,6 +1401,80 @@ jobs:
                   handleQuickNoteIntent(intent);
               }
 
+              private boolean isLikelyLikkhoArchiveIntent(Intent intent, Uri candidateUri) {
+                  String mime = intent.getType() != null ? intent.getType().toLowerCase() : "";
+                  if (mime.contains("likkho")) return true;
+                  if (candidateUri != null) {
+                      String uriStr = candidateUri.toString().toLowerCase();
+                      if (uriStr.endsWith(".likkho")) return true;
+                      try (Cursor c = getContentResolver().query(candidateUri, new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+                          if (c != null && c.moveToFirst()) {
+                              String name = c.getString(0);
+                              if (name != null && name.toLowerCase().endsWith(".likkho")) {
+                                  return true;
+                              }
+                          }
+                      } catch (Exception ignored) {}
+                  }
+                  return false;
+              }
+
+              private String decodeAndCompressSharedImageToDataUrl(Uri uri) {
+                  if (uri == null) return "";
+                  BitmapFactory.Options boundsOpts = new BitmapFactory.Options();
+                  boundsOpts.inJustDecodeBounds = true;
+                  try (InputStream is1 = getContentResolver().openInputStream(uri)) {
+                      if (is1 == null) return "";
+                      BitmapFactory.decodeStream(is1, null, boundsOpts);
+                  } catch (Exception e) {
+                      return "";
+                  }
+                  int srcW = boundsOpts.outWidth;
+                  int srcH = boundsOpts.outHeight;
+                  if (srcW <= 0 || srcH <= 0) return "";
+
+                  int inSampleSize = 1;
+                  final int maxDim = 2560;
+                  while ((srcW / inSampleSize) > maxDim * 2 || (srcH / inSampleSize) > maxDim * 2) {
+                      inSampleSize *= 2;
+                  }
+
+                  BitmapFactory.Options decodeOpts = new BitmapFactory.Options();
+                  decodeOpts.inSampleSize = inSampleSize;
+                  Bitmap decoded = null;
+                  try (InputStream is2 = getContentResolver().openInputStream(uri)) {
+                      if (is2 == null) return "";
+                      decoded = BitmapFactory.decodeStream(is2, null, decodeOpts);
+                  } catch (Exception e) {
+                      return "";
+                  }
+                  if (decoded == null) return "";
+
+                  Bitmap finalBmp = decoded;
+                  try {
+                      int curW = decoded.getWidth();
+                      int curH = decoded.getHeight();
+                      int maxSide = Math.max(curW, curH);
+                      if (maxSide > maxDim) {
+                          float ratio = (float) maxDim / (float) maxSide;
+                          int dstW = Math.max(1, Math.round(curW * ratio));
+                          int dstH = Math.max(1, Math.round(curH * ratio));
+                          finalBmp = Bitmap.createScaledBitmap(decoded, dstW, dstH, true);
+                      }
+                      ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                      finalBmp.compress(Bitmap.CompressFormat.JPEG, 88, baos);
+                      byte[] jpegBytes = baos.toByteArray();
+                      return "data:image/jpeg;base64," + Base64.encodeToString(jpegBytes, Base64.NO_WRAP);
+                  } catch (Exception e) {
+                      return "";
+                  } finally {
+                      if (finalBmp != null && finalBmp != decoded) {
+                          finalBmp.recycle();
+                      }
+                      decoded.recycle();
+                  }
+              }
+
               private void handleIncomingLikkhoIntent(Intent intent) {
                   if (intent == null) return;
                   String action = intent.getAction();
@@ -948,12 +1482,48 @@ jobs:
                       return;
                   }
                   Uri dataUri = intent.getData();
-                  if (dataUri == null && Intent.ACTION_SEND.equals(action)) {
-                      dataUri = intent.getParcelableExtra(Intent.EXTRA_STREAM);
+                  Uri streamUri = Intent.ACTION_SEND.equals(action) ? intent.getParcelableExtra(Intent.EXTRA_STREAM) : null;
+                  if (streamUri == null && Intent.ACTION_SEND.equals(action) && intent.getClipData() != null && intent.getClipData().getItemCount() > 0) {
+                      streamUri = intent.getClipData().getItemAt(0).getUri();
                   }
-                  if (dataUri == null) return;
+                  Uri candidateUri = dataUri != null ? dataUri : streamUri;
 
-                  final Uri targetUri = dataUri;
+                  // 1. Handle Share-to-Likkho (text/plain or image/* from Gallery, Chrome, WhatsApp, etc.)
+                  if (Intent.ACTION_SEND.equals(action) && !isLikelyLikkhoArchiveIntent(intent, candidateUri)) {
+                      String subjectExtra = intent.getStringExtra(Intent.EXTRA_SUBJECT);
+                      if (subjectExtra == null || subjectExtra.trim().isEmpty()) {
+                          subjectExtra = intent.getStringExtra(Intent.EXTRA_TITLE);
+                      }
+                      CharSequence textCs = intent.getCharSequenceExtra(Intent.EXTRA_TEXT);
+                      String textExtra = textCs != null ? textCs.toString() : intent.getStringExtra(Intent.EXTRA_TEXT);
+                      final String finalTitle = subjectExtra != null ? subjectExtra : "";
+                      final String finalText = textExtra != null ? textExtra : "";
+                      final Uri finalImageUri = candidateUri;
+
+                      if (finalTitle.isEmpty() && finalText.isEmpty() && finalImageUri == null) {
+                          return;
+                      }
+
+                      new Thread(() -> {
+                          try {
+                              String imageDataUrl = finalImageUri != null ? decodeAndCompressSharedImageToDataUrl(finalImageUri) : "";
+                              if (finalTitle.isEmpty() && finalText.isEmpty() && imageDataUrl.isEmpty()) {
+                                  return;
+                              }
+                              JSONObject payload = new JSONObject();
+                              payload.put("title", finalTitle);
+                              payload.put("text", finalText);
+                              payload.put("imageDataUrl", imageDataUrl);
+                              pendingIncomingShareJson = payload.toString();
+                              notifyWebViewShareAvailable();
+                          } catch (Exception ignored) {}
+                      }).start();
+                      return;
+                  }
+
+                  // 2. Existing .likkho archive file unpack flow
+                  if (candidateUri == null) return;
+                  final Uri targetUri = candidateUri;
                   new Thread(() -> {
                       try (InputStream is = getContentResolver().openInputStream(targetUri)) {
                           if (is == null) return;
@@ -1004,6 +1574,11 @@ jobs:
                           activeBiometricCancelSignal = null;
                       } catch (Exception ignored) {}
                       notifyWebViewQuickNoteLaunch();
+                  } else if ("new_diary".equals(intent.getStringExtra("action")) ||
+                      "com.likkho.diary.ACTION_NEW_DIARY".equals(intent.getAction()) ||
+                      (intent.getData() != null && "new_diary".equals(intent.getData().getQueryParameter("action")))) {
+                      pendingNewDiaryLaunch = true;
+                      notifyWebViewNewDiaryLaunch();
                   }
               }
 
@@ -1034,6 +1609,36 @@ jobs:
                   });
               }
 
+              private void notifyWebViewNewDiaryLaunch() {
+                  runOnUiThread(() -> {
+                      if (bridge != null && bridge.getWebView() != null && pendingNewDiaryLaunch) {
+                          bridge.getWebView().evaluateJavascript(
+                              "(function(){ if(window.__onLikkhoNewDiaryAction){ return window.__onLikkhoNewDiaryAction() || 'QUEUED'; } return ''; })()",
+                              val -> {
+                                  if (val != null && val.contains("QUEUED")) {
+                                      pendingNewDiaryLaunch = false;
+                                  }
+                              }
+                          );
+                      }
+                  });
+              }
+
+              private void notifyWebViewShareAvailable() {
+                  runOnUiThread(() -> {
+                      if (bridge != null && bridge.getWebView() != null && pendingIncomingShareJson != null) {
+                          bridge.getWebView().postDelayed(() -> {
+                              if (bridge != null && bridge.getWebView() != null && pendingIncomingShareJson != null) {
+                                  bridge.getWebView().evaluateJavascript(
+                                      "(function(){ if(window.__onLikkhoIncomingShareAvailable){ return window.__onLikkhoIncomingShareAvailable() || 'RECEIVED'; } return ''; })()",
+                                      null
+                                  );
+                              }
+                          }, 350);
+                      }
+                  });
+              }
+
               private void checkPendingQuickNoteDone() {
                   SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
                   String noteId = prefs.getString("pending_done_quick_note_id", null);
@@ -1057,6 +1662,12 @@ jobs:
                   checkPendingQuickNoteDone();
                   if (pendingQuickNoteLaunch) {
                       notifyWebViewQuickNoteLaunch();
+                  }
+                  if (pendingNewDiaryLaunch) {
+                      notifyWebViewNewDiaryLaunch();
+                  }
+                  if (pendingIncomingShareJson != null) {
+                      notifyWebViewShareAvailable();
                   }
               }
 
@@ -1661,6 +2272,11 @@ jobs:
 
               public class LikkhoAndroidBridge {
                   @JavascriptInterface
+                  public void notifyAppReady() {
+                      dismissNativeLaunchOverlay();
+                  }
+
+                  @JavascriptInterface
                   public void clearNativeSelectionAndActionMode() {
                       dismissActionModeAndClearSelection();
                   }
@@ -1732,6 +2348,102 @@ jobs:
                   public String getNativeAudioFileUri(String filePath) {
                       if (filePath == null || filePath.isEmpty()) return "";
                       return "http://localhost/_capacitor_file_" + filePath;
+                  }
+
+                  @JavascriptInterface
+                  public boolean hasNativeAudioCacheFile(String audioId, String ext) {
+                      if (audioId == null || audioId.isEmpty()) return false;
+                      File f = resolveAudioCacheFile(audioId, ext);
+                      return f != null && f.exists() && f.length() > 0;
+                  }
+
+                  @JavascriptInterface
+                  public String getNativeAudioCacheFilePath(String audioId, String ext) {
+                      File f = resolveAudioCacheFile(audioId, ext);
+                      return f != null ? f.getAbsolutePath() : "";
+                  }
+
+                  @JavascriptInterface
+                  public boolean writeNativeAudioCacheChunk(String audioId, String ext, String base64Chunk, boolean isFirst) {
+                      if (audioId == null || audioId.isEmpty() || base64Chunk == null) return false;
+                      try {
+                          File f = resolveAudioCacheFile(audioId, ext);
+                          if (f == null) return false;
+                          byte[] raw = Base64.decode(base64Chunk, Base64.DEFAULT);
+                          FileOutputStream fos = new FileOutputStream(f, !isFirst);
+                          fos.write(raw);
+                          fos.flush();
+                          fos.close();
+                          return true;
+                      } catch (Exception e) {
+                          return false;
+                      }
+                  }
+
+                  @JavascriptInterface
+                  public boolean playNativeAudio(final String audioId, final String title, final String filePathOrUrl, final float playbackRate, final int startMs) {
+                      if (audioId == null || filePathOrUrl == null || filePathOrUrl.isEmpty()) return false;
+                      runOnUiThread(() -> startNativeAudioPlaybackInternal(audioId, title, filePathOrUrl, playbackRate, startMs));
+                      return true;
+                  }
+
+                  @JavascriptInterface
+                  public void pauseNativeAudio() {
+                      runOnUiThread(() -> {
+                          try {
+                              if (nativeMediaPlayer != null && nativeMediaPlayer.isPlaying()) {
+                                  nativeMediaPlayer.pause();
+                                  audioProgressHandler.removeCallbacks(audioProgressRunnable);
+                                  int posMs = nativeMediaPlayer.getCurrentPosition();
+                                  int durMs = nativeMediaPlayer.getDuration();
+                                  emitNativeAudioProgress(activeAudioId, posMs / 1000.0, Math.max(0, durMs) / 1000.0, false, false);
+                                  updateNativeAudioNotification(activeAudioTitle, false);
+                              }
+                          } catch (Exception ignored) {}
+                      });
+                  }
+
+                  @JavascriptInterface
+                  public void resumeNativeAudio() {
+                      runOnUiThread(() -> {
+                          try {
+                              if (nativeMediaPlayer != null && !nativeMediaPlayer.isPlaying()) {
+                                  applySpeedToPlayer(nativeMediaPlayer, activeAudioSpeed);
+                                  nativeMediaPlayer.start();
+                                  audioProgressHandler.removeCallbacks(audioProgressRunnable);
+                                  audioProgressHandler.post(audioProgressRunnable);
+                                  updateNativeAudioNotification(activeAudioTitle, true);
+                              }
+                          } catch (Exception ignored) {}
+                      });
+                  }
+
+                  @JavascriptInterface
+                  public void seekNativeAudio(final int posMs) {
+                      runOnUiThread(() -> {
+                          try {
+                              if (nativeMediaPlayer != null) {
+                                  nativeMediaPlayer.seekTo(Math.max(0, posMs));
+                                  int durMs = nativeMediaPlayer.getDuration();
+                                  emitNativeAudioProgress(activeAudioId, Math.max(0, posMs) / 1000.0, Math.max(0, durMs) / 1000.0, nativeMediaPlayer.isPlaying(), false);
+                              }
+                          } catch (Exception ignored) {}
+                      });
+                  }
+
+                  @JavascriptInterface
+                  public void setNativeAudioSpeed(final float rate) {
+                      runOnUiThread(() -> {
+                          activeAudioSpeed = Math.max(0.5f, Math.min(2.5f, rate));
+                          if (nativeMediaPlayer != null) {
+                              applySpeedToPlayer(nativeMediaPlayer, activeAudioSpeed);
+                          }
+                      });
+                  }
+
+                  @JavascriptInterface
+                  public void stopNativeAudio(final String onlyIfAudioId) {
+                      runOnUiThread(() -> stopNativeAudioPlayback(onlyIfAudioId));
                   }
 
                   @JavascriptInterface
@@ -2435,6 +3147,35 @@ jobs:
                   }
 
                   @JavascriptInterface
+                  public boolean hasPendingNewDiaryAction() {
+                      return pendingNewDiaryLaunch;
+                  }
+
+                  @JavascriptInterface
+                  public boolean consumePendingNewDiaryAction() {
+                      boolean val = pendingNewDiaryLaunch;
+                      pendingNewDiaryLaunch = false;
+                      return val;
+                  }
+
+                  @JavascriptInterface
+                  public String consumePendingIncomingShare() {
+                      String data = pendingIncomingShareJson;
+                      pendingIncomingShareJson = null;
+                      return data != null ? data : "";
+                  }
+
+                  @JavascriptInterface
+                  public void syncHomeWidgetQuickNote(final String title, final String summary) {
+                      getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                          .edit()
+                          .putString("widget_quick_note_title", title != null ? title : "")
+                          .putString("widget_quick_note_body", summary != null ? summary : "")
+                          .apply();
+                      runOnUiThread(() -> LikkhoWidgetProvider.updateAllWidgets(MainActivity.this));
+                  }
+
+                  @JavascriptInterface
                   public void postQuickNoteNotification(String noteId, String title, String itemsJson) {
                       runOnUiThread(() -> {
                           postQuickNoteNotificationInternal(noteId, title, itemsJson);
@@ -2568,6 +3309,37 @@ jobs:
                   }
 
                   @JavascriptInterface
+                  public void triggerHaptic(final String kind) {
+                      runOnUiThread(() -> {
+                          try {
+                              View targetView = (bridge != null && bridge.getWebView() != null)
+                                  ? bridge.getWebView()
+                                  : getWindow().getDecorView();
+                              if (targetView == null) return;
+                              int feedbackConstant = HapticFeedbackConstants.CLOCK_TICK;
+                              if ("confirm".equals(kind)) {
+                                  feedbackConstant = (Build.VERSION.SDK_INT >= 30)
+                                      ? HapticFeedbackConstants.CONFIRM
+                                      : HapticFeedbackConstants.VIRTUAL_KEY;
+                              } else if ("reject".equals(kind)) {
+                                  feedbackConstant = (Build.VERSION.SDK_INT >= 30)
+                                      ? HapticFeedbackConstants.REJECT
+                                      : HapticFeedbackConstants.LONG_PRESS;
+                              } else if ("heavy".equals(kind)) {
+                                  feedbackConstant = HapticFeedbackConstants.LONG_PRESS;
+                              } else if ("tap".equals(kind)) {
+                                  feedbackConstant = (Build.VERSION.SDK_INT >= 23)
+                                      ? HapticFeedbackConstants.CONTEXT_CLICK
+                                      : HapticFeedbackConstants.VIRTUAL_KEY;
+                              } else if ("tick".equals(kind)) {
+                                  feedbackConstant = HapticFeedbackConstants.CLOCK_TICK;
+                              }
+                              targetView.performHapticFeedback(feedbackConstant);
+                          } catch (Exception ignored) {}
+                      });
+                  }
+
+                  @JavascriptInterface
                   public boolean createHomeScreenShortcut() {
                       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                           try {
@@ -2595,6 +3367,186 @@ jobs:
                       }
                       return false;
                   }
+              }
+
+              private File resolveAudioCacheFile(String audioId, String ext) {
+                  try {
+                      File dir = new File(getFilesDir(), "likkho_audio_cache");
+                      if (!dir.exists()) dir.mkdirs();
+                      String safeId = audioId.replaceAll("[^a-zA-Z0-9._-]", "_");
+                      String safeExt = (ext != null && !ext.isEmpty()) ? ext.replaceAll("[^a-zA-Z0-9]", "") : "wav";
+                      return new File(dir, safeId + "." + safeExt);
+                  } catch (Exception e) {
+                      return null;
+                  }
+              }
+
+              private void applySpeedToPlayer(MediaPlayer player, float speed) {
+                  if (player == null) return;
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                      try {
+                          boolean wasPlaying = player.isPlaying();
+                          PlaybackParams params = player.getPlaybackParams();
+                          params.setSpeed(Math.max(0.5f, Math.min(2.5f, speed)));
+                          player.setPlaybackParams(params);
+                          if (!wasPlaying && player.isPlaying()) {
+                              player.pause();
+                          }
+                      } catch (Exception ignored) {}
+                  }
+              }
+
+              private void emitNativeAudioProgress(String audioId, double curSec, double durSec, boolean playing, boolean ended) {
+                  if (audioId == null || bridge == null || bridge.getWebView() == null) return;
+                  final String safeId = audioId.replace("\\", "\\\\").replace("'", "\\'");
+                  final String js = "(function(){ if(window.__onLikkhoNativeAudioProgress){ window.__onLikkhoNativeAudioProgress('" + safeId + "'," + curSec + "," + durSec + "," + playing + "," + ended + "); } })()";
+                  runOnUiThread(() -> {
+                      if (bridge != null && bridge.getWebView() != null) {
+                          bridge.getWebView().evaluateJavascript(js, null);
+                      }
+                  });
+              }
+
+              private void updateNativeAudioNotification(String title, boolean isPlayingNow) {
+                  try {
+                      NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+                      if (nm == null) return;
+                      final String CHANNEL_ID = "likkho_audio_playback_channel";
+                      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                          NotificationChannel ch = new NotificationChannel(CHANNEL_ID, "Likkho Audio Playback", NotificationManager.IMPORTANCE_LOW);
+                          ch.setShowBadge(false);
+                          nm.createNotificationChannel(ch);
+                      }
+
+                      Intent openIntent = new Intent(MainActivity.this, MainActivity.class);
+                      openIntent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                      PendingIntent openPi = PendingIntent.getActivity(MainActivity.this, 88950, openIntent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+
+                      Intent toggleIntent = new Intent(MainActivity.this, AudioControlReceiver.class);
+                      toggleIntent.setAction(AudioControlReceiver.ACTION_TOGGLE);
+                      PendingIntent togglePi = PendingIntent.getBroadcast(MainActivity.this, 88951, toggleIntent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+
+                      Intent stopIntent = new Intent(MainActivity.this, AudioControlReceiver.class);
+                      stopIntent.setAction(AudioControlReceiver.ACTION_STOP);
+                      PendingIntent stopPi = PendingIntent.getBroadcast(MainActivity.this, 88952, stopIntent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+
+                      NotificationCompat.Builder b = new NotificationCompat.Builder(MainActivity.this, CHANNEL_ID)
+                          .setSmallIcon(isPlayingNow ? android.R.drawable.ic_media_play : android.R.drawable.ic_media_pause)
+                          .setContentTitle(title != null && !title.isEmpty() ? title : "Likkho Audio")
+                          .setContentText(isPlayingNow ? "Playing diary audio" : "Paused")
+                          .setOngoing(isPlayingNow)
+                          .setOnlyAlertOnce(true)
+                          .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                          .setContentIntent(openPi)
+                          .addAction(isPlayingNow ? android.R.drawable.ic_media_pause : android.R.drawable.ic_media_play, isPlayingNow ? "Pause" : "Play", togglePi)
+                          .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stopPi);
+
+                      nm.notify(88950, b.build());
+                  } catch (Exception ignored) {}
+              }
+
+              private void cancelNativeAudioNotification() {
+                  try {
+                      NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+                      if (nm != null) nm.cancel(88950);
+                  } catch (Exception ignored) {}
+              }
+
+              public void toggleNativeAudioFromNotification() {
+                  runOnUiThread(() -> {
+                      try {
+                          if (nativeMediaPlayer == null || activeAudioId == null) return;
+                          if (nativeMediaPlayer.isPlaying()) {
+                              nativeMediaPlayer.pause();
+                              audioProgressHandler.removeCallbacks(audioProgressRunnable);
+                              int posMs = nativeMediaPlayer.getCurrentPosition();
+                              int durMs = nativeMediaPlayer.getDuration();
+                              emitNativeAudioProgress(activeAudioId, posMs / 1000.0, Math.max(0, durMs) / 1000.0, false, false);
+                              updateNativeAudioNotification(activeAudioTitle, false);
+                          } else {
+                              applySpeedToPlayer(nativeMediaPlayer, activeAudioSpeed);
+                              nativeMediaPlayer.start();
+                              audioProgressHandler.removeCallbacks(audioProgressRunnable);
+                              audioProgressHandler.post(audioProgressRunnable);
+                              updateNativeAudioNotification(activeAudioTitle, true);
+                          }
+                      } catch (Exception ignored) {}
+                  });
+              }
+
+              public void stopNativeAudioPlayback(final String onlyIfAudioId) {
+                  runOnUiThread(() -> {
+                      if (onlyIfAudioId != null && activeAudioId != null && !onlyIfAudioId.equals(activeAudioId)) {
+                          return;
+                      }
+                      audioProgressHandler.removeCallbacks(audioProgressRunnable);
+                      String prevId = activeAudioId;
+                      activeAudioId = null;
+                      if (nativeMediaPlayer != null) {
+                          try {
+                              if (nativeMediaPlayer.isPlaying()) nativeMediaPlayer.stop();
+                          } catch (Exception ignored) {}
+                          try {
+                              nativeMediaPlayer.release();
+                          } catch (Exception ignored) {}
+                          nativeMediaPlayer = null;
+                      }
+                      cancelNativeAudioNotification();
+                      if (prevId != null) {
+                          emitNativeAudioProgress(prevId, 0, 0, false, true);
+                      }
+                  });
+              }
+
+              private void startNativeAudioPlaybackInternal(final String audioId, final String title, final String filePathOrUrl, final float rate, final int startMs) {
+                  try {
+                      stopNativeAudioPlayback(null);
+                      activeAudioId = audioId;
+                      activeAudioTitle = (title != null && !title.isEmpty()) ? title : "Likkho Audio";
+                      activeAudioSpeed = Math.max(0.5f, Math.min(2.5f, rate > 0 ? rate : 1.0f));
+
+                      final MediaPlayer mp = new MediaPlayer();
+                      mp.setAudioAttributes(
+                          new AudioAttributes.Builder()
+                              .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                              .setUsage(AudioAttributes.USAGE_MEDIA)
+                              .build()
+                      );
+                      if (filePathOrUrl.startsWith("/")) {
+                          mp.setDataSource(filePathOrUrl);
+                      } else {
+                          mp.setDataSource(MainActivity.this, Uri.parse(filePathOrUrl));
+                      }
+                      mp.setOnPreparedListener(preparedPlayer -> {
+                          try {
+                              if (startMs > 0 && startMs < preparedPlayer.getDuration()) {
+                                  preparedPlayer.seekTo(startMs);
+                              }
+                              applySpeedToPlayer(preparedPlayer, activeAudioSpeed);
+                              preparedPlayer.start();
+                              audioProgressHandler.removeCallbacks(audioProgressRunnable);
+                              audioProgressHandler.post(audioProgressRunnable);
+                              updateNativeAudioNotification(activeAudioTitle, true);
+                          } catch (Exception ignored) {}
+                      });
+                      mp.setOnCompletionListener(completedPlayer -> {
+                          stopNativeAudioPlayback(audioId);
+                      });
+                      mp.setOnErrorListener((errPlayer, what, extra) -> {
+                          stopNativeAudioPlayback(audioId);
+                          return true;
+                      });
+                      nativeMediaPlayer = mp;
+                      mp.prepareAsync();
+                  } catch (Exception e) {
+                      stopNativeAudioPlayback(audioId);
+                  }
+              }
+
+              @Override
+              public void onDestroy() {
+                  stopNativeAudioPlayback(null);
+                  super.onDestroy();
               }
 
               @Override
@@ -2689,7 +3641,32 @@ jobs:
           }
           EOF
 
-      - name: Build Android Release APK, Release AAB & Debug APK
+      - name: Build Android Debug APK (v1.8.0)
+        working-directory: ./android
+        env:
+          GRADLE_OPTS: "-Dorg.gradle.internal.http.connectionTimeout=180000 -Dorg.gradle.internal.http.socketTimeout=180000 -Dorg.gradle.daemon=false"
+        run: |
+          chmod +x ./gradlew
+          ./gradlew assembleDebug
+
+          mkdir -p release-apks
+          if [ -f app/build/outputs/apk/debug/app-debug.apk ]; then
+            cp app/build/outputs/apk/debug/app-debug.apk release-apks/likkho-debug-v1.8.0.apk
+          else
+            echo "::error::FATAL: Debug APK (app-debug.apk) not found."
+            exit 1
+          fi
+          ls -lh release-apks/
+
+      - name: Upload Debug APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: likkho-debug-v1.8.0-apk
+          path: android/release-apks/likkho-debug-v1.8.0.apk
+          retention-days: 30
+
+      - name: Build Android Release APK & Release AAB (v1.8.0)
+        if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || (github.event_name == 'workflow_dispatch' && inputs.build_release == true)
         working-directory: ./android
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -2704,80 +3681,70 @@ jobs:
           fi
 
           chmod +x ./gradlew
-          ./gradlew assembleRelease assembleDebug bundleRelease
+          ./gradlew assembleRelease bundleRelease
 
           mkdir -p release-apks
-          # Find and package Release APK (v1.7.0) - STRICTLY SIGNED ONLY
           if [ -f app/build/outputs/apk/release/app-release.apk ]; then
-            cp app/build/outputs/apk/release/app-release.apk release-apks/likkho-release-v1.7.0.apk
+            cp app/build/outputs/apk/release/app-release.apk release-apks/likkho-release-v1.8.0.apk
           else
             echo "::error::FATAL: Signed release APK (app-release.apk) not found. Unsigned APK will not be uploaded."
             exit 1
           fi
 
-          # Find and package Release AAB (Android App Bundle v1.7.0) - STRICTLY SIGNED ONLY
           if [ -f app/build/outputs/bundle/release/app-release.aab ]; then
-            cp app/build/outputs/bundle/release/app-release.aab release-apks/likkho-release-v1.7.0.aab
+            cp app/build/outputs/bundle/release/app-release.aab release-apks/likkho-release-v1.8.0.aab
           else
             echo "::error::FATAL: Signed release AAB (app-release.aab) not found. Unsigned AAB will not be uploaded."
             exit 1
           fi
 
-          # Find and package Debug APK (v1.7.0)
-          if [ -f app/build/outputs/apk/debug/app-debug.apk ]; then
-            cp app/build/outputs/apk/debug/app-debug.apk release-apks/likkho-debug-v1.7.0.apk
-          fi
-
-          ls -la release-apks/
+          ls -lh release-apks/
 
       - name: Upload Release APK Artifact
+        if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || (github.event_name == 'workflow_dispatch' && inputs.build_release == true)
         uses: actions/upload-artifact@v4
         with:
-          name: likkho-release-v1.7.0-apk
-          path: android/release-apks/likkho-release-v1.7.0.apk
+          name: likkho-release-v1.8.0-apk
+          path: android/release-apks/likkho-release-v1.8.0.apk
           retention-days: 30
 
       - name: Upload Release AAB Bundle Artifact
+        if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || (github.event_name == 'workflow_dispatch' && inputs.build_release == true)
         uses: actions/upload-artifact@v4
         with:
-          name: likkho-release-v1.7.0-aab
-          path: android/release-apks/likkho-release-v1.7.0.aab
+          name: likkho-release-v1.8.0-aab
+          path: android/release-apks/likkho-release-v1.8.0.aab
           retention-days: 30
 
-      - name: Upload Debug APK Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: likkho-debug-v1.7.0-apk
-          path: android/release-apks/likkho-debug-v1.7.0.apk
-          retention-days: 30
-
-      - name: Publish GitHub Release (v1.7.0)
+      - name: Publish GitHub Release (v1.8.0)
         uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || (github.event_name == 'workflow_dispatch' && inputs.build_release == true)
         with:
-          tag_name: v1.7.0
-          name: "Likkho v1.7.0 (Minor Update) - Canvas Skeleton Loaders, Seamless Quick Note Launch & Clean Home"
+          tag_name: v1.8.0
+          name: "Likkho v1.8.0 (Minor Update) - Native Engine Upgrade, Home Widget, Share to Likkho & Zero-Flash Launch"
           body: |
-            ## Likkho v1.7.0 Release Notes
-            
-            ### ✨ New Features & Improvements in this Minor Update:
-            - **Canvas Image & Audio Skeleton Loaders**: Added animated skeleton loading placeholders on the writing canvas while images decode/hydrate from storage and while audio attachments load or buffer.
-            - **Zero-Lockscreen Quick Note Launch**: Launching Quick Notes via Home Screen Shortcut or Quick Settings Tile now opens the writing pop-up directly without triggering lockscreen or biometrics prompts, while keeping private diary logs hidden.
-            - **Streamlined Quick Note Composer**: Removed the To-Do toggle button from the Quick Note modal for a cleaner title + canvas writing experience.
-            - **Compulsory Notification Posting**: Quick Notes saved via Quick Settings Tile or Home Screen Shortcut are now always pinned to the Android notification shade (with post-permission retry on Android 13+).
-            - **Clean Homepage**: Completely removed the pre-written starter guide diary from the homepage.
-            
+            ## Likkho v1.8.0 Release Notes
+
+            ### ✨ What's New in This Minor Update:
+            - **Canvas Image RAM & Preview Virtualization:** Lightweight preview cache with viewport-aware loading & automatic memory cleanup when exiting a diary.
+            - **Native Haptics & Smooth Keyboard Animation:** Hardware Android haptic feedback, touch responsiveness polish, and frame-synced keyboard padding in fullscreen mode.
+            - **Native Disk Audio Streaming & Notification Controls:** Canvas voice/audio notes stream via Android `MediaPlayer` with Play/Pause and Stop notification shade controls.
+            - **Android Home Screen Widget & Shortcuts:** Live Quick Note display on home screen with one-tap **`+ Quick Note`** and **`+ Diary`** buttons, plus a **`New Diary`** launcher shortcut.
+            - **Share to Likkho:** Share images or text/links directly from Gallery, Chrome, or WhatsApp into an editable new diary draft (respecting passcode lockscreen).
+            - **Zero-Flash Cold Launch:** Theme-matched pre-paint background with a native Likkho splash veil for flash-free startup in Light & Dark modes.
+
             ### 📦 Release Downloads:
-            - **Signed Release APK**: `likkho-release-v1.7.0.apk`
-            - **Signed Google Play App Bundle**: `likkho-release-v1.7.0.aab`
-            - **Debug APK**: `likkho-debug-v1.7.0.apk`
+            - **Signed Release APK**: `likkho-release-v1.8.0.apk`
+            - **Signed Google Play App Bundle**: `likkho-release-v1.8.0.aab`
+            - **Debug APK**: `likkho-debug-v1.8.0.apk`
           files: |
-            android/release-apks/likkho-release-v1.7.0.apk
-            android/release-apks/likkho-release-v1.7.0.aab
-            android/release-apks/likkho-debug-v1.7.0.apk
+            android/release-apks/likkho-release-v1.8.0.apk
+            android/release-apks/likkho-release-v1.8.0.aab
+            android/release-apks/likkho-debug-v1.8.0.apk
           draft: false
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
 
 

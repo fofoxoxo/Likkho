@@ -3,9 +3,11 @@ import { Play, Pause, Loader2 } from 'lucide-react';
 import { CanvasAudioAttachment } from '../utils/cryptoVault';
 import {
   acquireAudioPlaybackUrl,
+  ensureNativeAudioDiskFile,
   getAudioBlobFromStore,
   releaseAudioPlaybackUrl,
 } from '../utils/audioStorage';
+import { triggerHaptic } from '../utils/haptics';
 
 interface CanvasAudioPlayerCardProps {
   audio: CanvasAudioAttachment;
@@ -80,13 +82,21 @@ export const CanvasAudioPlayerCard: React.FC<CanvasAudioPlayerCardProps> = ({
     };
   }, [audio.id, audio.audioUri, audio.dataUrl]);
 
-  // Sync playbackRate when changed from toolbar
+  // Sync playbackRate when changed from toolbar (Native MediaPlayer + HTML5 Audio)
   useEffect(() => {
+    const rate = audio.playbackRate || 1;
+    if (
+      (isPlaying || isAudioLoaded) &&
+      window.LikkhoNative &&
+      typeof window.LikkhoNative.setNativeAudioSpeed === 'function'
+    ) {
+      window.LikkhoNative.setNativeAudioSpeed(rate);
+    }
     const el = audioElRef.current;
     if (el) {
-      el.playbackRate = audio.playbackRate || 1;
+      el.playbackRate = rate;
     }
-  }, [audio.playbackRate]);
+  }, [audio.playbackRate, isPlaying, isAudioLoaded]);
 
   // Memory Cleanup and Revoking Blob URLs
   const teardownAudioPlayback = () => {
@@ -104,10 +114,68 @@ export const CanvasAudioPlayerCard: React.FC<CanvasAudioPlayerCardProps> = ({
       releaseAudioPlaybackUrl(audio.id, activeBlobUrlRef.current);
       activeBlobUrlRef.current = null;
     }
+    if (window.LikkhoNative?.stopNativeAudio) {
+      window.LikkhoNative.stopNativeAudio(audio.id);
+    }
     setIsPlaying(false);
     setIsAudioLoaded(false);
     setIsLoading(false);
   };
+
+  // Subscribe to real-time native Android MediaPlayer progress & notification button events
+  useEffect(() => {
+    const handleNativeProgress = (ev: Event) => {
+      const detail = (
+        ev as CustomEvent<{
+          audioId: string;
+          currentSec: number;
+          durationSec: number;
+          isPlaying: boolean;
+          isEnded: boolean;
+        }>
+      ).detail;
+      if (!detail || detail.audioId !== audio.id) return;
+
+      if (detail.durationSec > 0 && Number.isFinite(detail.durationSec)) {
+        setDuration(detail.durationSec);
+      }
+      if (detail.isEnded) {
+        setIsPlaying(false);
+        setIsLoading(false);
+        setCurrentTime(0);
+        setIsAudioLoaded(false);
+      } else {
+        setCurrentTime(Math.max(0, detail.currentSec || 0));
+        setIsPlaying(Boolean(detail.isPlaying));
+        setIsLoading(false);
+      }
+    };
+
+    window.addEventListener('likkho-native-audio-progress', handleNativeProgress as EventListener);
+    return () => {
+      window.removeEventListener(
+        'likkho-native-audio-progress',
+        handleNativeProgress as EventListener
+      );
+    };
+  }, [audio.id]);
+
+  // Ensure global bridge forwards native MediaPlayer updates into CustomEvent for any active card
+  useEffect(() => {
+    window.__onLikkhoNativeAudioProgress = (
+      audioId: string,
+      currentSec: number,
+      durationSec: number,
+      playing: boolean,
+      ended: boolean
+    ) => {
+      window.dispatchEvent(
+        new CustomEvent('likkho-native-audio-progress', {
+          detail: { audioId, currentSec, durationSec, isPlaying: playing, isEnded: ended },
+        })
+      );
+    };
+  }, []);
 
   // Listen to single active audio event: if another card starts playing, immediately unload this one
   useEffect(() => {
@@ -187,24 +255,65 @@ export const CanvasAudioPlayerCard: React.FC<CanvasAudioPlayerCardProps> = ({
     e.stopPropagation();
 
     if (isHydratingCard) return;
+    triggerHaptic('tick');
+
+    const useNativeMediaPlayer = Boolean(
+      typeof window !== 'undefined' &&
+        window.LikkhoNative &&
+        typeof window.LikkhoNative.playNativeAudio === 'function'
+    );
 
     if (isPlaying) {
-      const el = audioElRef.current;
-      if (el) {
-        el.pause();
+      if (useNativeMediaPlayer && isAudioLoaded) {
+        window.LikkhoNative?.pauseNativeAudio?.();
+      } else {
+        const el = audioElRef.current;
+        if (el) el.pause();
       }
       setIsPlaying(false);
       return;
     }
 
+    // Resume if already loaded in native MediaPlayer
+    if (useNativeMediaPlayer && isAudioLoaded && window.LikkhoNative?.resumeNativeAudio) {
+      window.LikkhoNative.resumeNativeAudio();
+      setIsPlaying(true);
+      return;
+    }
+
     // On-demand load only when Play button is pressed
-    if (!isAudioLoaded || !audioElRef.current?.src) {
+    if (!isAudioLoaded || (!useNativeMediaPlayer && !audioElRef.current?.src)) {
       setIsLoading(true);
       // Stop all other audio cards first (guarantee at most 1 audio stream in memory)
       window.dispatchEvent(
         new CustomEvent('likkho-audio-exclusive-play', { detail: { activeId: audio.id } })
       );
 
+      // 1. Prefer Android Native MediaPlayer streaming from disk (0 bytes in WebView RAM + Notification Controls)
+      if (useNativeMediaPlayer && window.LikkhoNative?.playNativeAudio) {
+        try {
+          const nativePath = await ensureNativeAudioDiskFile(audio);
+          if (nativePath) {
+            const started = window.LikkhoNative.playNativeAudio(
+              audio.id,
+              audio.name || 'Likkho Audio',
+              nativePath,
+              audio.playbackRate || 1,
+              Math.max(0, Math.round(currentTime * 1000))
+            );
+            if (started) {
+              setIsAudioLoaded(true);
+              setIsPlaying(true);
+              setIsLoading(false);
+              return;
+            }
+          }
+        } catch {
+          // fall back gracefully to HTML5 <audio>
+        }
+      }
+
+      // 2. Web / PWA HTML5 <audio> fallback + MediaSession lockscreen metadata
       try {
         const { url, isObjectUrl } = await acquireAudioPlaybackUrl(audio);
         if (!url) {
@@ -217,6 +326,28 @@ export const CanvasAudioPlayerCard: React.FC<CanvasAudioPlayerCardProps> = ({
         }
 
         setIsAudioLoaded(true);
+
+        if ('mediaSession' in navigator) {
+          try {
+            navigator.mediaSession.metadata = new MediaMetadata({
+              title: audio.name || 'Likkho Voice Note',
+              artist: 'Likkho',
+            });
+            navigator.mediaSession.setActionHandler('play', () => {
+              audioElRef.current?.play().catch(() => {});
+            });
+            navigator.mediaSession.setActionHandler('pause', () => {
+              audioElRef.current?.pause();
+            });
+            navigator.mediaSession.setActionHandler('seekto', (details) => {
+              if (audioElRef.current && typeof details.seekTime === 'number') {
+                audioElRef.current.currentTime = details.seekTime;
+              }
+            });
+          } catch {
+            // ignore unsupported MediaSession actions
+          }
+        }
 
         // Allow DOM to mount <audio> tag with the new src
         setTimeout(() => {
@@ -247,7 +378,7 @@ export const CanvasAudioPlayerCard: React.FC<CanvasAudioPlayerCardProps> = ({
       return;
     }
 
-    // Already loaded, just resume
+    // Already loaded in HTML5 <audio>, just resume
     const el = audioElRef.current;
     if (el) {
       el.playbackRate = audio.playbackRate || 1;
@@ -261,6 +392,15 @@ export const CanvasAudioPlayerCard: React.FC<CanvasAudioPlayerCardProps> = ({
     e.stopPropagation();
     const nextTime = parseFloat(e.target.value);
     setCurrentTime(nextTime);
+    if (
+      isAudioLoaded &&
+      window.LikkhoNative &&
+      typeof window.LikkhoNative.seekNativeAudio === 'function' &&
+      Number.isFinite(nextTime)
+    ) {
+      window.LikkhoNative.seekNativeAudio(Math.max(0, Math.round(nextTime * 1000)));
+      return;
+    }
     const el = audioElRef.current;
     if (el && Number.isFinite(nextTime)) {
       el.currentTime = nextTime;

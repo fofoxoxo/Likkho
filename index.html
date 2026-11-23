@@ -36,6 +36,9 @@
             if (metaTheme) metaTheme.setAttribute('content', '#f8f9fa');
             if (metaScheme) metaScheme.setAttribute('content', 'light');
           }
+          var bootStyle = document.createElement('style');
+          bootStyle.textContent = 'html,body,#root{background-color:' + (isDark ? '#101418' : '#ffffff') + ';}';
+          document.head.appendChild(bootStyle);
           if ('serviceWorker' in navigator) {
             navigator.serviceWorker.getRegistrations().then(function (regs) {
               for (var i = 0; i < regs.length; i++) {

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Plus, X, Trash2, Check, FileText } from 'lucide-react';
 import { QuickNote, QuickNoteItem } from '../utils/quickNotesStorage';
+import { triggerHaptic } from '../utils/haptics';
 
 interface QuickNoteCreatorModalProps {
   initialNote?: QuickNote | null;
@@ -99,12 +100,14 @@ export const QuickNoteCreatorModal: React.FC<QuickNoteCreatorModalProps> = ({
       }
 
       if (finalItems.length === 0) {
+        triggerHaptic('reject');
         setErrorMsg('Please enter at least one item.');
         return;
       }
       finalContent = finalItems.map((i) => (i.done ? `[x] ${i.text}` : `[ ] ${i.text}`)).join('\n');
     } else {
       if (!finalContent) {
+        triggerHaptic('reject');
         setErrorMsg('Please enter note content.');
         return;
       }
@@ -133,6 +136,7 @@ export const QuickNoteCreatorModal: React.FC<QuickNoteCreatorModalProps> = ({
       isPinnedToNotification: true,
     };
 
+    triggerHaptic('confirm');
     onSave(savedNote);
   };
 

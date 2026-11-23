@@ -17,6 +17,7 @@ import {
 } from '../utils/quickNotesStorage';
 import { VaultMode } from '../utils/cryptoVault';
 import { QuickNoteCreatorModal } from './QuickNoteCreatorModal';
+import { triggerHaptic } from '../utils/haptics';
 
 interface QuickNotesPageProps {
   notes: QuickNote[];
@@ -61,6 +62,7 @@ export const QuickNotesPage: React.FC<QuickNotesPageProps> = ({
     onUpdateNotes(updated);
     saveQuickNotes(updated, vaultMode);
 
+    triggerHaptic('tick');
     const targetNote = updated.find((n) => n.id === noteId);
     if (targetNote) {
       syncQuickNoteToNotification(targetNote.isDone ? null : targetNote, targetNote.id);
@@ -87,9 +89,11 @@ export const QuickNotesPage: React.FC<QuickNotesPageProps> = ({
     const targetNote = updated.find((n) => n.id === noteId);
     if (targetNote) {
       if (targetNote.isDone) {
+        triggerHaptic('confirm');
         syncQuickNoteToNotification(null, targetNote.id);
         showToast('Note marked as completed.');
       } else {
+        triggerHaptic('tick');
         syncQuickNoteToNotification(targetNote);
         showToast('Note restored to active.');
       }
@@ -126,6 +130,7 @@ export const QuickNotesPage: React.FC<QuickNotesPageProps> = ({
   };
 
   const handleDeleteNote = (noteId: string) => {
+    triggerHaptic('heavy');
     const target = notes.find((n) => n.id === noteId);
     if (target) {
       syncQuickNoteToNotification(null, target.id);

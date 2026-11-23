@@ -129,10 +129,45 @@ declare global {
       createHomeScreenShortcut?: () => boolean;
       hasPendingQuickNoteAction?: () => boolean;
       consumePendingQuickNoteAction?: () => boolean;
+      syncHomeWidgetQuickNote?: (title: string, summary: string) => void;
+      hasPendingNewDiaryAction?: () => boolean;
+      consumePendingNewDiaryAction?: () => boolean;
+      consumePendingIncomingShare?: () => string;
+      triggerHaptic?: (kind: string) => void;
+      hasNativeAudioCacheFile?: (audioId: string, ext: string) => boolean;
+      getNativeAudioCacheFilePath?: (audioId: string, ext: string) => string;
+      writeNativeAudioCacheChunk?: (
+        audioId: string,
+        ext: string,
+        base64Chunk: string,
+        isFirst: boolean
+      ) => boolean;
+      playNativeAudio?: (
+        audioId: string,
+        title: string,
+        filePathOrUrl: string,
+        playbackRate: number,
+        startMs: number
+      ) => boolean;
+      pauseNativeAudio?: () => void;
+      resumeNativeAudio?: () => void;
+      seekNativeAudio?: (posMs: number) => void;
+      setNativeAudioSpeed?: (rate: number) => void;
+      stopNativeAudio?: (audioId?: string) => void;
+      notifyAppReady?: () => void;
     };
     __handleLikkhoAndroidBack?: () => string;
     __onLikkhoQuickNoteDone?: (noteId: string) => void;
     __onLikkhoOpenQuickNoteCreator?: () => string | void;
+    __onLikkhoNewDiaryAction?: () => string | void;
+    __onLikkhoIncomingShareAvailable?: () => string | void;
+    __onLikkhoNativeAudioProgress?: (
+      audioId: string,
+      currentSec: number,
+      durationSec: number,
+      isPlaying: boolean,
+      isEnded: boolean
+    ) => void;
     __onLikkhoBiometricResult?: (success: boolean, msg?: string) => void;
     __onLikkhoDeviceLockBackupResult?: (success: boolean, message?: string) => void;
     __onLikkhoVaultFilePicked?: (envelope: string) => void;

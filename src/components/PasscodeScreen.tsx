@@ -6,6 +6,7 @@ import {
   recordPasscodeFailure,
   resetPasscodeFailures,
 } from '../utils/cryptoVault';
+import { triggerHaptic } from '../utils/haptics';
 
 interface PasscodeScreenProps {
   savedPasscode: string;
@@ -121,9 +122,11 @@ export const PasscodeScreen: React.FC<PasscodeScreenProps> = ({
     window.__onLikkhoBiometricResult = (success: boolean, message?: string) => {
       if (success) {
         if (getRemainingPasscodeCooldownSeconds() > 0) return;
+        triggerHaptic('confirm');
         resetPasscodeFailures();
         onUnlockRef.current('primary');
       } else if (message && message !== 'Cancelled') {
+        triggerHaptic('reject');
         setBioMessage(message);
       }
     };
@@ -161,6 +164,7 @@ export const PasscodeScreen: React.FC<PasscodeScreenProps> = ({
 
     // As soon as the user starts typing their PIN, cancel any native Biometric dialog so it never forces or interrupts them!
     cancelActiveBiometricPromptIfAny();
+    triggerHaptic('tick');
     setError(false);
     setBioMessage('');
     const next = (entered + digit).slice(0, maxPinLen);
@@ -169,6 +173,7 @@ export const PasscodeScreen: React.FC<PasscodeScreenProps> = ({
     // Dual-Vault Plausible Deniability Check:
     // 1. Check if entered PIN matches Primary Vault PIN (`real_vault.db`)
     if (savedPasscode && next === savedPasscode) {
+      triggerHaptic('confirm');
       resetPasscodeFailures();
       setCooldownSec(0);
       onUnlockRef.current('primary');
@@ -177,6 +182,7 @@ export const PasscodeScreen: React.FC<PasscodeScreenProps> = ({
 
     // 2. Check if entered PIN matches Covert Secondary / Decoy Vault PIN (`decoy_vault.db`)
     if (secondaryPasscode && next === secondaryPasscode) {
+      triggerHaptic('confirm');
       resetPasscodeFailures();
       setCooldownSec(0);
       onUnlockRef.current('decoy');
@@ -191,12 +197,10 @@ export const PasscodeScreen: React.FC<PasscodeScreenProps> = ({
 
     if (!couldMatchPrimary && !couldMatchSecondary) {
       setError(true);
+      triggerHaptic('reject');
       const failure = recordPasscodeFailure();
       if (failure.cooldownSeconds > 0) {
         setCooldownSec(failure.cooldownSeconds);
-      }
-      if (typeof navigator !== 'undefined' && navigator.vibrate) {
-        navigator.vibrate([100, 60, 100]);
       }
       setTimeout(() => setEntered(''), 350);
     }
@@ -205,6 +209,7 @@ export const PasscodeScreen: React.FC<PasscodeScreenProps> = ({
   const handleBackspace = () => {
     if (getRemainingPasscodeCooldownSeconds() > 0) return;
     cancelActiveBiometricPromptIfAny();
+    triggerHaptic('tick');
     setError(false);
     setEntered((prev) => prev.slice(0, -1));
   };

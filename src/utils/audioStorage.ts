@@ -304,3 +304,78 @@ export async function getAudioBinaryBytes(
 
   return null;
 }
+
+function uint8ToBase64Chunk(bytes: Uint8Array): string {
+  let binary = '';
+  const step = 0x8000;
+  for (let i = 0; i < bytes.length; i += step) {
+    binary += String.fromCharCode.apply(
+      null,
+      Array.from(bytes.subarray(i, Math.min(i + step, bytes.length)))
+    );
+  }
+  return btoa(binary);
+}
+
+/**
+ * Ensures an audio file exists as a native disk file on Android (`filesDir/likkho_audio_cache/`)
+ * so Android `MediaPlayer` streams it directly from disk with 0 bytes in WebView RAM.
+ */
+export async function ensureNativeAudioDiskFile(
+  attachment: CanvasAudioAttachment
+): Promise<string> {
+  if (typeof window === 'undefined' || !window.LikkhoNative?.playNativeAudio) {
+    return '';
+  }
+
+  // 1. Check if attachment already points to a native local file path
+  if (attachment.audioUri) {
+    const raw = attachment.audioUri;
+    if (raw.startsWith('/')) return raw;
+    if (raw.startsWith('http://localhost/_capacitor_file_')) {
+      return raw.replace('http://localhost/_capacitor_file_', '');
+    }
+    if (raw.startsWith('file://')) {
+      return raw.replace('file://', '');
+    }
+  }
+
+  const ext = (attachment.format || 'wav').replace(/[^a-z0-9]/gi, '').toLowerCase() || 'wav';
+
+  // 2. Reuse already-spilled native disk cache file if present
+  if (
+    window.LikkhoNative.hasNativeAudioCacheFile?.(attachment.id, ext) &&
+    window.LikkhoNative.getNativeAudioCacheFilePath
+  ) {
+    const cachedPath = window.LikkhoNative.getNativeAudioCacheFilePath(attachment.id, ext);
+    if (cachedPath) return cachedPath;
+  }
+
+  // 3. Spill IndexedDB Blob (or legacy dataUrl) once to native disk cache in 256 KB chunks
+  if (
+    !window.LikkhoNative.writeNativeAudioCacheChunk ||
+    !window.LikkhoNative.getNativeAudioCacheFilePath
+  ) {
+    return '';
+  }
+
+  try {
+    let bytes: Uint8Array | null = await getAudioBinaryBytes(attachment);
+    if (!bytes || bytes.length === 0) return '';
+
+    const CHUNK_SIZE = 256 * 1024;
+    for (let offset = 0; offset < bytes.length; offset += CHUNK_SIZE) {
+      const slice = bytes.subarray(offset, Math.min(offset + CHUNK_SIZE, bytes.length));
+      const ok = window.LikkhoNative.writeNativeAudioCacheChunk(
+        attachment.id,
+        ext,
+        uint8ToBase64Chunk(slice),
+        offset === 0
+      );
+      if (!ok) return '';
+    }
+    return window.LikkhoNative.getNativeAudioCacheFilePath(attachment.id, ext) || '';
+  } catch {
+    return '';
+  }
+}
