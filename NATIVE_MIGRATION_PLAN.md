@@ -1,0 +1,90 @@
+# Likkho — Kotlin + Jetpack Compose Hybrid Native Migration Plan
+
+> **Multi-AI Collaborator Instructions (READ THIS FIRST!)**
+> Multiple contributors (via separate AI Studio accounts) are migrating this repo sequentially.
+> **On every session:**
+> 1. Read this file completely before writing any code.
+> 2. Find the **first unchecked step (`[ ]`)** in the Checklist below (unless the user explicitly asks for a specific step).
+> 3. Inspect existing files under `app/src/main/java/com/likkho/diary/` and `src/` to verify what previous steps already built.
+> 4. Implement ONLY that step cleanly, keeping:
+>    - `npm run build` and `npm run lint` (`tsc --noEmit`) passing for the React Canvas bundle.
+>    - All `.kt` files syntactically clean and wired into `app/build.gradle.kts` + `.github/workflows/android-debug-apk.yml`.
+>    - **Zero breaking changes** to `DiaryLog` JSON schema, `LKSTRM02` / `WIKILOG_VAULT_V1` backup format, `applicationId = "com.likkho.diary"`, or keystore signing.
+>    - **Debug APK Only During Migration:** Only deliver/support Debug APK builds during intermediate steps; do **NOT** bump the app version or publish a new GitHub Release unless the user explicitly orders a release.
+> 5. After completing the step, mark its checkbox `[x]` below and add a brief entry under **Progress Log** so the next collaborator AI knows exactly where to pick up.
+
+---
+
+## Target Architecture (Option 1: Hybrid Native)
+
+- **Kotlin + Jetpack Compose (`app/src/main/java/com/likkho/diary/nativeapp/...`):**
+  - App Shell, Navigation, Wikipedia Editorial Theme (`#FFFFFF`/`#F8F9FA` light, `#101418`/`#1A1F24` dark, `#3366CC` blue, `#B32424` crimson, `#14866D` emerald, crisp rectangular borders).
+  - Lockscreen (Primary & Covert Decoy Vault PIN routing, progressive brute-force cooldown, Biometrics, `FLAG_SECURE`).
+  - Homepage Diary List, Search, Pin/Share/Export/Delete actions.
+  - Settings, Quick Notes, Saved Passwords, Saved Word Analysis, Backup & Restore, Backed-up Diaries Reader, App Update Checker.
+  - Native Streaming Crypto Engine (`LKSTRM02` AES-256-GCM + PBKDF2, 100% compatible with existing `real_vault.db` and `decoy_vault.db` backups).
+  - Native Heavy Media & Export Engine (`BitmapFactory`/`ImageDecoder`, 1:1 PFP Cropper, Filters, `AudioRecord`, `PdfDocument`, `ZipOutputStream`, `.likkho` archive).
+- **Embedded React Canvas (`WritingWorkspace` inside Compose `AndroidView(WebView)`):**
+  - Loads built Vite `dist/` locally via `WebViewAssetLoader`.
+  - Handles ONLY the rich-text editor (`contentEditable`), `RichTextToolbar`, LaTeX math, Spoiler cipher, Wikipedia tool, Word Analysis, custom `.ttf` fonts, and draggable canvas image/audio cards.
+  - Communicates with Kotlin over `@JavascriptInterface` using lightweight `DiaryLog` JSON + local media file URLs (no heavy base64 or multi-MB IndexedDB blobs in JS).
+
+---
+
+## Step-by-Step Checklist
+
+- [x] **Step 1: Migration Plan, Kotlin/Compose Gradle & CI Wiring, and Core Data Models**
+  - Configure `app/build.gradle.kts` with Kotlin `2.0.21`, Jetpack Compose BOM, Biometric, WebKit, DocumentFile, ExifInterface, and Coroutines.
+  - Update `.github/workflows/android-debug-apk.yml` to register Kotlin + Compose plugins in generated `android/build.gradle` and copy `app/src/main/java/*` into `android/app/src/main/java/`.
+  - Create `app/src/main/java/com/likkho/diary/nativeapp/model/VaultModels.kt` and `VaultConfig.kt` with 1:1 parity to `src/utils/cryptoVault.ts`.
+
+- [x] **Step 2: Native Streaming Crypto Engine (`LKSTRM02`) & Encrypted Vault Repository**
+  - Create `app/src/main/java/com/likkho/diary/nativeapp/crypto/StreamCryptoEngine.kt`:
+    - Exact 1:1 match with `src/utils/chunkedVaultStream.ts` & `src/utils/cryptoVault.ts`:
+      - Primary KDF: `PBKDF2WithHmacSHA256`, `100000` iterations, stream prefix `"LIKKHO_STREAM_VAULT_KDF_real_vault.db::"`, legacy prefix `"WIKILOG_PRIMARY_REAL_VAULT_KDF_V1::"`.
+      - Decoy KDF: `PBKDF2WithHmacSHA512`, `210000` iterations, stream prefix `"LIKKHO_STREAM_VAULT_KDF_decoy_vault.db::"`, legacy prefix `"WIKILOG_SECONDARY_DECOY_VAULT_KDF_V2::"`.
+      - 44-byte `LKSTRM02` header (`"LKSTRM02"`, `uint16BE(2)`, 16B salt, `uint32BE(iters)`, 1B hashId `1=SHA-256 / 2=SHA-512`, 1B reserved `0`, 12B baseIv). Also support reading 42-byte `LKSTRM01` and legacy JSON envelope `WIKILOG_VAULT_V1`.
+      - Frame layout: `1B recordType (0x01 manifest, 0x02 media chunk, 0xFF EOF)` + `2B idLen` + `id` + `4B chunkIndex` + `4B totalChunks` + `2B mimeLen` + `mimeType` + `12B iv` + `4B cipherLen` + `cipherData` (AES/GCM/NoPadding, 128-bit tag).
+      - Chunk IV = `baseIv[0..7] + uint32BE(chunkCounter)`. AAD = `1B recordType + 4B chunkIndex + 4B totalChunks + idBytes`.
+      - Stream directly to/from SAF `Uri` (`ParcelFileDescriptor` / `ContentResolver`) and app-internal media directory without loading large files into RAM.
+  - Create `app/src/main/java/com/likkho/diary/nativeapp/data/NativeVaultRepository.kt`:
+    - Isolated storage for `primary` vs `decoy` vaults under `context.filesDir/likkho_vaults/<mode>/` (logs, custom fonts, mic settings, quick notes, saved passwords, saved word analyses, encryption key hash, PINs, biometrics flag, progressive brute-force cooldown state).
+    - Helper for `hashPassphrase(passphrase, vaultMode)` matching `cryptoVault.ts`.
+
+- [ ] **Step 3: Native Heavy Media Engine & Native Exporters (Zero-OOM)**
+  - Create `app/src/main/java/com/likkho/diary/nativeapp/media/NativeMediaEngine.kt`:
+    - Downscale picked images from `Uri` using `BitmapFactory.Options` (`inJustDecodeBounds` + `inSampleSize`) with EXIF orientation fix (`ExifInterface`) capped at 2560px, saved as JPEG/PNG directly to `filesDir/likkho_media/<id>`.
+    - 1:1 PFP Cropper helper + Emoji/Text square PFP bitmap renderer + image adjustments (brightness/contrast/saturation/grayscale/sepia/invert/rotation) directly on native `Bitmap`.
+    - Lightweight thumbnail generator (192px PFP / 720px preview) cached in `cacheDir/likkho_previews/`.
+    - Native audio file import/recording storage helper under `filesDir/likkho_audio/`.
+  - Create `app/src/main/java/com/likkho/diary/nativeapp/export/NativeExportEngine.kt`:
+    - Export `.likkho` shareable archive (`ZipOutputStream` matching `src/utils/likkhoShareArchive.ts`) and unpack incoming `.likkho` `Uri`.
+    - Export multi-page A4 `.pdf` via `android.graphics.pdf.PdfDocument`, `.html`, `.md`, `.txt`, `.json`, and full-vault `.zip` (`ZipOutputStream` matching `src/utils/zipDataExporter.ts`) directly via SAF/Downloads.
+
+- [ ] **Step 4: Jetpack Compose Editorial Theme, Lockscreen & Homepage Screens**
+  - Create `app/src/main/java/com/likkho/diary/nativeapp/ui/theme/LikkhoTheme.kt` (Wikipedia light/dark tokens, crisp square borders, serif/sans/mono typography).
+  - Create `app/src/main/java/com/likkho/diary/nativeapp/ui/screens/PasscodeLockScreen.kt` (4–6 digit PIN keypad, Primary vs Covert Decoy vault routing, progressive cooldown timer, `BiometricPrompt` integration).
+  - Create `app/src/main/java/com/likkho/diary/nativeapp/ui/screens/HomeScreen.kt` (Header with Search, Instant Lock, Settings; Pinned + sorted Diary cards with 1:1 PFP, Created/Modified stamps, Reminder badge, 3-dots menu: Pin, Share `.likkho`, Export, Delete; Individual Diary PIN unlock dialog; Floating `+ Create` button).
+
+- [ ] **Step 5: Jetpack Compose Settings, Backup/Restore, Backed-Up Diaries & Quick Notes Screens**
+  - Create `app/src/main/java/com/likkho/diary/nativeapp/ui/screens/SettingsScreen.kt` (Dark mode, Fullscreen, Set Passcode + 10s hold covert Secondary Vault PIN, Biometrics, Mic settings, Saved Word Analysis A–Z viewer, Saved Passwords 3-column chips, Quick Notes manager, Legal/About + `.zip` Export + Clear All Data, GitHub Update Checker).
+  - Create `app/src/main/java/com/likkho/diary/nativeapp/ui/screens/BackupRestoreScreen.kt` (Set Encryption Key, SAF folder selection, streaming Backup & Restore powered by `StreamCryptoEngine` with progress indicator).
+  - Create `app/src/main/java/com/likkho/diary/nativeapp/ui/screens/BackedUpDiariesScreen.kt` (Unlock vault, search, read backed-up diary + media, delete entry from backup, restore single diary).
+  - Create `app/src/main/java/com/likkho/diary/nativeapp/ui/screens/QuickNoteModal.kt` (Native Compose Quick Note creator/editor synced with notifications, widget, and QS tile).
+
+- [ ] **Step 6: Embedded React Canvas (`WritingWorkspace`) + `CanvasWebViewScreen.kt` & Native Activity Cutover**
+  - Add a clean `canvasOnly` mode in `src/App.tsx` / `src/components/WritingWorkspace.tsx` (activated automatically when running inside the new Compose `CanvasWebViewScreen`, while keeping normal Web mode working for browser/AI Studio preview).
+  - Create `app/src/main/java/com/likkho/diary/nativeapp/ui/screens/CanvasWebViewScreen.kt` using `AndroidView(WebView)` + `WebViewAssetLoader` (serving `dist/` + `filesDir/likkho_media/` + `filesDir/likkho_audio/`) and `@JavascriptInterface` `LikkhoCanvasBridge` (passing lightweight `DiaryLog` JSON and local URLs; delegating image/audio picking, PFP cropper, and Image Studio to native Kotlin).
+  - Add one-time automatic migration helper from legacy WebView `IndexedDB`/`localStorage` into `NativeVaultRepository` (so any unbacked-up local data is also preserved).
+  - Create `NativeMainActivity.kt` (`ComponentActivity` hosting Jetpack Compose root + handling `FLAG_SECURE`, shortcuts, `ACTION_SEND`, `.likkho` view intents, biometrics, and SAF) and update manifest/CI in `.github/workflows/android-debug-apk.yml` to launch it while keeping receivers/services/widget working.
+
+- [ ] **Step 7: Full Integration Testing, Cleanup & Major Release Bump (v2.0.0)**
+  - Verify all Android receivers/services (`ReminderReceiver`, `QuickNoteReceiver`, `AudioControlReceiver`, `LikkhoWidgetProvider`, `QuickNoteTileService`, `MicForegroundService`) work seamlessly with `NativeVaultRepository` and `NativeMainActivity`.
+  - Verify `npm run build` and `tsc --noEmit` succeed cleanly.
+  - Bump version to `2.0.0` (`versionCode = 16`) in `package.json`, `app/build.gradle.kts`, `src/utils/appUpdateChecker.ts`, and `.github/workflows/android-debug-apk.yml` release notes.
+
+---
+
+## Progress Log
+- **Step 1 (Completed):** Configured Kotlin `2.0.21` + Jetpack Compose in `app/build.gradle.kts` and `.github/workflows/android-debug-apk.yml`; created `VaultModels.kt` and `VaultConfig.kt` under `app/src/main/java/com/likkho/diary/nativeapp/model/`. Existing React + Capacitor app remains 100% functional until Step 6 cutover.
+- **Step 2 (Completed):** Created `NativeVaultRepository.kt` (`app/src/main/java/com/likkho/diary/nativeapp/data/NativeVaultRepository.kt`) and `StreamCryptoEngine.kt` (`app/src/main/java/com/likkho/diary/nativeapp/crypto/StreamCryptoEngine.kt`) with 1:1 `LKSTRM02`/`LKSTRM01` streaming encryption/restoration + legacy `WIKILOG_VAULT_V1` JSON envelope fallback, AndroidKeyStore at-rest `.enc` storage for isolated `primary`/`decoy` vaults, salted PBKDF2 PIN routing & brute-force cooldown, atomic SAF writes (`.tmp` -> `.bak` swap + `.nomedia`), and path-confined media file helpers (`likkho_media/`, `likkho_audio/`, `likkho_previews/`). Next up: **Step 3** (`NativeMediaEngine.kt` & `NativeExportEngine.kt`).
