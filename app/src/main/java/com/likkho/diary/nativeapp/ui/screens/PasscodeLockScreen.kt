@@ -8,7 +8,6 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -595,18 +594,13 @@ private fun KeypadDigitButton(
     modifier: Modifier = Modifier
 ) {
     val colors = LikkhoTheme.colors
-    val interactionSource = remember { MutableInteractionSource() }
     Box(
         modifier = modifier
             .height(56.dp)
             .alpha(if (enabled) 1f else 0.4f)
             .background(colors.surface)
             .border(1.dp, colors.border)
-            .clickable(
-                interactionSource = interactionSource,
-                enabled = enabled,
-                onClick = onClick
-            ),
+            .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
         Text(

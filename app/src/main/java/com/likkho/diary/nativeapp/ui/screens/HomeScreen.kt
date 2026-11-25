@@ -1419,7 +1419,7 @@ private fun decodePfpThumbnailBitmap(
             bmp?.asImageBitmap()
         } else {
             val previewFile = mediaEngine.getOrGeneratePreviewFile(
-                mediaRefOrId = pfpRef,
+                mediaIdOrRef = pfpRef,
                 maxPreviewPx = NativeMediaEngine.DEFAULT_PFP_PREVIEW_PX,
                 isPfp = true
             ) ?: return null
