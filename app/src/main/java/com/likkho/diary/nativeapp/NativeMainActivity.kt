@@ -125,6 +125,7 @@ class NativeMainActivity : FragmentActivity(), NativeCanvasActivityHost {
 
     // Core UI State (Compose-observed)
     private var isMigratingLegacyData by mutableStateOf(true)
+    private var isHydratingVault by mutableStateOf(false)
     private var isDarkTheme by mutableStateOf(false)
     private var isFullScreen by mutableStateOf(false)
     private var isLocked by mutableStateOf(true)
@@ -215,11 +216,27 @@ class NativeMainActivity : FragmentActivity(), NativeCanvasActivityHost {
         super.onCreate(savedInstanceState)
         currentInstance = this
 
+        val passcodeProtected = repository.isAppPasscodeProtectionEnabled()
+        val migrationHelper = LegacyWebViewMigrationHelper(this, repository, mediaEngine)
+        val needsLegacyMigration = migrationHelper.needsMigration()
+
         initPermissionLaunchers()
         applySystemBarsAndFullScreen(isDarkTheme, isFullScreen)
-        applyPasscodeSecurityFlags(repository.isAppPasscodeProtectionEnabled())
+        applyPasscodeSecurityFlags(passcodeProtected)
 
         parseIncomingIntent(intent)
+
+        if (!needsLegacyMigration) {
+            isMigratingLegacyData = false
+            if (!passcodeProtected) {
+                currentVaultMode = VaultMode.PRIMARY
+                logs = repository.loadLogs(VaultMode.PRIMARY)
+                isLocked = false
+                currentRoute = NativeScreenRoute.HOME
+            } else {
+                isLocked = true
+            }
+        }
 
         setContent {
             LikkhoTheme(darkTheme = isDarkTheme) {
@@ -284,6 +301,7 @@ class NativeMainActivity : FragmentActivity(), NativeCanvasActivityHost {
                                         logs = logs,
                                         repository = repository,
                                         mediaEngine = mediaEngine,
+                                        isLoadingLogs = isHydratingVault,
                                         statusBanner = statusBanner,
                                         processingBanner = processingBanner,
                                         onDismissStatusBanner = { statusBanner = null },
@@ -437,10 +455,22 @@ class NativeMainActivity : FragmentActivity(), NativeCanvasActivityHost {
             }
         }
 
-        // Run one-time Legacy Capacitor WebView -> Native Encrypted Vault migration if applicable
-        val migrationHelper = LegacyWebViewMigrationHelper(this, repository, mediaEngine)
-        migrationHelper.runMigrationIfNeeded { _ ->
-            finishStartupAfterMigration()
+        // Run one-time Legacy Capacitor WebView -> Native Encrypted Vault migration if applicable,
+        // or finish hydrating secondary vault metadata when already migrated.
+        if (needsLegacyMigration) {
+            migrationHelper.runMigrationIfNeeded { _ ->
+                finishStartupAfterMigration()
+            }
+        } else if (!passcodeProtected) {
+            hydrateRemainingPrimaryVaultMetadataAfterInstantStart()
+        } else {
+            lifecycleScope.launch(Dispatchers.IO) {
+                val primaryNotes = repository.loadQuickNotes(VaultMode.PRIMARY)
+                QuickNoteSystemSync.syncActiveNoteToHomeWidgetAndTile(this@NativeMainActivity, primaryNotes)
+            }
+            checkPendingQuickNoteDoneFromNotification()
+            processPendingActionsIfReady()
+            scheduleNotificationPermissionRequestIfNeeded()
         }
     }
 
@@ -535,27 +565,7 @@ class NativeMainActivity : FragmentActivity(), NativeCanvasActivityHost {
         ) { _ -> }
     }
 
-    private fun finishStartupAfterMigration() {
-        isDarkTheme = repository.isDarkTheme()
-        isFullScreen = repository.isFullScreenEnabled()
-        applySystemBarsAndFullScreen(isDarkTheme, isFullScreen)
-        applyPasscodeSecurityFlags(repository.isAppPasscodeProtectionEnabled())
-
-        isMigratingLegacyData = false
-
-        if (!repository.isAppPasscodeProtectionEnabled()) {
-            onVaultUnlocked(VaultMode.PRIMARY)
-        } else {
-            isLocked = true
-            lifecycleScope.launch(Dispatchers.IO) {
-                val primaryNotes = repository.loadQuickNotes(VaultMode.PRIMARY)
-                QuickNoteSystemSync.syncActiveNoteToHomeWidgetAndTile(this@NativeMainActivity, primaryNotes)
-            }
-        }
-
-        checkPendingQuickNoteDoneFromNotification()
-        processPendingActionsIfReady()
-
+    private fun scheduleNotificationPermissionRequestIfNeeded() {
         if (!showStandaloneQuickNoteModal && Build.VERSION.SDK_INT >= 33) {
             mainHandler.postDelayed({
                 if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
@@ -567,33 +577,93 @@ class NativeMainActivity : FragmentActivity(), NativeCanvasActivityHost {
         }
     }
 
-    private fun onVaultUnlocked(mode: VaultMode) {
-        currentVaultMode = mode
-        isLocked = false
-        currentRoute = NativeScreenRoute.HOME
-        editingLog = null
-        statusBanner = null
-
+    private fun hydrateRemainingPrimaryVaultMetadataAfterInstantStart() {
         lifecycleScope.launch {
-            val hydrated = withContext(Dispatchers.IO) {
-                HydratedVaultData(
-                    logs = repository.loadLogs(mode),
-                    customFonts = repository.loadCustomFonts(mode),
-                    micSettings = repository.loadMicSettings(mode),
-                    quickNotes = repository.loadQuickNotes(mode),
-                    wordAnalysesJson = repository.loadSavedWordAnalysesJson(mode)
+            val metadata = withContext(Dispatchers.IO) {
+                Triple(
+                    repository.loadCustomFonts(VaultMode.PRIMARY),
+                    repository.loadMicSettings(VaultMode.PRIMARY),
+                    repository.loadQuickNotes(VaultMode.PRIMARY) to repository.loadSavedWordAnalysesJson(VaultMode.PRIMARY)
                 )
             }
-            logs = hydrated.logs
-            customFonts = hydrated.customFonts
-            micSettings = hydrated.micSettings
-            quickNotes = hydrated.quickNotes
-            savedWordAnalysesJson = hydrated.wordAnalysesJson
+            customFonts = metadata.first
+            micSettings = metadata.second
+            quickNotes = metadata.third.first
+            savedWordAnalysesJson = metadata.third.second
 
             withContext(Dispatchers.IO) {
                 QuickNoteSystemSync.syncActiveNoteToHomeWidgetAndTile(
                     this@NativeMainActivity,
-                    hydrated.quickNotes
+                    metadata.third.first
+                )
+            }
+
+            checkPendingQuickNoteDoneFromNotification()
+            attachOrDispatchPendingRecording()
+            processPendingActionsIfReady()
+            scheduleNotificationPermissionRequestIfNeeded()
+        }
+    }
+
+    private fun finishStartupAfterMigration() {
+        isDarkTheme = repository.isDarkTheme()
+        isFullScreen = repository.isFullScreenEnabled()
+        applySystemBarsAndFullScreen(isDarkTheme, isFullScreen)
+        val passcodeProtected = repository.isAppPasscodeProtectionEnabled()
+        applyPasscodeSecurityFlags(passcodeProtected)
+
+        if (!passcodeProtected) {
+            // Keep isMigratingLegacyData = true until logs finish loading inside onVaultUnlocked
+            // so the Homepage never flashes "No Logs Yet" prior to vault hydration.
+            onVaultUnlocked(VaultMode.PRIMARY)
+        } else {
+            isMigratingLegacyData = false
+            isLocked = true
+            lifecycleScope.launch(Dispatchers.IO) {
+                val primaryNotes = repository.loadQuickNotes(VaultMode.PRIMARY)
+                QuickNoteSystemSync.syncActiveNoteToHomeWidgetAndTile(this@NativeMainActivity, primaryNotes)
+            }
+        }
+
+        checkPendingQuickNoteDoneFromNotification()
+        processPendingActionsIfReady()
+        scheduleNotificationPermissionRequestIfNeeded()
+    }
+
+    private fun onVaultUnlocked(mode: VaultMode) {
+        if (isHydratingVault) return
+        isHydratingVault = true
+
+        lifecycleScope.launch {
+            try {
+                val hydrated = withContext(Dispatchers.IO) {
+                    HydratedVaultData(
+                        logs = repository.loadLogs(mode),
+                        customFonts = repository.loadCustomFonts(mode),
+                        micSettings = repository.loadMicSettings(mode),
+                        quickNotes = repository.loadQuickNotes(mode),
+                        wordAnalysesJson = repository.loadSavedWordAnalysesJson(mode)
+                    )
+                }
+                currentVaultMode = mode
+                logs = hydrated.logs
+                customFonts = hydrated.customFonts
+                micSettings = hydrated.micSettings
+                quickNotes = hydrated.quickNotes
+                savedWordAnalysesJson = hydrated.wordAnalysesJson
+                editingLog = null
+                statusBanner = null
+                currentRoute = NativeScreenRoute.HOME
+                isLocked = false
+                isMigratingLegacyData = false
+            } finally {
+                isHydratingVault = false
+            }
+
+            withContext(Dispatchers.IO) {
+                QuickNoteSystemSync.syncActiveNoteToHomeWidgetAndTile(
+                    this@NativeMainActivity,
+                    quickNotes
                 )
             }
 

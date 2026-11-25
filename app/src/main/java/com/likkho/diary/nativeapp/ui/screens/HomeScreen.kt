@@ -140,6 +140,7 @@ fun HomeScreen(
     logs: List<DiaryLog>,
     repository: NativeVaultRepository,
     mediaEngine: NativeMediaEngine,
+    isLoadingLogs: Boolean = false,
     statusBanner: String? = null,
     processingBanner: String? = null,
     onDismissStatusBanner: () -> Unit = {},
@@ -281,10 +282,25 @@ fun HomeScreen(
 
             // Diary List / Empty State
             if (sortedAndFilteredLogs.isEmpty()) {
-                HomeEmptyState(
-                    hasSearchQuery = searchQuery.trim().isNotEmpty(),
-                    searchQuery = searchQuery
-                )
+                if (isLoadingLogs) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator(
+                            color = colors.accent,
+                            strokeWidth = 2.dp,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                } else {
+                    HomeEmptyState(
+                        hasSearchQuery = searchQuery.trim().isNotEmpty(),
+                        searchQuery = searchQuery
+                    )
+                }
             } else {
                 LazyColumn(
                     modifier = Modifier
