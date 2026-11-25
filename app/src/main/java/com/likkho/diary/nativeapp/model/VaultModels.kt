@@ -292,13 +292,14 @@ data class QuickNoteChecklistItem(
         put("id", id)
         put("text", text)
         put("checked", checked)
+        put("done", checked)
     }
 
     companion object {
         fun fromJson(obj: JSONObject): QuickNoteChecklistItem = QuickNoteChecklistItem(
             id = obj.optString("id"),
             text = obj.optString("text"),
-            checked = obj.optBoolean("checked", false)
+            checked = if (obj.has("checked")) obj.optBoolean("checked", false) else obj.optBoolean("done", false)
         )
     }
 }
@@ -309,15 +310,21 @@ data class QuickNote(
     val items: List<QuickNoteChecklistItem> = emptyList(),
     val createdAt: Long = 0L,
     val updatedAt: Long = 0L,
-    val isDone: Boolean = false
+    val isDone: Boolean = false,
+    val content: String = "",
+    val isChecklist: Boolean = false,
+    val isPinnedToNotification: Boolean = true
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("id", id)
         put("title", title)
+        put("content", content)
+        put("isChecklist", isChecklist)
         put("items", JSONArray().apply { items.forEach { put(it.toJson()) } })
         put("createdAt", createdAt)
         put("updatedAt", updatedAt)
         put("isDone", isDone)
+        put("isPinnedToNotification", isPinnedToNotification)
     }
 
     companion object {
@@ -336,7 +343,10 @@ data class QuickNote(
                 items = parsedItems,
                 createdAt = obj.optLong("createdAt", 0L),
                 updatedAt = obj.optLong("updatedAt", 0L),
-                isDone = obj.optBoolean("isDone", false)
+                isDone = obj.optBoolean("isDone", false),
+                content = obj.optString("content", ""),
+                isChecklist = obj.optBoolean("isChecklist", false),
+                isPinnedToNotification = obj.optBoolean("isPinnedToNotification", true)
             )
         }
     }
