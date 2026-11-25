@@ -68,6 +68,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
@@ -80,14 +81,16 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.likkho.diary.nativeapp.data.NativeVaultRepository
 import com.likkho.diary.nativeapp.model.QuickNote
 import com.likkho.diary.nativeapp.model.QuickNoteChecklistItem
 import com.likkho.diary.nativeapp.model.VaultMode
+import com.likkho.diary.nativeapp.ui.components.LikkhoDialogOutlineButton
+import com.likkho.diary.nativeapp.ui.components.LikkhoDialogPrimaryButton
+import com.likkho.diary.nativeapp.ui.components.LikkhoHairlineBorder
+import com.likkho.diary.nativeapp.ui.components.LikkhoHairlineDialog
 import com.likkho.diary.nativeapp.ui.theme.LikkhoFontFamilies
 import com.likkho.diary.nativeapp.ui.theme.LikkhoTheme
 import kotlinx.coroutines.Dispatchers
@@ -455,408 +458,300 @@ fun QuickNoteModal(
         onSave(saved)
     }
 
-    Dialog(
+    LikkhoHairlineDialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+        title = if (initialNote != null) "Edit Quick Note" else "Quick Note",
+        leadingIcon = Icons.Outlined.Description,
+        maxWidth = 460.dp,
+        maxHeight = 640.dp,
+        bodyPadding = 16.dp,
+        footer = {
+            Text(
+                text = "Shows in Notification Shade",
+                fontFamily = LikkhoFontFamilies.Sans,
+                fontSize = 11.sp,
+                color = colors.muted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            LikkhoDialogOutlineButton(
+                text = "Cancel",
+                onClick = onDismiss
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            LikkhoDialogPrimaryButton(
+                text = "Save Note",
+                onClick = { submitNote() },
+                leadingIcon = Icons.Outlined.Check
+            )
+        }
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-                .heightIn(max = 640.dp)
-                .background(colors.bg)
-                .border(1.dp, colors.border)
-        ) {
-            // Header
-            Row(
+        if (!errorMsg.isNullOrBlank()) {
+            Text(
+                text = errorMsg!!,
+                fontFamily = LikkhoFontFamilies.Sans,
+                fontWeight = FontWeight.Medium,
+                fontSize = 12.sp,
+                color = colors.crimson,
                 modifier = Modifier
                     .fillMaxWidth()
+                    .background(colors.crimson.copy(alpha = 0.08f))
+                    .border(LikkhoHairlineBorder, colors.crimson, RectangleShape)
+                    .padding(10.dp)
+            )
+        }
+
+        // Title
+        Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Text(
+                text = "TITLE",
+                fontFamily = LikkhoFontFamilies.Sans,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 11.sp,
+                letterSpacing = 0.6.sp,
+                color = colors.muted
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(44.dp)
                     .background(colors.surface)
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                    .border(LikkhoHairlineBorder, colors.border, RectangleShape)
+                    .padding(horizontal = 12.dp),
+                contentAlignment = Alignment.CenterStart
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(32.dp)
-                            .background(colors.accent.copy(alpha = 0.10f))
-                            .border(1.dp, colors.accent),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.Description,
-                            contentDescription = null,
-                            tint = colors.accent,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
+                if (title.isEmpty()) {
                     Text(
-                        text = if (initialNote != null) "Edit Quick Note" else "Quick Note",
-                        fontFamily = LikkhoFontFamilies.Serif,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 19.sp,
-                        color = colors.text,
+                        text = "Note title (e.g. Shopping, Ideas, Code, Reminders)...",
+                        fontFamily = LikkhoFontFamilies.Sans,
+                        fontSize = 12.sp,
+                        color = colors.muted,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
+                BasicTextField(
+                    value = title,
+                    onValueChange = {
+                        title = it
+                        errorMsg = null
+                    },
+                    singleLine = true,
+                    textStyle = TextStyle(
+                        fontFamily = LikkhoFontFamilies.Sans,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 12.sp,
+                        color = colors.text
+                    ),
+                    cursorBrush = SolidColor(colors.accent),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(titleFocusRequester)
+                )
+            }
+        }
 
+        // Content Canvas or Checklist
+        Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Text(
+                text = if (isChecklist) "ITEMS" else "CONTENT CANVAS",
+                fontFamily = LikkhoFontFamilies.Sans,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 11.sp,
+                letterSpacing = 0.6.sp,
+                color = colors.muted
+            )
+
+            if (!isChecklist) {
                 Box(
                     modifier = Modifier
-                        .size(40.dp)
-                        .clickable { onDismiss() },
-                    contentAlignment = Alignment.Center
+                        .fillMaxWidth()
+                        .heightIn(min = 160.dp)
+                        .background(colors.surface)
+                        .border(LikkhoHairlineBorder, colors.border, RectangleShape)
+                        .padding(12.dp),
+                    contentAlignment = Alignment.TopStart
                 ) {
-                    Icon(
-                        imageVector = Icons.Outlined.Close,
-                        contentDescription = "Close",
-                        tint = colors.muted,
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-            }
-            HorizontalDivider(thickness = 1.dp, color = colors.border)
-
-            // Body
-            Column(
-                modifier = Modifier
-                    .weight(1f, fill = false)
-                    .verticalScroll(rememberScrollState())
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
-            ) {
-                if (!errorMsg.isNullOrBlank()) {
-                    Text(
-                        text = errorMsg!!,
-                        fontFamily = LikkhoFontFamilies.Sans,
-                        fontWeight = FontWeight.Medium,
-                        fontSize = 12.sp,
-                        color = colors.crimson,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(colors.crimson.copy(alpha = 0.08f))
-                            .border(1.dp, colors.crimson)
-                            .padding(10.dp)
-                    )
-                }
-
-                // Title
-                Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                    Text(
-                        text = "TITLE",
-                        fontFamily = LikkhoFontFamilies.Sans,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 11.sp,
-                        letterSpacing = 0.6.sp,
-                        color = colors.muted
-                    )
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(44.dp)
-                            .background(colors.surface)
-                            .border(1.dp, colors.border)
-                            .padding(horizontal = 12.dp),
-                        contentAlignment = Alignment.CenterStart
-                    ) {
-                        if (title.isEmpty()) {
-                            Text(
-                                text = "Note title (e.g. Shopping, Ideas, Code, Reminders)...",
-                                fontFamily = LikkhoFontFamilies.Sans,
-                                fontSize = 12.sp,
-                                color = colors.muted,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                        BasicTextField(
-                            value = title,
-                            onValueChange = {
-                                title = it
-                                errorMsg = null
-                            },
-                            singleLine = true,
-                            textStyle = TextStyle(
-                                fontFamily = LikkhoFontFamilies.Sans,
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 12.sp,
-                                color = colors.text
-                            ),
-                            cursorBrush = SolidColor(colors.accent),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .focusRequester(titleFocusRequester)
+                    if (content.isEmpty()) {
+                        Text(
+                            text = "Type your quick note content here...",
+                            fontFamily = LikkhoFontFamilies.Sans,
+                            fontSize = 12.sp,
+                            color = colors.muted
                         )
                     }
-                }
-
-                // Content Canvas or Checklist
-                Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                    Text(
-                        text = if (isChecklist) "ITEMS" else "CONTENT CANVAS",
-                        fontFamily = LikkhoFontFamilies.Sans,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 11.sp,
-                        letterSpacing = 0.6.sp,
-                        color = colors.muted
+                    BasicTextField(
+                        value = content,
+                        onValueChange = {
+                            content = it
+                            errorMsg = null
+                        },
+                        textStyle = TextStyle(
+                            fontFamily = LikkhoFontFamilies.Sans,
+                            fontSize = 12.sp,
+                            lineHeight = 19.sp,
+                            color = colors.text
+                        ),
+                        cursorBrush = SolidColor(colors.accent),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 140.dp)
                     )
+                }
+            } else {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(colors.surface)
+                        .border(LikkhoHairlineBorder, colors.border, RectangleShape)
+                        .padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items.forEachIndexed { idx, item ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(24.dp)
+                                    .background(if (item.checked) colors.emerald else colors.bg)
+                                    .border(LikkhoHairlineBorder, if (item.checked) colors.emerald else colors.border, RectangleShape)
+                                    .clickable {
+                                        items = items.map {
+                                            if (it.id == item.id) it.copy(checked = !it.checked) else it
+                                        }
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (item.checked) {
+                                    Icon(
+                                        imageVector = Icons.Outlined.Check,
+                                        contentDescription = null,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                }
+                            }
 
-                    if (!isChecklist) {
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(36.dp)
+                                    .background(colors.bg)
+                                    .border(LikkhoHairlineBorder, colors.hairline, RectangleShape)
+                                    .padding(horizontal = 8.dp),
+                                contentAlignment = Alignment.CenterStart
+                            ) {
+                                if (item.text.isEmpty()) {
+                                    Text(
+                                        text = "Item ${idx + 1}",
+                                        fontFamily = LikkhoFontFamilies.Sans,
+                                        fontSize = 12.sp,
+                                        color = colors.muted
+                                    )
+                                }
+                                BasicTextField(
+                                    value = item.text,
+                                    onValueChange = { updatedText ->
+                                        items = items.map {
+                                            if (it.id == item.id) it.copy(text = updatedText) else it
+                                        }
+                                    },
+                                    singleLine = true,
+                                    textStyle = TextStyle(
+                                        fontFamily = LikkhoFontFamilies.Sans,
+                                        fontSize = 12.sp,
+                                        color = if (item.checked) colors.muted else colors.text,
+                                        textDecoration = if (item.checked) TextDecoration.LineThrough else TextDecoration.None
+                                    ),
+                                    cursorBrush = SolidColor(colors.accent),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+
+                            if (items.size > 1) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .clickable { items = items.filterNot { it.id == item.id } },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Outlined.DeleteOutline,
+                                        contentDescription = "Remove item",
+                                        tint = colors.muted,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    HorizontalDivider(thickness = LikkhoHairlineBorder, color = colors.hairline)
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
                         Box(
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(min = 180.dp)
-                                .background(colors.surface)
-                                .border(1.dp, colors.border)
-                                .padding(12.dp),
-                            contentAlignment = Alignment.TopStart
+                                .weight(1f)
+                                .height(36.dp)
+                                .background(colors.bg)
+                                .border(LikkhoHairlineBorder, colors.border, RectangleShape)
+                                .padding(horizontal = 10.dp),
+                            contentAlignment = Alignment.CenterStart
                         ) {
-                            if (content.isEmpty()) {
+                            if (newTodoInput.isEmpty()) {
                                 Text(
-                                    text = "Type your quick note content here...",
+                                    text = "Type item & press Enter...",
                                     fontFamily = LikkhoFontFamilies.Sans,
                                     fontSize = 12.sp,
                                     color = colors.muted
                                 )
                             }
                             BasicTextField(
-                                value = content,
+                                value = newTodoInput,
                                 onValueChange = {
-                                    content = it
+                                    newTodoInput = it
                                     errorMsg = null
                                 },
+                                singleLine = true,
                                 textStyle = TextStyle(
                                     fontFamily = LikkhoFontFamilies.Sans,
                                     fontSize = 12.sp,
-                                    lineHeight = 19.sp,
                                     color = colors.text
                                 ),
                                 cursorBrush = SolidColor(colors.accent),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .heightIn(min = 160.dp)
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                keyboardActions = KeyboardActions(onDone = { addTodoItem() }),
+                                modifier = Modifier.fillMaxWidth()
                             )
                         }
-                    } else {
-                        Column(
+
+                        Box(
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .background(colors.surface)
-                                .border(1.dp, colors.border)
-                                .padding(10.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                                .height(36.dp)
+                                .alpha(if (newTodoInput.trim().isEmpty()) 0.45f else 1f)
+                                .background(colors.bg)
+                                .border(LikkhoHairlineBorder, colors.border, RectangleShape)
+                                .clickable(enabled = newTodoInput.trim().isNotEmpty()) { addTodoItem() }
+                                .padding(horizontal = 12.dp),
+                            contentAlignment = Alignment.Center
                         ) {
-                            items.forEachIndexed { idx, item ->
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(24.dp)
-                                            .background(if (item.checked) colors.emerald else colors.bg)
-                                            .border(1.dp, if (item.checked) colors.emerald else colors.border)
-                                            .clickable {
-                                                items = items.map {
-                                                    if (it.id == item.id) it.copy(checked = !it.checked) else it
-                                                }
-                                            },
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        if (item.checked) {
-                                            Icon(
-                                                imageVector = Icons.Outlined.Check,
-                                                contentDescription = null,
-                                                tint = Color.White,
-                                                modifier = Modifier.size(14.dp)
-                                            )
-                                        }
-                                    }
-
-                                    Box(
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .height(36.dp)
-                                            .background(colors.bg)
-                                            .border(1.dp, colors.hairline)
-                                            .padding(horizontal = 8.dp),
-                                        contentAlignment = Alignment.CenterStart
-                                    ) {
-                                        if (item.text.isEmpty()) {
-                                            Text(
-                                                text = "Item ${idx + 1}",
-                                                fontFamily = LikkhoFontFamilies.Sans,
-                                                fontSize = 12.sp,
-                                                color = colors.muted
-                                            )
-                                        }
-                                        BasicTextField(
-                                            value = item.text,
-                                            onValueChange = { updatedText ->
-                                                items = items.map {
-                                                    if (it.id == item.id) it.copy(text = updatedText) else it
-                                                }
-                                            },
-                                            singleLine = true,
-                                            textStyle = TextStyle(
-                                                fontFamily = LikkhoFontFamilies.Sans,
-                                                fontSize = 12.sp,
-                                                color = if (item.checked) colors.muted else colors.text,
-                                                textDecoration = if (item.checked) TextDecoration.LineThrough else TextDecoration.None
-                                            ),
-                                            cursorBrush = SolidColor(colors.accent),
-                                            modifier = Modifier.fillMaxWidth()
-                                        )
-                                    }
-
-                                    if (items.size > 1) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(32.dp)
-                                                .clickable { items = items.filterNot { it.id == item.id } },
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Outlined.DeleteOutline,
-                                                contentDescription = "Remove item",
-                                                tint = colors.muted,
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-
-                            HorizontalDivider(thickness = 1.dp, color = colors.hairline)
-
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .height(36.dp)
-                                        .background(colors.bg)
-                                        .border(1.dp, colors.border)
-                                        .padding(horizontal = 10.dp),
-                                    contentAlignment = Alignment.CenterStart
-                                ) {
-                                    if (newTodoInput.isEmpty()) {
-                                        Text(
-                                            text = "Type item & press Enter...",
-                                            fontFamily = LikkhoFontFamilies.Sans,
-                                            fontSize = 12.sp,
-                                            color = colors.muted
-                                        )
-                                    }
-                                    BasicTextField(
-                                        value = newTodoInput,
-                                        onValueChange = {
-                                            newTodoInput = it
-                                            errorMsg = null
-                                        },
-                                        singleLine = true,
-                                        textStyle = TextStyle(
-                                            fontFamily = LikkhoFontFamilies.Sans,
-                                            fontSize = 12.sp,
-                                            color = colors.text
-                                        ),
-                                        cursorBrush = SolidColor(colors.accent),
-                                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                                        keyboardActions = KeyboardActions(onDone = { addTodoItem() }),
-                                        modifier = Modifier.fillMaxWidth()
-                                    )
-                                }
-
-                                Box(
-                                    modifier = Modifier
-                                        .height(36.dp)
-                                        .alpha(if (newTodoInput.trim().isEmpty()) 0.45f else 1f)
-                                        .background(colors.surface)
-                                        .border(1.dp, colors.border)
-                                        .clickable(enabled = newTodoInput.trim().isNotEmpty()) { addTodoItem() }
-                                        .padding(horizontal = 12.dp),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(
-                                        text = "Add",
-                                        fontFamily = LikkhoFontFamilies.Sans,
-                                        fontWeight = FontWeight.SemiBold,
-                                        fontSize = 12.sp,
-                                        color = colors.accent
-                                    )
-                                }
-                            }
+                            Text(
+                                text = "Add",
+                                fontFamily = LikkhoFontFamilies.Sans,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 12.sp,
+                                color = colors.accent
+                            )
                         }
-                    }
-                }
-            }
-
-            // Footer
-            HorizontalDivider(thickness = 1.dp, color = colors.hairline)
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(colors.surface)
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(
-                    text = "Shows in Notification Shade",
-                    fontFamily = LikkhoFontFamilies.Sans,
-                    fontSize = 11.sp,
-                    color = colors.muted,
-                    modifier = Modifier.weight(1f)
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Box(
-                        modifier = Modifier
-                            .height(38.dp)
-                            .background(colors.bg)
-                            .border(1.dp, colors.border)
-                            .clickable { onDismiss() }
-                            .padding(horizontal = 14.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "Cancel",
-                            fontFamily = LikkhoFontFamilies.Sans,
-                            fontWeight = FontWeight.Medium,
-                            fontSize = 12.sp,
-                            color = colors.text
-                        )
-                    }
-                    Row(
-                        modifier = Modifier
-                            .height(38.dp)
-                            .background(colors.accent)
-                            .clickable { submitNote() }
-                            .padding(horizontal = 14.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.Check,
-                            contentDescription = null,
-                            tint = Color.White,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Text(
-                            text = "Save Note",
-                            fontFamily = LikkhoFontFamilies.Sans,
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 12.sp,
-                            color = Color.White
-                        )
                     }
                 }
             }

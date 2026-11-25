@@ -86,13 +86,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.webkit.WebViewAssetLoader
 import com.likkho.diary.nativeapp.data.NativeVaultRepository
 import com.likkho.diary.nativeapp.media.ImageAdjustmentParams
 import com.likkho.diary.nativeapp.media.NativeMediaEngine
 import com.likkho.diary.nativeapp.model.CanvasAudioAttachment
+import com.likkho.diary.nativeapp.ui.components.LikkhoDialogOutlineButton
+import com.likkho.diary.nativeapp.ui.components.LikkhoDialogPrimaryButton
+import com.likkho.diary.nativeapp.ui.components.LikkhoHairlineBorder
+import com.likkho.diary.nativeapp.ui.components.LikkhoHairlineDialog
 import com.likkho.diary.nativeapp.model.CustomFontItem
 import com.likkho.diary.nativeapp.model.DiaryLog
 import com.likkho.diary.nativeapp.model.MicRecordingSettings
@@ -804,308 +806,270 @@ private fun NativePfpStudioDialog(
         }
     }
 
-    Dialog(
+    val canSave = tabIndex == 1 || pickedPhotoUri != null || currentPfpUrl.isNotBlank()
+
+    LikkhoHairlineDialog(
         onDismissRequest = { if (!isSaving) onDismiss() },
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+        title = "Diary PFP (1:1 Studio)",
+        leadingIcon = Icons.Outlined.Image,
+        dismissEnabled = !isSaving,
+        maxWidth = 430.dp,
+        maxHeight = 640.dp,
+        bodyPadding = 14.dp,
+        footer = {
+            LikkhoDialogOutlineButton(
+                text = "Cancel",
+                onClick = onDismiss,
+                enabled = !isSaving
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            LikkhoDialogPrimaryButton(
+                text = if (isSaving) "Saving..." else "Set PFP",
+                enabled = canSave && !isSaving,
+                bgColor = if (canSave) colors.accent else colors.muted,
+                onClick = {
+                    isSaving = true
+                    scope.launch {
+                        val res = withContext(Dispatchers.IO) {
+                            runCatching {
+                                if (tabIndex == 1) {
+                                    mediaEngine.renderEmojiTextPfp(
+                                        rawText = emojiText,
+                                        bgHex = selectedBgHex,
+                                        fgHex = selectedFgHex,
+                                        fontScale = emojiScale
+                                    )
+                                } else if (pickedPhotoUri != null) {
+                                    mediaEngine.cropSquarePfpFromUri(
+                                        uri = pickedPhotoUri!!,
+                                        zoom = zoom,
+                                        panXFraction = panX,
+                                        panYFraction = panY
+                                    )
+                                } else {
+                                    mediaEngine.cropSquarePfpFromMediaId(
+                                        mediaIdOrRef = currentPfpUrl,
+                                        zoom = zoom,
+                                        panXFraction = panX,
+                                        panYFraction = panY
+                                    )
+                                }
+                            }.getOrNull()
+                        }
+                        isSaving = false
+                        if (res != null) {
+                            onResult(res.assetUrl)
+                        }
+                    }
+                }
+            )
+        }
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth(0.92f)
-                .border(1.dp, colors.border, RectangleShape)
-                .background(colors.bg)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(colors.surface)
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(
-                    text = "Diary PFP (1:1 Studio)",
-                    fontFamily = LikkhoFontFamilies.Serif,
-                    fontSize = 17.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = colors.text
-                )
+            listOf("Photo (1:1)", "Emoji / Text").forEachIndexed { idx, label ->
+                val active = tabIndex == idx
                 Box(
                     modifier = Modifier
-                        .size(30.dp)
-                        .clickable(enabled = !isSaving) { onDismiss() },
+                        .weight(1f)
+                        .height(34.dp)
+                        .border(LikkhoHairlineBorder, if (active) colors.accent else colors.border, RectangleShape)
+                        .background(if (active) colors.accent else colors.surface)
+                        .clickable { tabIndex = idx },
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Outlined.Close, contentDescription = "Close", tint = colors.muted, modifier = Modifier.size(18.dp))
+                    Text(
+                        text = label,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (active) Color.White else colors.text
+                    )
                 }
             }
-            HorizontalDivider(thickness = 1.dp, color = colors.hairline)
+        }
 
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(12.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+        if (tabIndex == 0) {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                listOf("Photo (1:1)", "Emoji / Text").forEachIndexed { idx, label ->
-                    val active = tabIndex == idx
+                Box(
+                    modifier = Modifier
+                        .size(196.dp)
+                        .border(LikkhoHairlineBorder, colors.accent, RectangleShape)
+                        .background(colors.surface)
+                        .clipToBounds()
+                        .pointerInput(Unit) {
+                            detectDragGestures { change, dragAmount ->
+                                change.consume()
+                                val dim = 196f * density
+                                panX = (panX + dragAmount.x / dim).coerceIn(-0.8f, 0.8f)
+                                panY = (panY + dragAmount.y / dim).coerceIn(-0.8f, 0.8f)
+                            }
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    val bmp = previewBitmap
+                    if (bmp != null) {
+                        Image(
+                            bitmap = bmp,
+                            contentDescription = "PFP Crop Preview",
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .graphicsLayer {
+                                    scaleX = zoom
+                                    scaleY = zoom
+                                    translationX = panX * size.width
+                                    translationY = panY * size.height
+                                }
+                        )
+                    } else {
+                        Icon(
+                            Icons.Outlined.Image,
+                            contentDescription = null,
+                            tint = colors.muted,
+                            modifier = Modifier.size(44.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    text = "Zoom ${String.format(java.util.Locale.US, "%.1f", zoom)}x (Drag photo to pan)",
+                    fontSize = 11.sp,
+                    color = colors.muted
+                )
+                Slider(
+                    value = zoom,
+                    onValueChange = { zoom = it },
+                    valueRange = 1f..4f,
+                    colors = SliderDefaults.colors(thumbColor = colors.accent, activeTrackColor = colors.accent)
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     Box(
                         modifier = Modifier
                             .weight(1f)
-                            .height(34.dp)
-                            .border(1.dp, if (active) colors.accent else colors.border, RectangleShape)
-                            .background(if (active) colors.accent else colors.surface)
-                            .clickable { tabIndex = idx },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = label,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = if (active) Color.White else colors.text
-                        )
-                    }
-                }
-            }
-
-            if (tabIndex == 0) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 14.dp, vertical = 4.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(196.dp)
-                            .border(1.5.dp, colors.accent, RectangleShape)
+                            .height(36.dp)
+                            .border(LikkhoHairlineBorder, colors.border, RectangleShape)
                             .background(colors.surface)
-                            .clipToBounds()
-                            .pointerInput(Unit) {
-                                detectDragGestures { change, dragAmount ->
-                                    change.consume()
-                                    val dim = 196f * density
-                                    panX = (panX + dragAmount.x / dim).coerceIn(-0.8f, 0.8f)
-                                    panY = (panY + dragAmount.y / dim).coerceIn(-0.8f, 0.8f)
-                                }
+                            .clickable {
+                                onSystemPickerStateChanged(true)
+                                pickerLauncher.launch("image/*")
                             },
                         contentAlignment = Alignment.Center
                     ) {
-                        val bmp = previewBitmap
-                        if (bmp != null) {
-                            Image(
-                                bitmap = bmp,
-                                contentDescription = "PFP Crop Preview",
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .graphicsLayer {
-                                        scaleX = zoom
-                                        scaleY = zoom
-                                        translationX = panX * size.width
-                                        translationY = panY * size.height
-                                    }
-                            )
-                        } else {
-                            Icon(
-                                Icons.Outlined.Image,
-                                contentDescription = null,
-                                tint = colors.muted,
-                                modifier = Modifier.size(44.dp)
-                            )
-                        }
+                        Text("Choose Photo", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = colors.accent)
                     }
-
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Text(
-                        text = "Zoom ${String.format(java.util.Locale.US, "%.1f", zoom)}x (Drag photo to pan)",
-                        fontSize = 11.sp,
-                        color = colors.muted
-                    )
-                    Slider(
-                        value = zoom,
-                        onValueChange = { zoom = it },
-                        valueRange = 1f..4f,
-                        colors = SliderDefaults.colors(thumbColor = colors.accent, activeTrackColor = colors.accent)
-                    )
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
+                    if (currentPfpUrl.isNotBlank() || pickedPhotoUri != null) {
                         Box(
                             modifier = Modifier
-                                .weight(1f)
                                 .height(36.dp)
-                                .border(1.dp, colors.border, RectangleShape)
-                                .background(colors.surface)
-                                .clickable {
-                                    onSystemPickerStateChanged(true)
-                                    pickerLauncher.launch("image/*")
-                                },
+                                .border(LikkhoHairlineBorder, colors.crimson.copy(alpha = 0.55f), RectangleShape)
+                                .background(colors.crimson.copy(alpha = 0.08f))
+                                .clickable { onResult("") }
+                                .padding(horizontal = 12.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text("Choose Photo", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = colors.accent)
-                        }
-                        if (currentPfpUrl.isNotBlank() || pickedPhotoUri != null) {
-                            Box(
-                                modifier = Modifier
-                                    .height(36.dp)
-                                    .border(1.dp, colors.crimson.copy(alpha = 0.5f), RectangleShape)
-                                    .background(colors.crimson.copy(alpha = 0.08f))
-                                    .clickable { onResult("") }
-                                    .padding(horizontal = 12.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text("Remove", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = colors.crimson)
-                            }
-                        }
-                    }
-                }
-            } else {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 14.dp, vertical = 4.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    val previewBgColor = runCatching { Color(android.graphics.Color.parseColor(selectedBgHex)) }.getOrDefault(colors.accent)
-                    val previewFgColor = if (selectedBgHex.equals("#f8f9fa", true) || selectedBgHex.equals("#ffffff", true)) {
-                        Color(0xFF202122)
-                    } else {
-                        Color.White
-                    }
-                    LaunchedEffect(selectedBgHex) {
-                        selectedFgHex = if (selectedBgHex.equals("#f8f9fa", true) || selectedBgHex.equals("#ffffff", true)) {
-                            "#202122"
-                        } else {
-                            "#ffffff"
-                        }
-                    }
-
-                    Box(
-                        modifier = Modifier
-                            .size(132.dp)
-                            .border(1.dp, colors.border, RectangleShape)
-                            .background(previewBgColor),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = emojiText.ifBlank { "📔" },
-                            fontSize = (42f * emojiScale).sp,
-                            fontWeight = FontWeight.Bold,
-                            color = previewFgColor
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(10.dp))
-                    BasicTextField(
-                        value = emojiText,
-                        onValueChange = { if (it.length <= 8) emojiText = it },
-                        singleLine = true,
-                        textStyle = TextStyle(fontSize = 15.sp, color = colors.text, fontWeight = FontWeight.SemiBold),
-                        cursorBrush = SolidColor(colors.accent),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(40.dp)
-                            .border(1.dp, colors.border, RectangleShape)
-                            .background(colors.surface)
-                            .padding(horizontal = 10.dp, vertical = 9.dp)
-                    )
-
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Slider(
-                        value = emojiScale,
-                        onValueChange = { emojiScale = it },
-                        valueRange = 0.6f..1.6f,
-                        colors = SliderDefaults.colors(thumbColor = colors.accent, activeTrackColor = colors.accent)
-                    )
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        pfpBgSwatches.forEach { hex ->
-                            val swatchColor = Color(android.graphics.Color.parseColor(hex))
-                            val selected = selectedBgHex.equals(hex, ignoreCase = true)
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(28.dp)
-                                    .border(if (selected) 2.dp else 1.dp, if (selected) colors.accent else colors.border, RectangleShape)
-                                    .background(swatchColor)
-                                    .clickable { selectedBgHex = hex }
-                            )
+                            Text("Remove", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = colors.crimson)
                         }
                     }
                 }
             }
-
-            Spacer(modifier = Modifier.height(14.dp))
-            HorizontalDivider(thickness = 1.dp, color = colors.hairline)
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(colors.surface)
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
-                horizontalArrangement = Arrangement.End,
-                verticalAlignment = Alignment.CenterVertically
+        } else {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
+                val previewBgColor = runCatching { Color(android.graphics.Color.parseColor(selectedBgHex)) }.getOrDefault(colors.accent)
+                val previewFgColor = if (selectedBgHex.equals("#f8f9fa", true) || selectedBgHex.equals("#ffffff", true)) {
+                    Color(0xFF202122)
+                } else {
+                    Color.White
+                }
+                LaunchedEffect(selectedBgHex) {
+                    selectedFgHex = if (selectedBgHex.equals("#f8f9fa", true) || selectedBgHex.equals("#ffffff", true)) {
+                        "#202122"
+                    } else {
+                        "#ffffff"
+                    }
+                }
+
                 Box(
                     modifier = Modifier
-                        .height(36.dp)
-                        .border(1.dp, colors.border, RectangleShape)
-                        .background(colors.bg)
-                        .clickable(enabled = !isSaving) { onDismiss() }
-                        .padding(horizontal = 14.dp),
+                        .size(132.dp)
+                        .border(LikkhoHairlineBorder, colors.border, RectangleShape)
+                        .background(previewBgColor),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text("Cancel", fontSize = 12.sp, color = colors.text)
+                    Text(
+                        text = emojiText.ifBlank { "📔" },
+                        fontSize = (42f * emojiScale).sp,
+                        fontWeight = FontWeight.Bold,
+                        color = previewFgColor
+                    )
                 }
-                Spacer(modifier = Modifier.width(8.dp))
-                val canSave = tabIndex == 1 || pickedPhotoUri != null || currentPfpUrl.isNotBlank()
-                Box(
+
+                Spacer(modifier = Modifier.height(10.dp))
+                BasicTextField(
+                    value = emojiText,
+                    onValueChange = { if (it.length <= 8) emojiText = it },
+                    singleLine = true,
+                    textStyle = TextStyle(fontSize = 15.sp, color = colors.text, fontWeight = FontWeight.SemiBold),
+                    cursorBrush = SolidColor(colors.accent),
                     modifier = Modifier
-                        .height(36.dp)
-                        .background(if (canSave) colors.accent else colors.muted)
-                        .clickable(enabled = canSave && !isSaving) {
-                            isSaving = true
-                            scope.launch {
-                                val res = withContext(Dispatchers.IO) {
-                                    runCatching {
-                                        if (tabIndex == 1) {
-                                            mediaEngine.renderEmojiTextPfp(
-                                                rawText = emojiText,
-                                                bgHex = selectedBgHex,
-                                                fgHex = selectedFgHex,
-                                                fontScale = emojiScale
-                                            )
-                                        } else if (pickedPhotoUri != null) {
-                                            mediaEngine.cropSquarePfpFromUri(
-                                                uri = pickedPhotoUri!!,
-                                                zoom = zoom,
-                                                panXFraction = panX,
-                                                panYFraction = panY
-                                            )
-                                        } else {
-                                            mediaEngine.cropSquarePfpFromMediaId(
-                                                mediaIdOrRef = currentPfpUrl,
-                                                zoom = zoom,
-                                                panXFraction = panX,
-                                                panYFraction = panY
-                                            )
-                                        }
-                                    }.getOrNull()
-                                }
-                                isSaving = false
-                                if (res != null) {
-                                    onResult(res.assetUrl)
-                                }
+                        .fillMaxWidth()
+                        .height(40.dp)
+                        .border(LikkhoHairlineBorder, colors.border, RectangleShape)
+                        .background(colors.surface)
+                        .padding(horizontal = 10.dp, vertical = 9.dp)
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+                Slider(
+                    value = emojiScale,
+                    onValueChange = { emojiScale = it },
+                    valueRange = 0.6f..1.6f,
+                    colors = SliderDefaults.colors(thumbColor = colors.accent, activeTrackColor = colors.accent)
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    pfpBgSwatches.forEach { hex ->
+                        val swatchColor = Color(android.graphics.Color.parseColor(hex))
+                        val selected = selectedBgHex.equals(hex, ignoreCase = true)
+                        val lightSwatch = hex.equals("#f8f9fa", true) || hex.equals("#ffffff", true)
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(28.dp)
+                                .border(
+                                    LikkhoHairlineBorder,
+                                    if (selected) colors.accent else colors.border,
+                                    RectangleShape
+                                )
+                                .background(swatchColor)
+                                .clickable { selectedBgHex = hex },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (selected) {
+                                Icon(
+                                    imageVector = Icons.Outlined.Check,
+                                    contentDescription = "Selected",
+                                    tint = if (lightSwatch) Color(0xFF202122) else Color.White,
+                                    modifier = Modifier.size(14.dp)
+                                )
                             }
                         }
-                        .padding(horizontal = 16.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(if (isSaving) "Saving..." else "Set PFP", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                    }
                 }
             }
         }
@@ -1197,260 +1161,206 @@ private fun NativeImageStudioDialog(
         )
     }
 
-    Dialog(
+    LikkhoHairlineDialog(
         onDismissRequest = { if (!isProcessing) onDismiss() },
-        properties = DialogProperties(usePlatformDefaultWidth = false)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth(0.94f)
-                .border(1.dp, colors.border, RectangleShape)
-                .background(colors.bg)
-        ) {
-            Row(
+        title = "Native Image Studio",
+        leadingIcon = Icons.Outlined.Image,
+        dismissEnabled = !isProcessing,
+        maxWidth = 460.dp,
+        maxHeight = 660.dp,
+        bodyPadding = 14.dp,
+        headerTrailing = {
+            Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .background(colors.surface)
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                    .height(28.dp)
+                    .background(colors.bg)
+                    .border(LikkhoHairlineBorder, colors.border, RectangleShape)
+                    .clickable(enabled = !isProcessing) {
+                        brightness = 0f
+                        contrast = 0f
+                        saturation = 0f
+                        grayscale = false
+                        sepia = false
+                        invert = false
+                        rotationDeg = 0f
+                        opacity = 1f
+                    }
+                    .padding(horizontal = 8.dp),
+                contentAlignment = Alignment.Center
             ) {
-                Text(
-                    text = "Native Image Studio",
-                    fontFamily = LikkhoFontFamilies.Serif,
-                    fontSize = 17.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = colors.text
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Box(
-                        modifier = Modifier
-                            .height(28.dp)
-                            .border(1.dp, colors.border, RectangleShape)
-                            .clickable {
-                                brightness = 0f
-                                contrast = 0f
-                                saturation = 0f
-                                grayscale = false
-                                sepia = false
-                                invert = false
-                                rotationDeg = 0f
-                                opacity = 1f
-                            }
-                            .padding(horizontal = 8.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text("Reset", fontSize = 11.sp, color = colors.text)
-                    }
-                    Box(
-                        modifier = Modifier
-                            .size(28.dp)
-                            .clickable(enabled = !isProcessing) { onDismiss() },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(Icons.Outlined.Close, contentDescription = "Close", tint = colors.muted, modifier = Modifier.size(18.dp))
-                    }
-                }
+                Text("Reset", fontSize = 11.sp, color = colors.text)
             }
-            HorizontalDivider(thickness = 1.dp, color = colors.hairline)
-
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(420.dp)
-                    .verticalScroll(rememberScrollState())
-                    .padding(14.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(170.dp)
-                        .border(1.dp, colors.border, RectangleShape)
-                        .background(colors.surface),
-                    contentAlignment = Alignment.Center
-                ) {
-                    val bmp = sourceBitmap
-                    if (bmp != null) {
-                        Image(
-                            bitmap = bmp,
-                            contentDescription = "Edited Preview",
-                            contentScale = ContentScale.Fit,
-                            colorFilter = previewColorFilter,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .alpha(opacity)
-                                .graphicsLayer { rotationZ = rotationDeg }
+        },
+        footer = {
+            LikkhoDialogOutlineButton(
+                text = "Cancel",
+                onClick = onDismiss,
+                enabled = !isProcessing
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            LikkhoDialogPrimaryButton(
+                text = if (isProcessing) "Processing..." else "Apply Changes",
+                enabled = !isProcessing,
+                bgColor = if (!isProcessing) colors.accent else colors.muted,
+                onClick = {
+                    isProcessing = true
+                    errorMsg = null
+                    scope.launch {
+                        val params = ImageAdjustmentParams(
+                            brightness = brightness,
+                            contrast = contrast,
+                            saturation = saturation,
+                            grayscale = grayscale,
+                            sepia = sepia,
+                            invert = invert,
+                            rotationDegrees = rotationDeg,
+                            opacity = opacity,
+                            outputFormat = format,
+                            qualityPercent = quality,
+                            maxDimension = maxRes
                         )
-                    } else {
-                        CircularProgressIndicator(modifier = Modifier.size(22.dp), color = colors.accent, strokeWidth = 2.dp)
-                    }
-                }
-
-                // Format & Rotate row
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    listOf("image/jpeg" to "JPEG", "image/webp" to "WebP", "image/png" to "PNG").forEach { (mime, label) ->
-                        val active = format == mime
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(30.dp)
-                                .border(1.dp, if (active) colors.accent else colors.border, RectangleShape)
-                                .background(if (active) colors.accent else colors.surface)
-                                .clickable { format = mime },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(label, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = if (active) Color.White else colors.text)
-                        }
-                    }
-                    Box(
-                        modifier = Modifier
-                            .height(30.dp)
-                            .border(1.dp, colors.border, RectangleShape)
-                            .background(colors.surface)
-                            .clickable { rotationDeg = (rotationDeg + 90f) % 360f }
-                            .padding(horizontal = 10.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Icon(Icons.Outlined.RotateRight, contentDescription = null, tint = colors.accent, modifier = Modifier.size(14.dp))
-                            Text("${rotationDeg.toInt()}°", fontSize = 11.sp, color = colors.text)
-                        }
-                    }
-                }
-
-                // Resolution chips
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    listOf(640, 1280, 1920, 2560).forEach { dim ->
-                        val active = maxRes == dim
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(28.dp)
-                                .border(1.dp, if (active) colors.accent else colors.border, RectangleShape)
-                                .background(if (active) colors.accent.copy(alpha = 0.14f) else colors.surface)
-                                .clickable { maxRes = dim },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text("${dim}px", fontSize = 11.sp, fontFamily = LikkhoFontFamilies.Mono, color = if (active) colors.accent else colors.text)
-                        }
-                    }
-                }
-
-                if (format != "image/png") {
-                    StudioSliderRow("Quality", "${quality}%", quality.toFloat(), 25f..100f, colors.accent, colors.text) {
-                        quality = it.roundToInt()
-                    }
-                }
-                StudioSliderRow("Opacity", "${(opacity * 100).roundToInt()}%", opacity, 0.05f..1f, colors.accent, colors.text) {
-                    opacity = it
-                }
-                StudioSliderRow("Brightness", "${brightness.roundToInt()}", brightness, -100f..100f, colors.accent, colors.text) {
-                    brightness = it
-                }
-                StudioSliderRow("Contrast", "${contrast.roundToInt()}", contrast, -100f..100f, colors.accent, colors.text) {
-                    contrast = it
-                }
-                StudioSliderRow("Saturation", "${saturation.roundToInt()}", saturation, -100f..100f, colors.accent, colors.text) {
-                    saturation = it
-                }
-
-                // Filter toggles
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    FilterChipBox("Grayscale", grayscale, colors.accent, colors.border, colors.surface, colors.text, Modifier.weight(1f)) {
-                        grayscale = !grayscale
-                    }
-                    FilterChipBox("Sepia", sepia, colors.accent, colors.border, colors.surface, colors.text, Modifier.weight(1f)) {
-                        sepia = !sepia
-                    }
-                    FilterChipBox("Invert", invert, colors.accent, colors.border, colors.surface, colors.text, Modifier.weight(1f)) {
-                        invert = !invert
-                    }
-                }
-
-                errorMsg?.let { msg ->
-                    Text(msg, fontSize = 11.sp, color = colors.crimson)
-                }
-            }
-
-            HorizontalDivider(thickness = 1.dp, color = colors.hairline)
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(colors.surface)
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
-                horizontalArrangement = Arrangement.End
-            ) {
-                Box(
-                    modifier = Modifier
-                        .height(36.dp)
-                        .border(1.dp, colors.border, RectangleShape)
-                        .background(colors.bg)
-                        .clickable(enabled = !isProcessing) { onDismiss() }
-                        .padding(horizontal = 14.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text("Cancel", fontSize = 12.sp, color = colors.text)
-                }
-                Spacer(modifier = Modifier.width(8.dp))
-                Box(
-                    modifier = Modifier
-                        .height(36.dp)
-                        .background(if (!isProcessing) colors.accent else colors.muted)
-                        .clickable(enabled = !isProcessing) {
-                            isProcessing = true
-                            errorMsg = null
-                            scope.launch {
-                                val params = ImageAdjustmentParams(
-                                    brightness = brightness,
-                                    contrast = contrast,
-                                    saturation = saturation,
-                                    grayscale = grayscale,
-                                    sepia = sepia,
-                                    invert = invert,
-                                    rotationDegrees = rotationDeg,
-                                    opacity = opacity,
-                                    outputFormat = format,
-                                    qualityPercent = quality,
-                                    maxDimension = maxRes
+                        val result = withContext(Dispatchers.IO) {
+                            runCatching {
+                                mediaEngine.applyImageAdjustments(
+                                    sourceMediaIdOrRef = request.sourceRef,
+                                    params = params,
+                                    targetId = null
                                 )
-                                val result = withContext(Dispatchers.IO) {
-                                    runCatching {
-                                        mediaEngine.applyImageAdjustments(
-                                            sourceMediaIdOrRef = request.sourceRef,
-                                            params = params,
-                                            targetId = null
-                                        )
-                                    }
-                                }
-                                isProcessing = false
-                                result.onSuccess { res ->
-                                    onResult(
-                                        res.assetUrl,
-                                        res.width,
-                                        res.height,
-                                        res.sizeBytes,
-                                        res.originalSizeBytes,
-                                        opacity
-                                    )
-                                }.onFailure { err ->
-                                    errorMsg = err.message ?: "Could not process image."
-                                }
                             }
                         }
-                        .padding(horizontal = 16.dp),
+                        isProcessing = false
+                        result.onSuccess { res ->
+                            onResult(
+                                res.assetUrl,
+                                res.width,
+                                res.height,
+                                res.sizeBytes,
+                                res.originalSizeBytes,
+                                opacity
+                            )
+                        }.onFailure { err ->
+                            errorMsg = err.message ?: "Could not process image."
+                        }
+                    }
+                }
+            )
+        }
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(170.dp)
+                .border(LikkhoHairlineBorder, colors.border, RectangleShape)
+                .background(colors.surface),
+            contentAlignment = Alignment.Center
+        ) {
+            val bmp = sourceBitmap
+            if (bmp != null) {
+                Image(
+                    bitmap = bmp,
+                    contentDescription = "Edited Preview",
+                    contentScale = ContentScale.Fit,
+                    colorFilter = previewColorFilter,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .alpha(opacity)
+                        .graphicsLayer { rotationZ = rotationDeg }
+                )
+            } else {
+                CircularProgressIndicator(modifier = Modifier.size(22.dp), color = colors.accent, strokeWidth = 2.dp)
+            }
+        }
+
+        // Format & Rotate row
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            listOf("image/jpeg" to "JPEG", "image/webp" to "WebP", "image/png" to "PNG").forEach { (mime, label) ->
+                val active = format == mime
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(30.dp)
+                        .border(LikkhoHairlineBorder, if (active) colors.accent else colors.border, RectangleShape)
+                        .background(if (active) colors.accent else colors.surface)
+                        .clickable { format = mime },
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(if (isProcessing) "Processing..." else "Apply Changes", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                    Text(label, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = if (active) Color.White else colors.text)
                 }
             }
+            Box(
+                modifier = Modifier
+                    .height(30.dp)
+                    .border(LikkhoHairlineBorder, colors.border, RectangleShape)
+                    .background(colors.surface)
+                    .clickable { rotationDeg = (rotationDeg + 90f) % 360f }
+                    .padding(horizontal = 10.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Icon(Icons.Outlined.RotateRight, contentDescription = null, tint = colors.accent, modifier = Modifier.size(14.dp))
+                    Text("${rotationDeg.toInt()}°", fontSize = 11.sp, color = colors.text)
+                }
+            }
+        }
+
+        // Resolution chips
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            listOf(640, 1280, 1920, 2560).forEach { dim ->
+                val active = maxRes == dim
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(28.dp)
+                        .border(LikkhoHairlineBorder, if (active) colors.accent else colors.border, RectangleShape)
+                        .background(if (active) colors.accent.copy(alpha = 0.14f) else colors.surface)
+                        .clickable { maxRes = dim },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("${dim}px", fontSize = 11.sp, fontFamily = LikkhoFontFamilies.Mono, color = if (active) colors.accent else colors.text)
+                }
+            }
+        }
+
+        if (format != "image/png") {
+            StudioSliderRow("Quality", "${quality}%", quality.toFloat(), 25f..100f, colors.accent, colors.text) {
+                quality = it.roundToInt()
+            }
+        }
+        StudioSliderRow("Opacity", "${(opacity * 100).roundToInt()}%", opacity, 0.05f..1f, colors.accent, colors.text) {
+            opacity = it
+        }
+        StudioSliderRow("Brightness", "${brightness.roundToInt()}", brightness, -100f..100f, colors.accent, colors.text) {
+            brightness = it
+        }
+        StudioSliderRow("Contrast", "${contrast.roundToInt()}", contrast, -100f..100f, colors.accent, colors.text) {
+            contrast = it
+        }
+        StudioSliderRow("Saturation", "${saturation.roundToInt()}", saturation, -100f..100f, colors.accent, colors.text) {
+            saturation = it
+        }
+
+        // Filter toggles
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            FilterChipBox("Grayscale", grayscale, colors.accent, colors.border, colors.surface, colors.text, Modifier.weight(1f)) {
+                grayscale = !grayscale
+            }
+            FilterChipBox("Sepia", sepia, colors.accent, colors.border, colors.surface, colors.text, Modifier.weight(1f)) {
+                sepia = !sepia
+            }
+            FilterChipBox("Invert", invert, colors.accent, colors.border, colors.surface, colors.text, Modifier.weight(1f)) {
+                invert = !invert
+            }
+        }
+
+        errorMsg?.let { msg ->
+            Text(msg, fontSize = 11.sp, color = colors.crimson)
         }
     }
 }

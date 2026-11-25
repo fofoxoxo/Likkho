@@ -2386,9 +2386,9 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
   };
 
   const getBtnClass = (isActive: boolean = false) =>
-    `flex h-9 min-w-[36px] shrink-0 items-center justify-center rounded-xs border px-2 text-xs font-medium transition-colors ${
+    `flex h-9 min-w-[36px] shrink-0 items-center justify-center border px-2 text-xs font-medium transition-colors ${
       isActive
-        ? 'border-[#3366cc] bg-[#3366cc] text-white shadow-2xs'
+        ? 'border-[#3366cc] bg-[#3366cc] text-white'
         : 'border-transparent text-[var(--wiki-text)] hover:border-[var(--wiki-border)] hover:bg-[var(--wiki-bg)] active:bg-[#eaecf0] dark:active:bg-[#272d34]'
     }`;
 
@@ -2475,7 +2475,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
               type="button"
               onMouseDown={preventFocusLoss}
               onClick={() => setShowColorPicker(null)}
-              className="text-xs text-[var(--wiki-muted)] underline"
+              className="border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-2 py-0.5 text-[11px] font-medium text-[var(--wiki-muted)] hover:text-[var(--wiki-text)]"
             >
               Close
             </button>
@@ -2495,7 +2495,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
                       applySelectionHighlight(color);
                     }
                   }}
-                  className="h-6 w-6 rounded-full border border-[var(--wiki-border)] shadow-2xs flex items-center justify-center text-[10px]"
+                  className="h-6 w-6 border border-[var(--wiki-border)] flex items-center justify-center text-[10px]"
                   style={{ backgroundColor: isReset ? '#ffffff' : color }}
                   title={isReset ? 'Reset / Remove' : color}
                 >
@@ -2521,7 +2521,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
               type="button"
               onMouseDown={preventFocusLoss}
               onClick={() => setShowFontPanel(false)}
-              className="text-xs text-[var(--wiki-muted)] underline"
+              className="border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-2 py-0.5 text-[11px] font-medium text-[var(--wiki-muted)] hover:text-[var(--wiki-text)]"
             >
               Close
             </button>
@@ -2625,7 +2625,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
             type="button"
             onMouseDown={preventFocusLoss}
             onClick={() => setShowSizePanel(false)}
-            className="shrink-0 text-xs text-[var(--wiki-muted)] px-1"
+            className="shrink-0 border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-2 py-1 text-[11px] font-medium text-[var(--wiki-muted)] hover:text-[var(--wiki-text)]"
           >
             Close
           </button>
@@ -2680,7 +2680,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
             type="button"
             onMouseDown={preventFocusLoss}
             onClick={() => setShowMediaPickerMenu(false)}
-            className="text-xs text-[var(--wiki-muted)] underline"
+            className="border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-2 py-1 text-[11px] font-medium text-[var(--wiki-muted)] hover:text-[var(--wiki-text)]"
           >
             Close
           </button>
@@ -2822,7 +2822,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
               type="button"
               onMouseDown={preventFocusLoss}
               onClick={() => setShowBgControl(false)}
-              className="shrink-0 rounded-xs border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-2.5 py-1 text-xs font-semibold text-[var(--wiki-text)] hover:border-[#3366cc]"
+              className="shrink-0 border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-2.5 py-1 text-xs font-semibold text-[var(--wiki-text)] hover:border-[#3366cc]"
             >
               Done
             </button>
@@ -2940,7 +2940,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
           onClick={handleToggleMicRecording}
           className={
             isRecording
-              ? 'flex h-9 min-w-[36px] shrink-0 items-center justify-center rounded-xs border border-[#b32424] bg-[#b32424] px-2 text-xs font-medium text-white animate-pulse'
+              ? 'flex h-9 min-w-[36px] shrink-0 items-center justify-center border border-[#b32424] bg-[#b32424] px-2 text-xs font-medium text-white animate-pulse'
               : getBtnClass(false)
           }
           title="Record Voice Audio"
@@ -3311,7 +3311,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
           }}
           className={
             diaryLockPin
-              ? 'flex h-9 min-w-[36px] shrink-0 items-center justify-center rounded-xs border border-[#b32424] bg-[#b32424] px-2 text-xs font-medium text-white shadow-2xs'
+              ? 'flex h-9 min-w-[36px] shrink-0 items-center justify-center border border-[#b32424] bg-[#b32424] px-2 text-xs font-medium text-white'
               : getBtnClass(showDiaryLockPopover)
           }
           title={diaryLockPin ? 'Diary Locked (Tap to Change/Unlock)' : 'Lock This Diary Entry'}
@@ -3434,7 +3434,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
 
           {/* Live Search Suggestions Dropdown Below Search Box */}
           {(isWikiSuggestionsLoading || wikiSuggestions.length > 0) && (
-            <div className="max-h-48 w-full overflow-y-auto border border-[var(--wiki-border)] bg-[var(--wiki-surface)] divide-y divide-[var(--wiki-hairline)] shadow-md">
+            <div className="max-h-48 w-full overflow-y-auto border border-[var(--wiki-border)] bg-[var(--wiki-surface)] divide-y divide-[var(--wiki-hairline)]">
               {isWikiSuggestionsLoading && wikiSuggestions.length === 0 ? (
                 <div className="flex items-center gap-2 px-3 py-2 text-xs text-[var(--wiki-muted)]">
                   <Loader2 className="h-3.5 w-3.5 animate-spin text-[#3366cc]" />

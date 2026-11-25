@@ -1696,7 +1696,7 @@ function FullWebApp() {
     >
       {/* Export Processing Pop-up Banner (Prevents duplicate export taps during large exports) */}
       {exportProcessingBanner && (
-        <div className="fixed bottom-20 left-4 right-4 z-50 mx-auto flex max-w-sm items-center gap-2.5 border border-[#3366cc] bg-[var(--wiki-bg)] px-3.5 py-2.5 text-xs font-semibold text-[#3366cc] shadow-xl">
+        <div className="fixed bottom-20 left-4 right-4 z-50 mx-auto flex max-w-sm items-center gap-2.5 border border-[#3366cc] bg-[var(--wiki-bg)] px-3.5 py-2.5 text-xs font-semibold text-[#3366cc]">
           <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
           <span className="truncate">{exportProcessingBanner}</span>
         </div>
@@ -1704,7 +1704,7 @@ function FullWebApp() {
 
       {/* Export / Status Confirmation Banner */}
       {exportStatusBanner && !exportProcessingBanner && (
-        <div className="fixed bottom-20 left-4 right-4 z-50 mx-auto flex max-w-sm items-center gap-2 border border-[#14866d] bg-[var(--wiki-bg)] px-3.5 py-2.5 text-xs font-semibold text-[#14866d] shadow-xl">
+        <div className="fixed bottom-20 left-4 right-4 z-50 mx-auto flex max-w-sm items-center gap-2 border border-[#14866d] bg-[var(--wiki-bg)] px-3.5 py-2.5 text-xs font-semibold text-[#14866d]">
           <CheckCircle2 className="h-4 w-4 shrink-0" />
           <span className="truncate">{exportStatusBanner}</span>
         </div>
@@ -1712,7 +1712,7 @@ function FullWebApp() {
 
       {/* Android Heads-Up Ringing Notification Banner */}
       {ringingAlert && (
-        <div className="fixed left-3 right-3 top-3 z-50 mx-auto max-w-md border-2 border-[#3366cc] bg-[var(--wiki-bg)] p-3.5 shadow-2xl">
+        <div className="fixed left-3 right-3 top-3 z-50 mx-auto max-w-md border border-[#3366cc] bg-[var(--wiki-bg)] p-3.5">
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-start gap-2.5">
               <div className="flex h-9 w-9 shrink-0 items-center justify-center bg-[#3366cc] text-white">
@@ -2161,7 +2161,7 @@ function FullWebApp() {
 
                       {/* 3-Dots Dropdown Menu: Pin to Top, Share (.likkho), Export, Delete */}
                       {isMenuOpen && (
-                        <div className="absolute right-0 top-11 z-40 w-44 border border-[var(--wiki-border)] bg-[var(--wiki-bg)] py-1 shadow-xl">
+                        <div className="absolute right-0 top-11 z-40 w-44 divide-y divide-[var(--wiki-hairline)] border border-[var(--wiki-border)] bg-[var(--wiki-bg)]">
                           <button
                             type="button"
                             onClick={() => handleTogglePinLog(log.id)}
@@ -2206,7 +2206,7 @@ function FullWebApp() {
                           <button
                             type="button"
                             onClick={() => requestDeleteLogConfirmation(log.id)}
-                            className="flex w-full items-center gap-2.5 border-t border-[var(--wiki-hairline)] px-3.5 py-2.5 text-left text-xs font-medium text-[#b32424] hover:bg-[var(--wiki-surface)]"
+                            className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-xs font-medium text-[#b32424] hover:bg-[var(--wiki-surface)]"
                           >
                             <Trash2 className="h-4 w-4" />
                             <span>Delete</span>
@@ -2236,14 +2236,14 @@ function FullWebApp() {
       {/* Individual Locked Diary Passcode Verification Modal (with Progressive Cooldown) */}
       {pendingUnlockDiary && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-4"
           onClick={() => setPendingUnlockDiary(null)}
         >
           <div
-            className="w-full max-w-xs border border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-text)] shadow-xl"
+            className="flex max-h-[88dvh] w-full max-w-xs flex-col border border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-text)] overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between border-b border-[var(--wiki-hairline)] bg-[var(--wiki-surface)] px-4 py-3">
+            <div className="flex shrink-0 items-center justify-between border-b border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-4 py-3">
               <div className="flex items-center gap-2 min-w-0">
                 <Lock className="h-4 w-4 shrink-0 text-[#b32424]" />
                 <h3 className="font-wiki-serif text-base font-bold truncate">
@@ -2253,7 +2253,7 @@ function FullWebApp() {
               <button
                 type="button"
                 onClick={() => setPendingUnlockDiary(null)}
-                className="flex h-7 w-7 items-center justify-center text-[var(--wiki-muted)] hover:text-[var(--wiki-text)]"
+                className="flex h-7 w-7 shrink-0 items-center justify-center border border-transparent text-[var(--wiki-muted)] hover:border-[var(--wiki-border)] hover:text-[var(--wiki-text)]"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -2295,48 +2295,50 @@ function FullWebApp() {
                   }
                 }
               }}
-              className="p-4 space-y-3"
+              className="flex flex-col overflow-y-auto"
             >
-              {diaryCooldownSec > 0 ? (
-                <p className="text-xs font-semibold text-[#b32424]">
-                  Locked for {diaryCooldownSec}s due to continuous wrong attempts.
-                </p>
-              ) : (
-                diaryUnlockError && (
-                  <p className="text-xs font-medium text-[#b32424]">
-                    {diaryUnlockError}
+              <div className="space-y-3 p-4">
+                {diaryCooldownSec > 0 ? (
+                  <p className="text-xs font-semibold text-[#b32424]">
+                    Locked for {diaryCooldownSec}s due to continuous wrong attempts.
                   </p>
-                )
-              )}
-              <div>
-                <label className="mb-1 block text-xs font-medium text-[var(--wiki-text)]">
-                  Enter Diary Passcode
-                </label>
-                <input
-                  type="password"
-                  value={diaryUnlockInput}
-                  disabled={diaryCooldownSec > 0}
-                  onChange={(e) => {
-                    setDiaryUnlockInput(e.target.value);
-                    setDiaryUnlockError(null);
-                  }}
-                  placeholder="Passcode..."
-                  className="h-9 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3 text-xs text-[var(--wiki-text)] outline-none focus:border-[#3366cc] disabled:opacity-50"
-                  autoFocus
-                />
+                ) : (
+                  diaryUnlockError && (
+                    <p className="text-xs font-medium text-[#b32424]">
+                      {diaryUnlockError}
+                    </p>
+                  )
+                )}
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-[var(--wiki-text)]">
+                    Enter Diary Passcode
+                  </label>
+                  <input
+                    type="password"
+                    value={diaryUnlockInput}
+                    disabled={diaryCooldownSec > 0}
+                    onChange={(e) => {
+                      setDiaryUnlockInput(e.target.value);
+                      setDiaryUnlockError(null);
+                    }}
+                    placeholder="Passcode..."
+                    className="h-9 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3 text-xs text-[var(--wiki-text)] outline-none focus:border-[#3366cc] disabled:opacity-50"
+                    autoFocus
+                  />
+                </div>
               </div>
-              <div className="flex items-center justify-end gap-2">
+              <div className="flex items-center justify-end gap-2 border-t border-[var(--wiki-hairline)] bg-[var(--wiki-surface)] px-4 py-3">
                 <button
                   type="button"
                   onClick={() => setPendingUnlockDiary(null)}
-                  className="h-9 border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3 text-xs font-medium text-[var(--wiki-text)]"
+                  className="h-9 border border-[var(--wiki-border)] bg-[var(--wiki-bg)] px-3 text-xs font-medium text-[var(--wiki-text)]"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={diaryCooldownSec > 0}
-                  className="h-9 bg-[#3366cc] px-4 text-xs font-semibold text-white disabled:opacity-50"
+                  className="h-9 border border-[#3366cc] bg-[#3366cc] px-4 text-xs font-semibold text-white disabled:opacity-50"
                 >
                   {diaryCooldownSec > 0 ? `Wait ${diaryCooldownSec}s` : 'Unlock'}
                 </button>
@@ -2349,14 +2351,14 @@ function FullWebApp() {
       {/* Delete Entry Confirmation Pop-Up Modal */}
       {pendingDeleteLog && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-4"
           onClick={() => setPendingDeleteLog(null)}
         >
           <div
-            className="w-full max-w-sm border border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-text)] shadow-xl"
+            className="flex max-h-[88dvh] w-full max-w-sm flex-col border border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-text)] overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between border-b border-[var(--wiki-hairline)] bg-[var(--wiki-surface)] px-4 py-3">
+            <div className="flex shrink-0 items-center justify-between border-b border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-4 py-3">
               <div className="flex items-center gap-2">
                 <AlertTriangle className="h-4 w-4 text-[#b32424]" />
                 <h3 className="font-wiki-serif text-lg font-bold">
@@ -2366,35 +2368,35 @@ function FullWebApp() {
               <button
                 type="button"
                 onClick={() => setPendingDeleteLog(null)}
-                className="flex h-8 w-8 items-center justify-center text-[var(--wiki-muted)] hover:text-[var(--wiki-text)]"
+                className="flex h-8 w-8 items-center justify-center border border-transparent text-[var(--wiki-muted)] hover:border-[var(--wiki-border)] hover:text-[var(--wiki-text)]"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
 
-            <div className="p-4">
+            <div className="overflow-y-auto p-4">
               <p className="text-xs leading-relaxed text-[var(--wiki-text)]">
                 Are you sure you want to permanently delete{' '}
                 <strong>"{pendingDeleteLog.heading}"</strong>? This action cannot be undone.
               </p>
+            </div>
 
-              <div className="mt-4 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setPendingDeleteLog(null)}
-                  className="h-10 border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-4 text-xs font-medium text-[var(--wiki-text)]"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={confirmDeleteLog}
-                  className="flex h-10 items-center gap-1.5 bg-[#b32424] px-4 text-xs font-semibold text-white hover:bg-[#941d1d]"
-                >
-                  <Trash2 className="h-4 w-4" />
-                  Delete
-                </button>
-              </div>
+            <div className="flex shrink-0 items-center justify-end gap-2 border-t border-[var(--wiki-hairline)] bg-[var(--wiki-surface)] px-4 py-3">
+              <button
+                type="button"
+                onClick={() => setPendingDeleteLog(null)}
+                className="h-9 border border-[var(--wiki-border)] bg-[var(--wiki-bg)] px-4 text-xs font-medium text-[var(--wiki-text)]"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteLog}
+                className="flex h-9 items-center gap-1.5 border border-[#b32424] bg-[#b32424] px-4 text-xs font-semibold text-white hover:bg-[#941d1d]"
+              >
+                <Trash2 className="h-4 w-4" />
+                Delete
+              </button>
             </div>
           </div>
         </div>
@@ -2403,14 +2405,14 @@ function FullWebApp() {
       {/* Multi-Format Export Modal */}
       {exportingLog && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-4"
           onClick={() => setExportingLog(null)}
         >
           <div
-            className="w-full max-w-sm border border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-text)] shadow-xl"
+            className="flex max-h-[88dvh] w-full max-w-sm flex-col border border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-text)] overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between border-b border-[var(--wiki-hairline)] bg-[var(--wiki-surface)] px-4 py-3">
+            <div className="flex shrink-0 items-center justify-between border-b border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-4 py-3">
               <div className="flex items-center gap-2 min-w-0">
                 <FileDown className="h-4 w-4 shrink-0 text-[#3366cc]" />
                 <h3 className="font-wiki-serif text-lg font-bold truncate">
@@ -2420,13 +2422,13 @@ function FullWebApp() {
               <button
                 type="button"
                 onClick={() => setExportingLog(null)}
-                className="flex h-8 w-8 items-center justify-center text-[var(--wiki-muted)] hover:text-[var(--wiki-text)]"
+                className="flex h-8 w-8 shrink-0 items-center justify-center border border-transparent text-[var(--wiki-muted)] hover:border-[var(--wiki-border)] hover:text-[var(--wiki-text)]"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
 
-            <div className="p-4">
+            <div className="overflow-y-auto p-4">
               <p className="mb-3 text-xs text-[var(--wiki-muted)]">
                 Choose a file format to save to <strong>Downloads/Likkho</strong>:
               </p>

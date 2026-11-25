@@ -179,10 +179,13 @@ export const MediaAudioStudioModal: React.FC<MediaAudioStudioModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-3 backdrop-blur-xs">
-      <div className="flex max-h-[92dvh] w-full max-w-md flex-col border border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-text)] shadow-2xl overflow-hidden">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-3" onClick={onCancel}>
+      <div
+        className="flex max-h-[88dvh] w-full max-w-md flex-col border border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-text)] overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header */}
-        <div className="flex shrink-0 items-center justify-between border-b border-[var(--wiki-hairline)] bg-[var(--wiki-surface)] px-3.5 py-2.5">
+        <div className="flex shrink-0 items-center justify-between border-b border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3.5 py-2.5">
           <div className="flex items-center gap-2 min-w-0">
             <Sliders className="h-4 w-4 shrink-0 text-[#b32424]" />
             <h3 className="font-wiki-serif text-base font-bold truncate">

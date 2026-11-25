@@ -524,16 +524,16 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
         {/* Clear All Data Confirmation Pop-up Modal */}
         {showClearAllConfirmModal && (
           <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs"
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-4"
             onClick={() => {
               if (!isClearingAllData) setShowClearAllConfirmModal(false);
             }}
           >
             <div
-              className="w-full max-w-sm border border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-text)] shadow-2xl"
+              className="flex max-h-[88dvh] w-full max-w-sm flex-col border border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-text)] overflow-hidden"
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="flex items-center justify-between border-b border-[var(--wiki-hairline)] bg-[var(--wiki-surface)] px-4 py-3">
+              <div className="flex shrink-0 items-center justify-between border-b border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-4 py-3">
                 <div className="flex items-center gap-2">
                   <AlertTriangle className="h-4 w-4 shrink-0 text-[#b32424]" />
                   <h3 className="font-wiki-serif text-lg font-bold">
@@ -544,51 +544,51 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                   type="button"
                   disabled={isClearingAllData}
                   onClick={() => setShowClearAllConfirmModal(false)}
-                  className="flex h-8 w-8 items-center justify-center text-[var(--wiki-muted)] hover:text-[var(--wiki-text)]"
+                  className="flex h-8 w-8 items-center justify-center border border-transparent text-[var(--wiki-muted)] hover:border-[var(--wiki-border)] hover:text-[var(--wiki-text)]"
                 >
                   <X className="h-4 w-4" />
                 </button>
               </div>
 
-              <div className="p-4 space-y-4">
+              <div className="overflow-y-auto p-4">
                 <p className="text-xs leading-relaxed text-[var(--wiki-text)]">
                   Are you sure you want to permanently delete{' '}
                   <strong>all data from Likkho</strong> (all diaries, images, audio
                   recordings, custom fonts, saved word analyses, and passcodes)? This
                   action cannot be undone.
                 </p>
+              </div>
 
-                <div className="flex items-center justify-end gap-2">
-                  <button
-                    type="button"
-                    disabled={isClearingAllData}
-                    onClick={() => setShowClearAllConfirmModal(false)}
-                    className="h-10 border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-4 text-xs font-medium text-[var(--wiki-text)]"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    disabled={isClearingAllData}
-                    onClick={async () => {
-                      setIsClearingAllData(true);
-                      try {
-                        await onClearAllAppData();
-                        setShowClearAllConfirmModal(false);
-                        setShowLegalAboutPage(false);
-                        onBackToHome();
-                      } finally {
-                        setIsClearingAllData(false);
-                      }
-                    }}
-                    className="flex h-10 items-center gap-1.5 bg-[#b32424] px-4 text-xs font-semibold text-white hover:bg-[#941d1d] disabled:opacity-50"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                    <span>
-                      {isClearingAllData ? 'Deleting...' : 'Delete All Data'}
-                    </span>
-                  </button>
-                </div>
+              <div className="flex shrink-0 items-center justify-end gap-2 border-t border-[var(--wiki-hairline)] bg-[var(--wiki-surface)] px-4 py-3">
+                <button
+                  type="button"
+                  disabled={isClearingAllData}
+                  onClick={() => setShowClearAllConfirmModal(false)}
+                  className="h-9 border border-[var(--wiki-border)] bg-[var(--wiki-bg)] px-4 text-xs font-medium text-[var(--wiki-text)]"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={isClearingAllData}
+                  onClick={async () => {
+                    setIsClearingAllData(true);
+                    try {
+                      await onClearAllAppData();
+                      setShowClearAllConfirmModal(false);
+                      setShowLegalAboutPage(false);
+                      onBackToHome();
+                    } finally {
+                      setIsClearingAllData(false);
+                    }
+                  }}
+                  className="flex h-9 items-center gap-1.5 border border-[#b32424] bg-[#b32424] px-4 text-xs font-semibold text-white hover:bg-[#941d1d] disabled:opacity-50"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  <span>
+                    {isClearingAllData ? 'Deleting...' : 'Delete All Data'}
+                  </span>
+                </button>
               </div>
             </div>
           </div>
@@ -793,7 +793,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               setAddPasswordError('');
               setShowAddPasswordModal(true);
             }}
-            className="flex h-9 items-center gap-1.5 border border-[#3366cc] bg-[#3366cc] px-3.5 text-xs font-semibold text-white hover:bg-[#2a56b0] active:scale-95 transition-all shadow-2xs"
+            className="flex h-9 items-center gap-1.5 border border-[#3366cc] bg-[#3366cc] px-3.5 text-xs font-semibold text-white hover:bg-[#2a56b0] active:scale-95 transition-all"
             title="Add new password chip"
           >
             <Plus className="h-4 w-4" />
@@ -839,7 +839,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                       setShowRevealedPassword(false);
                       setCopiedPasswordId(null);
                     }}
-                    className="group relative flex flex-col items-center justify-center min-h-[78px] p-2 sm:p-2.5 border border-[var(--wiki-border)] bg-[var(--wiki-surface)] hover:border-[#3366cc] hover:bg-[var(--wiki-bg)] active:scale-95 transition-all text-center shadow-2xs overflow-hidden"
+                    className="group relative flex flex-col items-center justify-center min-h-[78px] p-2 sm:p-2.5 border border-[var(--wiki-border)] bg-[var(--wiki-surface)] hover:border-[#3366cc] hover:bg-[var(--wiki-bg)] active:scale-95 transition-all text-center overflow-hidden"
                     title={`Click to view password for ${item.name}`}
                   >
                     <div className="flex h-6 w-6 items-center justify-center border border-[var(--wiki-border)] bg-[var(--wiki-bg)] group-hover:border-[#3366cc] mb-1.5 transition-colors">
@@ -863,9 +863,15 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
         {/* Modal: Add New Password Modal */}
         {showAddPasswordModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs">
-            <div className="w-full max-w-sm border border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-text)] shadow-2xl overflow-hidden">
-              <div className="flex items-center justify-between border-b border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-4 py-3">
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-4"
+            onClick={() => setShowAddPasswordModal(false)}
+          >
+            <div
+              className="flex max-h-[88dvh] w-full max-w-sm flex-col border border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-text)] overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex shrink-0 items-center justify-between border-b border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-4 py-3">
                 <div className="flex items-center gap-2">
                   <Key className="h-4 w-4 text-[#3366cc]" />
                   <h3 className="font-wiki-serif text-base font-bold">Add Password</h3>
@@ -873,7 +879,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 <button
                   type="button"
                   onClick={() => setShowAddPasswordModal(false)}
-                  className="flex h-7 w-7 items-center justify-center text-[var(--wiki-muted)] hover:text-[var(--wiki-text)]"
+                  className="flex h-7 w-7 items-center justify-center border border-transparent text-[var(--wiki-muted)] hover:border-[var(--wiki-border)] hover:text-[var(--wiki-text)]"
                 >
                   <X className="h-4 w-4" />
                 </button>
@@ -905,73 +911,75 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                   setAddPasswordError('');
                   showToast(`Password "${newItem.name}" saved.`);
                 }}
-                className="p-4 space-y-3.5"
+                className="flex flex-col overflow-y-auto"
               >
-                {addPasswordError && (
-                  <div className="flex items-center gap-1.5 border border-[#b32424] bg-[#b32424]/10 p-2 text-xs text-[#b32424]">
-                    <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                    <span>{addPasswordError}</span>
-                  </div>
-                )}
+                <div className="space-y-3.5 p-4">
+                  {addPasswordError && (
+                    <div className="flex items-center gap-1.5 border border-[#b32424] bg-[#b32424]/10 p-2 text-xs text-[#b32424]">
+                      <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                      <span>{addPasswordError}</span>
+                    </div>
+                  )}
 
-                <div>
-                  <label className="block text-xs font-semibold text-[var(--wiki-text)] mb-1">
-                    Name (Service / Account)
-                  </label>
-                  <input
-                    type="text"
-                    value={newPasswordName}
-                    onChange={(e) => {
-                      setNewPasswordName(e.target.value);
-                      if (addPasswordError) setAddPasswordError('');
-                    }}
-                    placeholder="e.g. Google, WiFi, Bank"
-                    className="h-9 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3 text-xs outline-none focus:border-[#3366cc]"
-                    autoFocus
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-[var(--wiki-text)] mb-1">
-                    Password
-                  </label>
-                  <div className="relative flex items-center">
+                  <div>
+                    <label className="block text-xs font-semibold text-[var(--wiki-text)] mb-1">
+                      Name (Service / Account)
+                    </label>
                     <input
-                      type={showNewPasswordText ? 'text' : 'password'}
-                      value={newPasswordValue}
+                      type="text"
+                      value={newPasswordName}
                       onChange={(e) => {
-                        setNewPasswordValue(e.target.value);
+                        setNewPasswordName(e.target.value);
                         if (addPasswordError) setAddPasswordError('');
                       }}
-                      placeholder="Enter password..."
-                      className="h-9 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] pl-3 pr-10 text-xs font-wiki-mono outline-none focus:border-[#3366cc]"
+                      placeholder="e.g. Google, WiFi, Bank"
+                      className="h-9 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3 text-xs outline-none focus:border-[#3366cc]"
+                      autoFocus
                     />
-                    <button
-                      type="button"
-                      onClick={() => setShowNewPasswordText(!showNewPasswordText)}
-                      className="absolute right-1 flex h-7 w-7 items-center justify-center text-[var(--wiki-muted)] hover:text-[var(--wiki-text)]"
-                      title={showNewPasswordText ? 'Hide password' : 'Show password'}
-                    >
-                      {showNewPasswordText ? (
-                        <EyeOff className="h-4 w-4" />
-                      ) : (
-                        <Eye className="h-4 w-4" />
-                      )}
-                    </button>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-[var(--wiki-text)] mb-1">
+                      Password
+                    </label>
+                    <div className="relative flex items-center">
+                      <input
+                        type={showNewPasswordText ? 'text' : 'password'}
+                        value={newPasswordValue}
+                        onChange={(e) => {
+                          setNewPasswordValue(e.target.value);
+                          if (addPasswordError) setAddPasswordError('');
+                        }}
+                        placeholder="Enter password..."
+                        className="h-9 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] pl-3 pr-10 text-xs font-wiki-mono outline-none focus:border-[#3366cc]"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowNewPasswordText(!showNewPasswordText)}
+                        className="absolute right-1 flex h-7 w-7 items-center justify-center text-[var(--wiki-muted)] hover:text-[var(--wiki-text)]"
+                        title={showNewPasswordText ? 'Hide password' : 'Show password'}
+                      >
+                        {showNewPasswordText ? (
+                          <EyeOff className="h-4 w-4" />
+                        ) : (
+                          <Eye className="h-4 w-4" />
+                        )}
+                      </button>
+                    </div>
                   </div>
                 </div>
 
-                <div className="flex items-center justify-end gap-2 pt-2 border-t border-[var(--wiki-hairline)]">
+                <div className="flex items-center justify-end gap-2 border-t border-[var(--wiki-hairline)] bg-[var(--wiki-surface)] px-4 py-3">
                   <button
                     type="button"
                     onClick={() => setShowAddPasswordModal(false)}
-                    className="h-9 border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3 text-xs font-medium hover:bg-[var(--wiki-bg)]"
+                    className="h-9 border border-[var(--wiki-border)] bg-[var(--wiki-bg)] px-3 text-xs font-medium hover:bg-[var(--wiki-surface)]"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
-                    className="flex h-9 items-center gap-1.5 bg-[#3366cc] px-4 text-xs font-semibold text-white hover:bg-[#2a56b0]"
+                    className="flex h-9 items-center gap-1.5 border border-[#3366cc] bg-[#3366cc] px-4 text-xs font-semibold text-white hover:bg-[#2a56b0]"
                   >
                     <Check className="h-4 w-4" />
                     <span>Save</span>
@@ -984,9 +992,15 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
         {/* Modal: View Saved Password Pop-up */}
         {activeViewingPassword && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs">
-            <div className="w-full max-w-sm border border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-text)] shadow-2xl overflow-hidden">
-              <div className="flex items-center justify-between border-b border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-4 py-3">
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-4"
+            onClick={() => setActiveViewingPassword(null)}
+          >
+            <div
+              className="flex max-h-[88dvh] w-full max-w-sm flex-col border border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-text)] overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex shrink-0 items-center justify-between border-b border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-4 py-3">
                 <div className="flex items-center gap-2 min-w-0">
                   <Key className="h-4 w-4 shrink-0 text-[#3366cc]" />
                   <h3 className="font-wiki-serif text-base font-bold truncate">
@@ -996,13 +1010,13 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 <button
                   type="button"
                   onClick={() => setActiveViewingPassword(null)}
-                  className="flex h-7 w-7 shrink-0 items-center justify-center text-[var(--wiki-muted)] hover:text-[var(--wiki-text)]"
+                  className="flex h-7 w-7 shrink-0 items-center justify-center border border-transparent text-[var(--wiki-muted)] hover:border-[var(--wiki-border)] hover:text-[var(--wiki-text)]"
                 >
                   <X className="h-4 w-4" />
                 </button>
               </div>
 
-              <div className="p-4 space-y-4">
+              <div className="overflow-y-auto p-4 space-y-4">
                 <div>
                   <div className="flex items-center justify-between mb-1.5">
                     <span className="text-[11px] font-semibold text-[var(--wiki-muted)] uppercase tracking-wide">
@@ -1070,32 +1084,32 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                     Saved: {new Date(activeViewingPassword.createdAt).toLocaleDateString()}
                   </span>
                 </div>
+              </div>
 
-                <div className="flex items-center justify-between gap-2 pt-2 border-t border-[var(--wiki-hairline)]">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const idToDelete = activeViewingPassword.id;
-                      const nextList = savedPasswords.filter((p) => p.id !== idToDelete);
-                      setSavedPasswords(nextList);
-                      persistStoredPasswords(vaultMode, nextList);
-                      setActiveViewingPassword(null);
-                      showToast('Password deleted.');
-                    }}
-                    className="flex h-9 items-center gap-1.5 border border-[#b32424]/30 px-3 text-xs font-medium text-[#b32424] hover:bg-[#b32424]/10"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                    <span>Delete</span>
-                  </button>
+              <div className="flex shrink-0 items-center justify-between gap-2 border-t border-[var(--wiki-hairline)] bg-[var(--wiki-surface)] px-4 py-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const idToDelete = activeViewingPassword.id;
+                    const nextList = savedPasswords.filter((p) => p.id !== idToDelete);
+                    setSavedPasswords(nextList);
+                    persistStoredPasswords(vaultMode, nextList);
+                    setActiveViewingPassword(null);
+                    showToast('Password deleted.');
+                  }}
+                  className="flex h-9 items-center gap-1.5 border border-[#b32424]/40 px-3 text-xs font-medium text-[#b32424] hover:bg-[#b32424]/10"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  <span>Delete</span>
+                </button>
 
-                  <button
-                    type="button"
-                    onClick={() => setActiveViewingPassword(null)}
-                    className="h-9 border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-4 text-xs font-medium hover:bg-[var(--wiki-bg)]"
-                  >
-                    Close
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveViewingPassword(null)}
+                  className="h-9 border border-[var(--wiki-border)] bg-[var(--wiki-bg)] px-4 text-xs font-medium hover:bg-[var(--wiki-surface)]"
+                >
+                  Close
+                </button>
               </div>
             </div>
           </div>
@@ -1176,7 +1190,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                   : 'border-[var(--wiki-border)] bg-[var(--wiki-surface)] justify-start'
               }`}
             >
-              <span className="h-4 w-4 rounded-full bg-white shadow-2xs" />
+              <span className="h-4 w-4 rounded-full bg-white" />
             </div>
           </button>
 
@@ -1214,7 +1228,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                     : 'border-[var(--wiki-border)] bg-[var(--wiki-surface)] justify-start'
                 }`}
               >
-                <span className="h-4 w-4 rounded-full bg-white shadow-2xs" />
+                <span className="h-4 w-4 rounded-full bg-white" />
               </div>
             </button>
           )}
@@ -1276,7 +1290,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                     : 'border-[var(--wiki-border)] bg-[var(--wiki-surface)] justify-start'
                 }`}
               >
-                <span className="h-4 w-4 rounded-full bg-white shadow-2xs" />
+                <span className="h-4 w-4 rounded-full bg-white" />
               </div>
             </button>
           )}
@@ -1487,16 +1501,16 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
       {/* Audio Recording Format, Sample Rate & Bitrate Pop-up Modal */}
       {showMicModal && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-4"
           onClick={() => setShowMicModal(false)}
         >
           <div
-            className="w-full max-w-md border border-[var(--wiki-border)] bg-[var(--wiki-bg)] p-4 text-[var(--wiki-text)] shadow-2xl space-y-4"
+            className="flex max-h-[88dvh] w-full max-w-md flex-col border border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-text)] overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between border-b border-[var(--wiki-hairline)] pb-3">
+            <div className="flex shrink-0 items-center justify-between border-b border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-4 py-3">
               <div className="flex items-center gap-2.5">
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center border border-[var(--wiki-border)] bg-[var(--wiki-surface)]">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center border border-[var(--wiki-border)] bg-[var(--wiki-bg)]">
                   <Mic className="h-4 w-4 text-[#3366cc]" />
                 </div>
                 <div>
@@ -1518,90 +1532,92 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               </button>
             </div>
 
-            {/* Audio Format Selection */}
-            <div>
-              <label className="mb-1.5 block text-xs font-semibold text-[var(--wiki-text)]">
-                Recording Format
-              </label>
-              <div className="grid grid-cols-4 gap-1.5">
-                {AUDIO_FORMATS.map((fmt) => (
-                  <button
-                    key={fmt.id}
-                    type="button"
-                    onClick={() =>
-                      onUpdateMicSettings({ ...micSettings, format: fmt.id })
+            <div className="overflow-y-auto p-4 space-y-4">
+              {/* Audio Format Selection */}
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold text-[var(--wiki-text)]">
+                  Recording Format
+                </label>
+                <div className="grid grid-cols-4 gap-1.5">
+                  {AUDIO_FORMATS.map((fmt) => (
+                    <button
+                      key={fmt.id}
+                      type="button"
+                      onClick={() =>
+                        onUpdateMicSettings({ ...micSettings, format: fmt.id })
+                      }
+                      className={`py-2 border font-wiki-mono text-xs font-semibold transition-colors ${
+                        micSettings.format === fmt.id
+                          ? 'border-[#3366cc] bg-[#3366cc] text-white'
+                          : 'border-[var(--wiki-border)] bg-[var(--wiki-surface)] text-[var(--wiki-text)] hover:border-[#3366cc]'
+                      }`}
+                    >
+                      {fmt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Sample Rate & Bitrate */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-[var(--wiki-text)]">
+                    Sample Rate
+                  </label>
+                  <select
+                    value={micSettings.sampleRate}
+                    onChange={(e) =>
+                      onUpdateMicSettings({
+                        ...micSettings,
+                        sampleRate: Number(
+                          e.target.value
+                        ) as MicRecordingSettings['sampleRate'],
+                      })
                     }
-                    className={`py-2 border font-wiki-mono text-xs font-semibold transition-colors ${
-                      micSettings.format === fmt.id
-                        ? 'border-[#3366cc] bg-[#3366cc] text-white'
-                        : 'border-[var(--wiki-border)] bg-[var(--wiki-surface)] text-[var(--wiki-text)] hover:border-[#3366cc]'
-                    }`}
+                    className="h-10 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-2.5 font-wiki-mono text-xs text-[var(--wiki-text)] outline-none focus:border-[#3366cc]"
                   >
-                    {fmt.label}
-                  </button>
-                ))}
+                    {SAMPLE_RATES.map((sr) => (
+                      <option key={sr.value} value={sr.value}>
+                        {sr.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-[var(--wiki-text)]">
+                    Bitrate
+                  </label>
+                  <select
+                    value={micSettings.bitRate}
+                    onChange={(e) =>
+                      onUpdateMicSettings({
+                        ...micSettings,
+                        bitRate: Number(
+                          e.target.value
+                        ) as MicRecordingSettings['bitRate'],
+                      })
+                    }
+                    className="h-10 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-2.5 font-wiki-mono text-xs text-[var(--wiki-text)] outline-none focus:border-[#3366cc]"
+                  >
+                    {BIT_RATES.map((br) => (
+                      <option key={br.value} value={br.value}>
+                        {br.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
             </div>
 
-            {/* Sample Rate & Bitrate */}
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="mb-1 block text-xs font-semibold text-[var(--wiki-text)]">
-                  Sample Rate
-                </label>
-                <select
-                  value={micSettings.sampleRate}
-                  onChange={(e) =>
-                    onUpdateMicSettings({
-                      ...micSettings,
-                      sampleRate: Number(
-                        e.target.value
-                      ) as MicRecordingSettings['sampleRate'],
-                    })
-                  }
-                  className="h-10 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-2.5 font-wiki-mono text-xs text-[var(--wiki-text)] outline-none focus:border-[#3366cc]"
-                >
-                  {SAMPLE_RATES.map((sr) => (
-                    <option key={sr.value} value={sr.value}>
-                      {sr.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="mb-1 block text-xs font-semibold text-[var(--wiki-text)]">
-                  Bitrate
-                </label>
-                <select
-                  value={micSettings.bitRate}
-                  onChange={(e) =>
-                    onUpdateMicSettings({
-                      ...micSettings,
-                      bitRate: Number(
-                        e.target.value
-                      ) as MicRecordingSettings['bitRate'],
-                    })
-                  }
-                  className="h-10 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-2.5 font-wiki-mono text-xs text-[var(--wiki-text)] outline-none focus:border-[#3366cc]"
-                >
-                  {BIT_RATES.map((br) => (
-                    <option key={br.value} value={br.value}>
-                      {br.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="flex justify-end border-t border-[var(--wiki-hairline)] pt-3">
+            <div className="flex shrink-0 justify-end border-t border-[var(--wiki-hairline)] bg-[var(--wiki-surface)] px-4 py-3">
               <button
                 type="button"
                 onClick={() => {
                   setShowMicModal(false);
                   showToast('Audio recording settings saved.');
                 }}
-                className="h-9 bg-[#3366cc] px-5 text-xs font-semibold text-white hover:bg-[#2a56b0]"
+                className="h-9 border border-[#3366cc] bg-[#3366cc] px-5 text-xs font-semibold text-white hover:bg-[#2a56b0]"
               >
                 Done
               </button>
@@ -1620,40 +1636,65 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
       {/* Set Passcode Modal (Identical UI for Primary Passcode and Secondary Passcode via 10s hold) */}
       {showPasscodeModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs">
-          <div className="w-full max-w-sm border border-[var(--wiki-border)] bg-[var(--wiki-bg)] p-4 text-[var(--wiki-text)] shadow-xl">
-            <h3 className="font-wiki-serif text-lg font-bold">
-              Set Passcode
-            </h3>
-            <p className="mt-1 text-xs text-[var(--wiki-muted)]">
-              Enter a 4 to 6 digit PIN.
-            </p>
-
-            <form onSubmit={handleSavePin} className="mt-4 space-y-3">
-              <input
-                type="password"
-                inputMode="numeric"
-                maxLength={6}
-                value={pinInput}
-                onChange={(e) => {
-                  setPinInput(e.target.value.replace(/\D/g, ''));
-                  setPinError('');
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-4"
+          onClick={() => {
+            setShowPasscodeModal(false);
+            setIsConfiguringSecondaryViaHold(false);
+          }}
+        >
+          <div
+            className="flex max-h-[88dvh] w-full max-w-sm flex-col border border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-text)] overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex shrink-0 items-center justify-between border-b border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-4 py-3">
+              <h3 className="font-wiki-serif text-lg font-bold">
+                Set Passcode
+              </h3>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowPasscodeModal(false);
+                  setIsConfiguringSecondaryViaHold(false);
                 }}
-                placeholder="••••"
-                className="h-11 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3 text-center font-wiki-mono text-lg tracking-[0.4em] text-[var(--wiki-text)] outline-none focus:border-[#3366cc]"
-                autoFocus
-              />
+                className="flex h-7 w-7 items-center justify-center border border-transparent text-[var(--wiki-muted)] hover:border-[var(--wiki-border)] hover:text-[var(--wiki-text)]"
+                aria-label="Close Set Passcode"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
 
-              {pinError && (
-                <p className="text-xs font-medium text-[#b32424]">{pinError}</p>
-              )}
+            <form onSubmit={handleSavePin} className="flex flex-col overflow-y-auto">
+              <div className="space-y-3 p-4">
+                <p className="text-xs text-[var(--wiki-muted)]">
+                  Enter a 4 to 6 digit PIN.
+                </p>
 
-              <div className="flex items-center justify-between pt-2">
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  maxLength={6}
+                  value={pinInput}
+                  onChange={(e) => {
+                    setPinInput(e.target.value.replace(/\D/g, ''));
+                    setPinError('');
+                  }}
+                  placeholder="••••"
+                  className="h-11 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3 text-center font-wiki-mono text-lg tracking-[0.4em] text-[var(--wiki-text)] outline-none focus:border-[#3366cc]"
+                  autoFocus
+                />
+
+                {pinError && (
+                  <p className="text-xs font-medium text-[#b32424]">{pinError}</p>
+                )}
+              </div>
+
+              <div className="flex items-center justify-between border-t border-[var(--wiki-hairline)] bg-[var(--wiki-surface)] px-4 py-3">
                 {currentModalHasExistingPasscode ? (
                   <button
                     type="button"
                     onClick={handleRemovePin}
-                    className="flex h-10 items-center gap-1 border border-[#b32424]/40 px-3 text-xs font-medium text-[#b32424]"
+                    className="flex h-9 items-center gap-1 border border-[#b32424]/40 bg-[var(--wiki-bg)] px-3 text-xs font-medium text-[#b32424]"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                     Remove
@@ -1669,13 +1710,13 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                       setShowPasscodeModal(false);
                       setIsConfiguringSecondaryViaHold(false);
                     }}
-                    className="h-10 border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-4 text-xs font-medium"
+                    className="h-9 border border-[var(--wiki-border)] bg-[var(--wiki-bg)] px-4 text-xs font-medium"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
-                    className="h-10 bg-[#3366cc] px-4 text-xs font-semibold text-white"
+                    className="h-9 border border-[#3366cc] bg-[#3366cc] px-4 text-xs font-semibold text-white"
                   >
                     Save
                   </button>

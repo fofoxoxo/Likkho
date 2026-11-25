@@ -311,7 +311,7 @@ export const ImageCropperModal: React.FC<ImageCropperModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-xs">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-4" onClick={onCancel}>
       <input
         ref={internalFileInputRef}
         type="file"
@@ -320,9 +320,12 @@ export const ImageCropperModal: React.FC<ImageCropperModalProps> = ({
         className="hidden"
       />
 
-      <div className="flex max-h-[92vh] w-full max-w-sm flex-col overflow-hidden border border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-text)] shadow-xl">
+      <div
+        className="flex max-h-[88dvh] w-full max-w-sm flex-col overflow-hidden border border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-text)]"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header */}
-        <div className="flex shrink-0 items-center justify-between border-b border-[var(--wiki-hairline)] bg-[var(--wiki-surface)] px-4 py-3">
+        <div className="flex shrink-0 items-center justify-between border-b border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-4 py-3">
           <div>
             <h3 className="font-wiki-serif text-lg font-semibold leading-tight">
               Diary Profile Picture (1:1)
@@ -375,7 +378,7 @@ export const ImageCropperModal: React.FC<ImageCropperModalProps> = ({
             <div className="space-y-4">
               {/* Live 1:1 Preview */}
               <div className="flex flex-col items-center">
-                <div className="overflow-hidden border-2 border-[var(--wiki-border)] shadow-sm">
+                <div className="overflow-hidden border border-[var(--wiki-border)]">
                   <canvas
                     ref={emojiPreviewCanvasRef}
                     width={160}
@@ -475,23 +478,28 @@ export const ImageCropperModal: React.FC<ImageCropperModalProps> = ({
                   </label>
                 </div>
                 <div className="grid grid-cols-8 gap-1.5">
-                  {PFP_BG_COLORS.map((preset) => (
-                    <button
-                      key={preset.value}
-                      type="button"
-                      onClick={() => {
-                        setBgColor(preset.value);
-                        setTextColor(preset.textColor);
-                      }}
-                      title={preset.label}
-                      style={{ backgroundColor: preset.value }}
-                      className={`h-7 w-full border transition-transform ${
-                        bgColor.toLowerCase() === preset.value.toLowerCase()
-                          ? 'scale-105 border-2 border-[#3366cc] ring-1 ring-white'
-                          : 'border-[var(--wiki-border)]'
-                      }`}
-                    />
-                  ))}
+                  {PFP_BG_COLORS.map((preset) => {
+                    const isSelected = bgColor.toLowerCase() === preset.value.toLowerCase();
+                    return (
+                      <button
+                        key={preset.value}
+                        type="button"
+                        onClick={() => {
+                          setBgColor(preset.value);
+                          setTextColor(preset.textColor);
+                        }}
+                        title={preset.label}
+                        style={{ backgroundColor: preset.value, color: preset.textColor }}
+                        className={`flex h-7 w-full items-center justify-center border ${
+                          isSelected
+                            ? 'border-[#3366cc]'
+                            : 'border-[var(--wiki-border)]'
+                        }`}
+                      >
+                        {isSelected && <Check className="h-3.5 w-3.5" />}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             </div>
@@ -499,7 +507,7 @@ export const ImageCropperModal: React.FC<ImageCropperModalProps> = ({
             <div className="flex flex-col items-center">
               {imgElement ? (
                 <>
-                  <div className="relative overflow-hidden border-2 border-[var(--wiki-border)] bg-black shadow-inner">
+                  <div className="relative overflow-hidden border border-[#3366cc] bg-black">
                     <canvas
                       ref={canvasRef}
                       width={CROP_SIZE}

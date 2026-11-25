@@ -724,18 +724,24 @@ export const MediaImageStudioModal: React.FC<MediaImageStudioModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-3 backdrop-blur-xs">
-      <div className="flex max-h-[92dvh] w-full max-w-md flex-col border border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-text)] shadow-2xl overflow-hidden">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-3"
+      onClick={onCancel}
+    >
+      <div
+        className="flex max-h-[88dvh] w-full max-w-md flex-col border border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-text)] overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header */}
-        <div className="flex shrink-0 items-center justify-between border-b border-[var(--wiki-hairline)] bg-[var(--wiki-surface)] px-3.5 py-2.5">
+        <div className="flex shrink-0 items-center justify-between border-b border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3.5 py-2.5">
           <h3 className="font-wiki-serif text-base font-bold">
             Image Studio &amp; Optional Compression
           </h3>
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1.5">
             <button
               type="button"
               onClick={resetAll}
-              className="flex h-8 items-center gap-1 border border-[var(--wiki-border)] bg-[var(--wiki-bg)] px-2 text-[11px] font-medium"
+              className="flex h-8 items-center gap-1 border border-[var(--wiki-border)] bg-[var(--wiki-bg)] px-2 text-[11px] font-medium hover:border-[#3366cc]"
               title="Reset all filters and adjustments"
             >
               <RotateCcw className="h-3 w-3" />
@@ -744,7 +750,7 @@ export const MediaImageStudioModal: React.FC<MediaImageStudioModalProps> = ({
             <button
               type="button"
               onClick={onCancel}
-              className="flex h-8 w-8 items-center justify-center text-[var(--wiki-muted)]"
+              className="flex h-8 w-8 items-center justify-center border border-transparent text-[var(--wiki-muted)] hover:border-[var(--wiki-border)] hover:text-[var(--wiki-text)]"
             >
               <X className="h-4 w-4" />
             </button>
@@ -752,10 +758,10 @@ export const MediaImageStudioModal: React.FC<MediaImageStudioModalProps> = ({
         </div>
 
         {/* Live Canvas Preview + File Size Info Bar */}
-        <div className="flex shrink-0 flex-col items-center justify-center bg-[#101418] p-2.5">
+        <div className="flex shrink-0 flex-col items-center justify-center border-b border-[var(--wiki-hairline)] bg-[#101418] p-2.5">
           <canvas
             ref={previewCanvasRef}
-            className="max-h-[175px] max-w-full border border-[var(--wiki-border)] object-contain shadow-md"
+            className="max-h-[175px] max-w-full border border-[var(--wiki-border)] object-contain"
           />
           <div className="mt-1.5 flex flex-wrap items-center justify-center gap-2 font-wiki-mono text-[10px] text-white/90">
             <span>
@@ -772,7 +778,7 @@ export const MediaImageStudioModal: React.FC<MediaImageStudioModalProps> = ({
                 </span>
               </>
             ) : (
-              <span className="rounded-xs bg-white/15 px-1.5 py-0.5 text-[9px] font-semibold text-white">
+              <span className="border border-white/25 bg-white/10 px-1.5 py-0.5 text-[9px] font-semibold text-white">
                 Compression: OFF (Original Quality)
               </span>
             )}
@@ -1262,7 +1268,7 @@ export const MediaImageStudioModal: React.FC<MediaImageStudioModalProps> = ({
           <button
             type="button"
             onClick={handlePlaceOnCanvas}
-            className="flex h-9 items-center gap-1.5 bg-[#3366cc] px-4 text-xs font-semibold text-white"
+            className="flex h-9 items-center gap-1.5 border border-[#3366cc] bg-[#3366cc] px-4 text-xs font-semibold text-white"
           >
             <Check className="h-4 w-4" />
             {isCompressionEnabled ? 'Compress & Apply' : 'Add Without Compression'}

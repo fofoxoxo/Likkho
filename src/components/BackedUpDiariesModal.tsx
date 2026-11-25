@@ -632,15 +632,15 @@ export const BackedUpDiariesModal: React.FC<BackedUpDiariesModalProps> = ({
       {/* Read Diary Full Modal */}
       {readingLog && (
         <div
-          className="fixed inset-0 z-60 flex items-center justify-center bg-black/75 p-3 sm:p-6 backdrop-blur-xs"
+          className="fixed inset-0 z-60 flex items-center justify-center bg-black/65 p-3 sm:p-6"
           onClick={() => setReadingLog(null)}
         >
           <div
-            className="flex h-full max-h-[92vh] w-full max-w-2xl flex-col border border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-text)] shadow-2xl"
+            className="flex max-h-[88dvh] w-full max-w-2xl flex-col border border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-text)] overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header */}
-            <header className="flex h-14 shrink-0 items-center justify-between border-b border-[var(--wiki-hairline)] bg-[var(--wiki-surface)] px-4">
+            <header className="flex h-14 shrink-0 items-center justify-between border-b border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-4">
               <div className="flex items-center gap-2 min-w-0">
                 <BookOpen className="h-5 w-5 shrink-0 text-[#3366cc]" />
                 <h3 className="font-wiki-serif text-base sm:text-lg font-bold truncate">
@@ -827,19 +827,19 @@ export const BackedUpDiariesModal: React.FC<BackedUpDiariesModalProps> = ({
       {/* Delete Confirmation Modal */}
       {pendingDeleteLog && (
         <div
-          className="fixed inset-0 z-70 flex items-center justify-center bg-black/75 p-4 backdrop-blur-xs"
+          className="fixed inset-0 z-70 flex items-center justify-center bg-black/65 p-4"
           onClick={() => {
             if (!isDeleting) setPendingDeleteLog(null);
           }}
         >
           <div
-            className="w-full max-w-sm border border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-text)] shadow-2xl"
+            className="flex max-h-[88dvh] w-full max-w-sm flex-col border border-[#b32424]/70 bg-[var(--wiki-bg)] text-[var(--wiki-text)] overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between border-b border-[var(--wiki-hairline)] bg-[var(--wiki-surface)] px-4 py-3">
+            <div className="flex shrink-0 items-center justify-between border-b border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-4 py-3">
               <div className="flex items-center gap-2">
                 <AlertTriangle className="h-4 w-4 shrink-0 text-[#b32424]" />
-                <h3 className="font-wiki-serif text-base font-bold">
+                <h3 className="font-wiki-serif text-base font-bold text-[#b32424]">
                   Delete from Backup Vault?
                 </h3>
               </div>
@@ -853,7 +853,7 @@ export const BackedUpDiariesModal: React.FC<BackedUpDiariesModalProps> = ({
               </button>
             </div>
 
-            <div className="p-4 space-y-4">
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
               <p className="text-xs leading-relaxed text-[var(--wiki-text)]">
                 Are you sure you want to permanently delete{' '}
                 <strong>"{pendingDeleteLog.heading || 'Untitled Diary'}"</strong> from your backup vault file?
@@ -861,26 +861,26 @@ export const BackedUpDiariesModal: React.FC<BackedUpDiariesModalProps> = ({
               <p className="text-[11px] leading-relaxed text-[var(--wiki-muted)]">
                 This will remove it from the backup file in your chosen folder on disk. This action cannot be undone.
               </p>
+            </div>
 
-              <div className="flex items-center justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  disabled={isDeleting}
-                  onClick={() => setPendingDeleteLog(null)}
-                  className="h-9 border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3 text-xs font-medium text-[var(--wiki-text)]"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  disabled={isDeleting}
-                  onClick={handleConfirmDeleteFromBackup}
-                  className="flex h-9 items-center gap-1.5 bg-[#b32424] px-4 text-xs font-semibold text-white hover:bg-[#941d1d] disabled:opacity-50"
-                >
-                  <Trash2 className="h-4 w-4" />
-                  <span>{isDeleting ? 'Deleting...' : 'Delete from Vault'}</span>
-                </button>
-              </div>
+            <div className="flex shrink-0 items-center justify-end gap-2 border-t border-[var(--wiki-hairline)] bg-[var(--wiki-surface)] px-4 py-3">
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={() => setPendingDeleteLog(null)}
+                className="h-9 border border-[var(--wiki-border)] bg-[var(--wiki-bg)] px-3 text-xs font-medium text-[var(--wiki-text)]"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={handleConfirmDeleteFromBackup}
+                className="flex h-9 items-center gap-1.5 border border-[#b32424] bg-[#b32424] px-4 text-xs font-semibold text-white hover:bg-[#941d1d] disabled:opacity-50"
+              >
+                <Trash2 className="h-4 w-4" />
+                <span>{isDeleting ? 'Deleting...' : 'Delete from Vault'}</span>
+              </button>
             </div>
           </div>
         </div>

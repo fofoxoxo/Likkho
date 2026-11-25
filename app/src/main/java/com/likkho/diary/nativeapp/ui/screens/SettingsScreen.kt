@@ -75,6 +75,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -95,8 +96,6 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import com.likkho.diary.nativeapp.crypto.StreamCryptoEngine
@@ -107,6 +106,10 @@ import com.likkho.diary.nativeapp.model.AudioFormatOption
 import com.likkho.diary.nativeapp.model.CustomFontItem
 import com.likkho.diary.nativeapp.model.DiaryLog
 import com.likkho.diary.nativeapp.model.MicRecordingSettings
+import com.likkho.diary.nativeapp.ui.components.LikkhoDialogOutlineButton
+import com.likkho.diary.nativeapp.ui.components.LikkhoDialogPrimaryButton
+import com.likkho.diary.nativeapp.ui.components.LikkhoHairlineBorder
+import com.likkho.diary.nativeapp.ui.components.LikkhoHairlineDialog
 import com.likkho.diary.nativeapp.model.QuickNote
 import com.likkho.diary.nativeapp.model.SavedPasswordItem
 import com.likkho.diary.nativeapp.model.VaultBackupBundle
@@ -162,7 +165,7 @@ private data class SavedWordAnalysisRecord(
     val rawJson: JSONObject
 )
 
-private const val APP_CURRENT_VERSION = "2.1.2"
+private const val APP_CURRENT_VERSION = "2.1.3"
 private const val DEFAULT_GITHUB_REPO = "fofoxoxo/Likkho"
 private const val AUTHOR_NAME = "Sayan Saha"
 private const val AUTHOR_EMAIL = "sayan996969saha@gmail.com"
@@ -921,146 +924,81 @@ private fun PasscodeSetupDialog(
         }
     }
 
-    Dialog(
+    LikkhoHairlineDialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp)
-                .background(colors.bg)
-                .border(1.dp, colors.border)
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.Lock,
-                    contentDescription = null,
-                    tint = colors.accent,
-                    modifier = Modifier.size(18.dp)
-                )
-                Text(
-                    text = "Set Passcode",
-                    fontFamily = LikkhoFontFamilies.Serif,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 17.sp,
-                    color = colors.text
-                )
-            }
-
-            if (!errorMsg.isNullOrBlank()) {
-                Text(
-                    text = errorMsg!!,
-                    fontFamily = LikkhoFontFamilies.Sans,
-                    fontSize = 12.sp,
-                    color = colors.crimson,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(colors.crimson.copy(alpha = 0.08f))
-                        .border(1.dp, colors.crimson)
-                        .padding(8.dp)
-                )
-            }
-
-            PinDigitsInputField(
-                label = "Enter 4–6 Digit PIN",
-                value = pin,
-                onValueChange = { next ->
-                    if (next.length <= 6 && next.all { it.isDigit() }) {
-                        pin = next
-                        errorMsg = null
-                    }
-                }
-            )
-
-            PinDigitsInputField(
-                label = "Confirm PIN",
-                value = confirmPin,
-                onValueChange = { next ->
-                    if (next.length <= 6 && next.all { it.isDigit() }) {
-                        confirmPin = next
-                        errorMsg = null
-                    }
-                }
-            )
-
+        title = if (isDecoyTarget) "Set Covert Decoy PIN" else "Set Passcode",
+        leadingIcon = Icons.Outlined.Lock,
+        maxWidth = 400.dp,
+        footer = {
             if (hasExistingPin) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(38.dp)
-                        .background(colors.crimson.copy(alpha = 0.08f))
-                        .border(1.dp, colors.crimson)
-                        .clickable {
-                            scope.launch {
-                                withContext(Dispatchers.IO) {
-                                    if (isDecoyTarget) {
-                                        repository.clearDecoyPasscode()
-                                    } else {
-                                        repository.clearPrimaryPasscode()
-                                        repository.clearDecoyPasscode()
-                                        repository.setBiometricEnabled(false)
-                                    }
+                LikkhoDialogOutlineButton(
+                    text = "Remove",
+                    textColor = colors.crimson,
+                    borderColor = colors.crimson.copy(alpha = 0.6f),
+                    bgColor = colors.crimson.copy(alpha = 0.08f),
+                    onClick = {
+                        scope.launch {
+                            withContext(Dispatchers.IO) {
+                                if (isDecoyTarget) {
+                                    repository.clearDecoyPasscode()
+                                } else {
+                                    repository.clearPrimaryPasscode()
+                                    repository.clearDecoyPasscode()
+                                    repository.setBiometricEnabled(false)
                                 }
-                                onRemoved(isDecoyTarget)
                             }
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "Remove Passcode",
-                        fontFamily = LikkhoFontFamilies.Sans,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 12.sp,
-                        color = colors.crimson
-                    )
-                }
+                            onRemoved(isDecoyTarget)
+                        }
+                    }
+                )
+                Spacer(modifier = Modifier.weight(1f))
             }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End
-            ) {
-                Box(
-                    modifier = Modifier
-                        .height(38.dp)
-                        .background(colors.surface)
-                        .border(1.dp, colors.border)
-                        .clickable { onDismiss() }
-                        .padding(horizontal = 14.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "Cancel",
-                        fontFamily = LikkhoFontFamilies.Sans,
-                        fontSize = 12.sp,
-                        color = colors.text
-                    )
-                }
-                Spacer(modifier = Modifier.width(8.dp))
-                Box(
-                    modifier = Modifier
-                        .height(38.dp)
-                        .background(colors.accent)
-                        .clickable { handleSave() }
-                        .padding(horizontal = 16.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "Save Passcode",
-                        fontFamily = LikkhoFontFamilies.Sans,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 12.sp,
-                        color = Color.White
-                    )
-                }
-            }
+            LikkhoDialogOutlineButton(
+                text = "Cancel",
+                onClick = onDismiss
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            LikkhoDialogPrimaryButton(
+                text = "Save",
+                onClick = { handleSave() }
+            )
         }
+    ) {
+        if (!errorMsg.isNullOrBlank()) {
+            Text(
+                text = errorMsg!!,
+                fontFamily = LikkhoFontFamilies.Sans,
+                fontSize = 12.sp,
+                color = colors.crimson,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(colors.crimson.copy(alpha = 0.08f))
+                    .border(LikkhoHairlineBorder, colors.crimson, RectangleShape)
+                    .padding(8.dp)
+            )
+        }
+
+        PinDigitsInputField(
+            label = "Enter 4–6 Digit PIN",
+            value = pin,
+            onValueChange = { next ->
+                if (next.length <= 6 && next.all { it.isDigit() }) {
+                    pin = next
+                    errorMsg = null
+                }
+            }
+        )
+
+        PinDigitsInputField(
+            label = "Confirm PIN",
+            value = confirmPin,
+            onValueChange = { next ->
+                if (next.length <= 6 && next.all { it.isDigit() }) {
+                    confirmPin = next
+                    errorMsg = null
+                }
+            }
+        )
     }
 }
 
@@ -1084,7 +1022,7 @@ private fun PinDigitsInputField(
                 .fillMaxWidth()
                 .height(42.dp)
                 .background(colors.surface)
-                .border(1.dp, colors.border)
+                .border(LikkhoHairlineBorder, colors.border, RectangleShape)
                 .padding(horizontal = 12.dp),
             contentAlignment = Alignment.CenterStart
         ) {
@@ -1131,239 +1069,152 @@ private fun AudioSettingsDialog(
     val sampleRates = listOf(8000, 16000, 22050, 44100, 48000)
     val bitRates = listOf(64000, 128000, 192000, 256000, 320000)
 
-    Dialog(
+    LikkhoHairlineDialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+        title = "Audio Recording Settings",
+        leadingIcon = Icons.Outlined.Mic,
+        maxWidth = 440.dp,
+        maxHeight = 620.dp,
+        bodyPadding = 16.dp,
+        footer = {
+            LikkhoDialogOutlineButton(
+                text = "Cancel",
+                onClick = onDismiss
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            LikkhoDialogPrimaryButton(
+                text = "Save",
+                onClick = {
+                    onSave(
+                        MicRecordingSettings(
+                            format = selectedFormat,
+                            sampleRate = selectedSampleRate,
+                            bitRate = selectedBitRate
+                        )
+                    )
+                }
+            )
+        }
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 18.dp)
-                .heightIn(max = 620.dp)
-                .background(colors.bg)
-                .border(1.dp, colors.border)
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(colors.surface)
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
+        // Format Grid (4 columns)
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                text = "RECORDING FORMAT",
+                fontFamily = LikkhoFontFamilies.Sans,
+                fontWeight = FontWeight.Bold,
+                fontSize = 11.sp,
+                color = colors.muted
+            )
+            AudioFormatOption.entries.chunked(4).forEach { rowFormats ->
                 Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Outlined.Mic,
-                        contentDescription = null,
-                        tint = colors.accent,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Text(
-                        text = "Audio Recording Settings",
-                        fontFamily = LikkhoFontFamilies.Serif,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp,
-                        color = colors.text
-                    )
-                }
-                Box(
-                    modifier = Modifier
-                        .size(32.dp)
-                        .clickable { onDismiss() },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.Close,
-                        contentDescription = "Close",
-                        tint = colors.muted,
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-            }
-            HorizontalDivider(thickness = 1.dp, color = colors.border)
-
-            Column(
-                modifier = Modifier
-                    .weight(1f, fill = false)
-                    .verticalScroll(rememberScrollState())
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                // Format Grid (4 columns)
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        text = "RECORDING FORMAT",
-                        fontFamily = LikkhoFontFamilies.Sans,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 11.sp,
-                        color = colors.muted
-                    )
-                    AudioFormatOption.entries.chunked(4).forEach { rowFormats ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    rowFormats.forEach { fmt ->
+                        val active = selectedFormat == fmt
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(36.dp)
+                                .background(if (active) colors.accent else colors.surface)
+                                .border(LikkhoHairlineBorder, if (active) colors.accent else colors.border, RectangleShape)
+                                .clickable { selectedFormat = fmt },
+                            contentAlignment = Alignment.Center
                         ) {
-                            rowFormats.forEach { fmt ->
-                                val active = selectedFormat == fmt
-                                Box(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .height(36.dp)
-                                        .background(if (active) colors.accent else colors.surface)
-                                        .border(1.dp, if (active) colors.accent else colors.border)
-                                        .clickable { selectedFormat = fmt },
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(
-                                        text = ".${fmt.wireValue.uppercase(Locale.US)}",
-                                        fontFamily = LikkhoFontFamilies.Mono,
-                                        fontWeight = FontWeight.SemiBold,
-                                        fontSize = 11.sp,
-                                        color = if (active) Color.White else colors.text
-                                    )
-                                }
-                            }
-                            repeat(4 - rowFormats.size) {
-                                Spacer(modifier = Modifier.weight(1f))
-                            }
-                        }
-                    }
-                }
-
-                // Sample Rate
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        text = "SAMPLE RATE",
-                        fontFamily = LikkhoFontFamilies.Sans,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 11.sp,
-                        color = colors.muted
-                    )
-                    sampleRates.chunked(3).forEach { rowRates ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            rowRates.forEach { rate ->
-                                val active = selectedSampleRate == rate
-                                Box(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .height(36.dp)
-                                        .background(if (active) colors.accent else colors.surface)
-                                        .border(1.dp, if (active) colors.accent else colors.border)
-                                        .clickable { selectedSampleRate = rate },
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(
-                                        text = formatSampleRateLabel(rate),
-                                        fontFamily = LikkhoFontFamilies.Mono,
-                                        fontWeight = FontWeight.SemiBold,
-                                        fontSize = 11.sp,
-                                        color = if (active) Color.White else colors.text
-                                    )
-                                }
-                            }
-                            repeat(3 - rowRates.size) {
-                                Spacer(modifier = Modifier.weight(1f))
-                            }
-                        }
-                    }
-                }
-
-                // Bitrate
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        text = "BITRATE",
-                        fontFamily = LikkhoFontFamilies.Sans,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 11.sp,
-                        color = colors.muted
-                    )
-                    bitRates.chunked(3).forEach { rowBits ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            rowBits.forEach { bps ->
-                                val active = selectedBitRate == bps
-                                Box(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .height(36.dp)
-                                        .background(if (active) colors.accent else colors.surface)
-                                        .border(1.dp, if (active) colors.accent else colors.border)
-                                        .clickable { selectedBitRate = bps },
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(
-                                        text = "${bps / 1000} kbps",
-                                        fontFamily = LikkhoFontFamilies.Mono,
-                                        fontWeight = FontWeight.SemiBold,
-                                        fontSize = 11.sp,
-                                        color = if (active) Color.White else colors.text
-                                    )
-                                }
-                            }
-                            repeat(3 - rowBits.size) {
-                                Spacer(modifier = Modifier.weight(1f))
-                            }
-                        }
-                    }
-                }
-            }
-
-            HorizontalDivider(thickness = 1.dp, color = colors.hairline)
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(colors.surface)
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                horizontalArrangement = Arrangement.End
-            ) {
-                Box(
-                    modifier = Modifier
-                        .height(36.dp)
-                        .background(colors.bg)
-                        .border(1.dp, colors.border)
-                        .clickable { onDismiss() }
-                        .padding(horizontal = 14.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "Cancel",
-                        fontFamily = LikkhoFontFamilies.Sans,
-                        fontSize = 12.sp,
-                        color = colors.text
-                    )
-                }
-                Spacer(modifier = Modifier.width(8.dp))
-                Box(
-                    modifier = Modifier
-                        .height(36.dp)
-                        .background(colors.accent)
-                        .clickable {
-                            onSave(
-                                MicRecordingSettings(
-                                    format = selectedFormat,
-                                    sampleRate = selectedSampleRate,
-                                    bitRate = selectedBitRate
-                                )
+                            Text(
+                                text = ".${fmt.wireValue.uppercase(Locale.US)}",
+                                fontFamily = LikkhoFontFamilies.Mono,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 11.sp,
+                                color = if (active) Color.White else colors.text
                             )
                         }
-                        .padding(horizontal = 16.dp),
-                    contentAlignment = Alignment.Center
+                    }
+                    repeat(4 - rowFormats.size) {
+                        Spacer(modifier = Modifier.weight(1f))
+                    }
+                }
+            }
+        }
+
+        // Sample Rate
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                text = "SAMPLE RATE",
+                fontFamily = LikkhoFontFamilies.Sans,
+                fontWeight = FontWeight.Bold,
+                fontSize = 11.sp,
+                color = colors.muted
+            )
+            sampleRates.chunked(3).forEach { rowRates ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Text(
-                        text = "Save",
-                        fontFamily = LikkhoFontFamilies.Sans,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 12.sp,
-                        color = Color.White
-                    )
+                    rowRates.forEach { rate ->
+                        val active = selectedSampleRate == rate
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(36.dp)
+                                .background(if (active) colors.accent else colors.surface)
+                                .border(LikkhoHairlineBorder, if (active) colors.accent else colors.border, RectangleShape)
+                                .clickable { selectedSampleRate = rate },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = formatSampleRateLabel(rate),
+                                fontFamily = LikkhoFontFamilies.Mono,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 11.sp,
+                                color = if (active) Color.White else colors.text
+                            )
+                        }
+                    }
+                    repeat(3 - rowRates.size) {
+                        Spacer(modifier = Modifier.weight(1f))
+                    }
+                }
+            }
+        }
+
+        // Bitrate
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                text = "BITRATE",
+                fontFamily = LikkhoFontFamilies.Sans,
+                fontWeight = FontWeight.Bold,
+                fontSize = 11.sp,
+                color = colors.muted
+            )
+            bitRates.chunked(3).forEach { rowBits ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    rowBits.forEach { bps ->
+                        val active = selectedBitRate == bps
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(36.dp)
+                                .background(if (active) colors.accent else colors.surface)
+                                .border(LikkhoHairlineBorder, if (active) colors.accent else colors.border, RectangleShape)
+                                .clickable { selectedBitRate = bps },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "${bps / 1000} kbps",
+                                fontFamily = LikkhoFontFamilies.Mono,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 11.sp,
+                                color = if (active) Color.White else colors.text
+                            )
+                        }
+                    }
+                    repeat(3 - rowBits.size) {
+                        Spacer(modifier = Modifier.weight(1f))
+                    }
                 }
             }
         }
@@ -1601,117 +1452,77 @@ private fun SavedPasswordsSubScreen(
     val selected = viewingItem
     if (selected != null) {
         var revealSecret by remember(selected.id) { mutableStateOf(false) }
-        Dialog(
+        LikkhoHairlineDialog(
             onDismissRequest = { viewingItem = null },
-            properties = DialogProperties(usePlatformDefaultWidth = false)
+            title = selected.name.ifBlank { "Saved Password" },
+            leadingIcon = Icons.Outlined.VpnKey,
+            maxWidth = 400.dp,
+            footer = {
+                LikkhoDialogOutlineButton(
+                    text = "Delete",
+                    textColor = colors.crimson,
+                    borderColor = colors.crimson.copy(alpha = 0.6f),
+                    bgColor = colors.crimson.copy(alpha = 0.08f),
+                    onClick = {
+                        val next = itemsList.filterNot { it.id == selected.id }
+                        itemsList = next
+                        scope.launch(Dispatchers.IO) { repository.saveSavedPasswords(vaultMode, next) }
+                        viewingItem = null
+                        feedbackBanner = "Password deleted."
+                    }
+                )
+                Spacer(modifier = Modifier.weight(1f))
+                LikkhoDialogOutlineButton(
+                    text = "Close",
+                    onClick = { viewingItem = null }
+                )
+            }
         ) {
-            Column(
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 24.dp)
-                    .background(colors.bg)
-                    .border(1.dp, colors.border)
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                    .background(colors.surface)
+                    .border(LikkhoHairlineBorder, colors.border, RectangleShape)
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    text = selected.name.ifBlank { "Saved Password" },
-                    fontFamily = LikkhoFontFamilies.Serif,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 17.sp,
-                    color = colors.text
+                    text = if (revealSecret) selected.password else "•".repeat(selected.password.length.coerceIn(6, 18)),
+                    fontFamily = LikkhoFontFamilies.Mono,
+                    fontSize = 13.sp,
+                    color = colors.text,
+                    modifier = Modifier.weight(1f)
                 )
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(colors.surface)
-                        .border(1.dp, colors.border)
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(
-                        text = if (revealSecret) selected.password else "•".repeat(selected.password.length.coerceIn(6, 18)),
-                        fontFamily = LikkhoFontFamilies.Mono,
-                        fontSize = 13.sp,
-                        color = colors.text,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Box(
-                            modifier = Modifier
-                                .size(30.dp)
-                                .clickable { revealSecret = !revealSecret },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = if (revealSecret) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
-                                contentDescription = "Toggle password",
-                                tint = colors.muted,
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
-                        Box(
-                            modifier = Modifier
-                                .size(30.dp)
-                                .clickable {
-                                    clipboardManager.setText(AnnotatedString(selected.password))
-                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    feedbackBanner = "Password copied to clipboard."
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Outlined.ContentCopy,
-                                contentDescription = "Copy password",
-                                tint = colors.accent,
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
-                    }
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Box(
                         modifier = Modifier
-                            .height(36.dp)
-                            .background(colors.crimson.copy(alpha = 0.08f))
-                            .border(1.dp, colors.crimson)
-                            .clickable {
-                                val next = itemsList.filterNot { it.id == selected.id }
-                                itemsList = next
-                                scope.launch(Dispatchers.IO) { repository.saveSavedPasswords(vaultMode, next) }
-                                viewingItem = null
-                                feedbackBanner = "Password deleted."
-                            }
-                            .padding(horizontal = 12.dp),
+                            .size(30.dp)
+                            .clickable { revealSecret = !revealSecret },
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            text = "Delete",
-                            fontFamily = LikkhoFontFamilies.Sans,
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 12.sp,
-                            color = colors.crimson
+                        Icon(
+                            imageVector = if (revealSecret) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
+                            contentDescription = "Toggle password",
+                            tint = colors.muted,
+                            modifier = Modifier.size(16.dp)
                         )
                     }
                     Box(
                         modifier = Modifier
-                            .height(36.dp)
-                            .background(colors.surface)
-                            .border(1.dp, colors.border)
-                            .clickable { viewingItem = null }
-                            .padding(horizontal = 14.dp),
+                            .size(30.dp)
+                            .clickable {
+                                clipboardManager.setText(AnnotatedString(selected.password))
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                feedbackBanner = "Password copied to clipboard."
+                            },
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            text = "Close",
-                            fontFamily = LikkhoFontFamilies.Sans,
-                            fontSize = 12.sp,
-                            color = colors.text
+                        Icon(
+                            imageVector = Icons.Outlined.ContentCopy,
+                            contentDescription = "Copy password",
+                            tint = colors.accent,
+                            modifier = Modifier.size(16.dp)
                         )
                     }
                 }
@@ -1731,69 +1542,125 @@ private fun AddPasswordDialog(
     var showSecret by remember { mutableStateOf(false) }
     var errorMsg by remember { mutableStateOf<String?>(null) }
 
-    Dialog(
+    LikkhoHairlineDialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp)
-                .background(colors.bg)
-                .border(1.dp, colors.border)
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Text(
-                text = "Add Saved Password",
-                fontFamily = LikkhoFontFamilies.Serif,
-                fontWeight = FontWeight.Bold,
-                fontSize = 17.sp,
-                color = colors.text
+        title = "Add Saved Password",
+        leadingIcon = Icons.Outlined.VpnKey,
+        maxWidth = 420.dp,
+        footer = {
+            LikkhoDialogOutlineButton(
+                text = "Cancel",
+                onClick = onDismiss
             )
-            if (!errorMsg.isNullOrBlank()) {
-                Text(
-                    text = errorMsg!!,
-                    fontFamily = LikkhoFontFamilies.Sans,
-                    fontSize = 12.sp,
-                    color = colors.crimson
+            Spacer(modifier = Modifier.width(8.dp))
+            LikkhoDialogPrimaryButton(
+                text = "Save",
+                onClick = {
+                    if (name.trim().isEmpty() || password.isEmpty()) {
+                        errorMsg = "Both label and password are required."
+                    } else {
+                        onSave(name, password)
+                    }
+                }
+            )
+        }
+    ) {
+        if (!errorMsg.isNullOrBlank()) {
+            Text(
+                text = errorMsg!!,
+                fontFamily = LikkhoFontFamilies.Sans,
+                fontSize = 12.sp,
+                color = colors.crimson,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(colors.crimson.copy(alpha = 0.08f))
+                    .border(LikkhoHairlineBorder, colors.crimson, RectangleShape)
+                    .padding(8.dp)
+            )
+        }
+
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                text = "LABEL / SERVICE",
+                fontFamily = LikkhoFontFamilies.Sans,
+                fontWeight = FontWeight.Bold,
+                fontSize = 11.sp,
+                color = colors.muted
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(42.dp)
+                    .background(colors.surface)
+                    .border(LikkhoHairlineBorder, colors.border, RectangleShape)
+                    .padding(horizontal = 12.dp),
+                contentAlignment = Alignment.CenterStart
+            ) {
+                if (name.isEmpty()) {
+                    Text(
+                        text = "e.g. Gmail, Bank, Wi-Fi...",
+                        fontFamily = LikkhoFontFamilies.Sans,
+                        fontSize = 12.sp,
+                        color = colors.muted
+                    )
+                }
+                BasicTextField(
+                    value = name,
+                    onValueChange = {
+                        name = it
+                        errorMsg = null
+                    },
+                    singleLine = true,
+                    textStyle = TextStyle(
+                        fontFamily = LikkhoFontFamilies.Sans,
+                        fontSize = 13.sp,
+                        color = colors.text
+                    ),
+                    cursorBrush = SolidColor(colors.accent),
+                    modifier = Modifier.fillMaxWidth()
                 )
             }
+        }
 
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    text = "LABEL / SERVICE",
-                    fontFamily = LikkhoFontFamilies.Sans,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 11.sp,
-                    color = colors.muted
-                )
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                text = "PASSWORD",
+                fontFamily = LikkhoFontFamilies.Sans,
+                fontWeight = FontWeight.Bold,
+                fontSize = 11.sp,
+                color = colors.muted
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(42.dp)
+                    .background(colors.surface)
+                    .border(LikkhoHairlineBorder, colors.border, RectangleShape)
+                    .padding(horizontal = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(42.dp)
-                        .background(colors.surface)
-                        .border(1.dp, colors.border)
-                        .padding(horizontal = 12.dp),
+                    modifier = Modifier.weight(1f),
                     contentAlignment = Alignment.CenterStart
                 ) {
-                    if (name.isEmpty()) {
+                    if (password.isEmpty()) {
                         Text(
-                            text = "e.g. Gmail, Bank, Wi-Fi...",
+                            text = "Enter password",
                             fontFamily = LikkhoFontFamilies.Sans,
                             fontSize = 12.sp,
                             color = colors.muted
                         )
                     }
                     BasicTextField(
-                        value = name,
+                        value = password,
                         onValueChange = {
-                            name = it
+                            password = it
                             errorMsg = null
                         },
                         singleLine = true,
+                        visualTransformation = if (showSecret) VisualTransformation.None else PasswordVisualTransformation(),
                         textStyle = TextStyle(
-                            fontFamily = LikkhoFontFamilies.Sans,
+                            fontFamily = LikkhoFontFamilies.Mono,
                             fontSize = 13.sp,
                             color = colors.text
                         ),
@@ -1801,111 +1668,17 @@ private fun AddPasswordDialog(
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
-            }
-
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    text = "PASSWORD",
-                    fontFamily = LikkhoFontFamilies.Sans,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 11.sp,
-                    color = colors.muted
-                )
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(42.dp)
-                        .background(colors.surface)
-                        .border(1.dp, colors.border)
-                        .padding(horizontal = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier.weight(1f),
-                        contentAlignment = Alignment.CenterStart
-                    ) {
-                        if (password.isEmpty()) {
-                            Text(
-                                text = "Enter password",
-                                fontFamily = LikkhoFontFamilies.Sans,
-                                fontSize = 12.sp,
-                                color = colors.muted
-                            )
-                        }
-                        BasicTextField(
-                            value = password,
-                            onValueChange = {
-                                password = it
-                                errorMsg = null
-                            },
-                            singleLine = true,
-                            visualTransformation = if (showSecret) VisualTransformation.None else PasswordVisualTransformation(),
-                            textStyle = TextStyle(
-                                fontFamily = LikkhoFontFamilies.Mono,
-                                fontSize = 13.sp,
-                                color = colors.text
-                            ),
-                            cursorBrush = SolidColor(colors.accent),
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
-                    Box(
-                        modifier = Modifier
-                            .size(32.dp)
-                            .clickable { showSecret = !showSecret },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = if (showSecret) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
-                            contentDescription = "Toggle visibility",
-                            tint = colors.muted,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-                }
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End
-            ) {
                 Box(
                     modifier = Modifier
-                        .height(36.dp)
-                        .background(colors.surface)
-                        .border(1.dp, colors.border)
-                        .clickable { onDismiss() }
-                        .padding(horizontal = 14.dp),
+                        .size(32.dp)
+                        .clickable { showSecret = !showSecret },
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        text = "Cancel",
-                        fontFamily = LikkhoFontFamilies.Sans,
-                        fontSize = 12.sp,
-                        color = colors.text
-                    )
-                }
-                Spacer(modifier = Modifier.width(8.dp))
-                Box(
-                    modifier = Modifier
-                        .height(36.dp)
-                        .background(colors.accent)
-                        .clickable {
-                            if (name.trim().isEmpty() || password.isEmpty()) {
-                                errorMsg = "Both label and password are required."
-                            } else {
-                                onSave(name, password)
-                            }
-                        }
-                        .padding(horizontal = 16.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "Save",
-                        fontFamily = LikkhoFontFamilies.Sans,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 12.sp,
-                        color = Color.White
+                    Icon(
+                        imageVector = if (showSecret) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
+                        contentDescription = "Toggle visibility",
+                        tint = colors.muted,
+                        modifier = Modifier.size(16.dp)
                     )
                 }
             }
@@ -2177,133 +1950,51 @@ private fun WordAnalysisDetailDialog(
     onDismiss: () -> Unit
 ) {
     val colors = LikkhoTheme.colors
-    Dialog(
+    val metaParts = listOfNotNull(
+        record.phonetic.takeIf { it.isNotBlank() },
+        record.syllables.takeIf { it.isNotBlank() },
+        record.partOfSpeech.takeIf { it.isNotBlank() }
+    )
+    LikkhoHairlineDialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+        title = record.word,
+        subtitle = metaParts.takeIf { it.isNotEmpty() }?.joinToString(" · "),
+        leadingIcon = Icons.Outlined.Spellcheck,
+        maxWidth = 480.dp,
+        maxHeight = 640.dp,
+        bodyPadding = 16.dp,
+        footer = {
+            LikkhoDialogOutlineButton(
+                text = "Delete",
+                textColor = colors.crimson,
+                borderColor = colors.crimson.copy(alpha = 0.6f),
+                bgColor = colors.crimson.copy(alpha = 0.08f),
+                onClick = onDelete
+            )
+            Spacer(modifier = Modifier.weight(1f))
+            LikkhoDialogOutlineButton(
+                text = "Close",
+                onClick = onDismiss
+            )
+        }
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-                .heightIn(max = 640.dp)
-                .background(colors.bg)
-                .border(1.dp, colors.border)
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(colors.surface)
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = record.word,
-                        fontFamily = LikkhoFontFamilies.Serif,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 20.sp,
-                        color = colors.text
-                    )
-                    val metaParts = listOfNotNull(
-                        record.phonetic.takeIf { it.isNotBlank() },
-                        record.syllables.takeIf { it.isNotBlank() },
-                        record.partOfSpeech.takeIf { it.isNotBlank() }
-                    )
-                    if (metaParts.isNotEmpty()) {
-                        Text(
-                            text = metaParts.joinToString(" · "),
-                            fontFamily = LikkhoFontFamilies.Mono,
-                            fontSize = 11.sp,
-                            color = colors.accent
-                        )
-                    }
-                }
-                Box(
-                    modifier = Modifier
-                        .size(34.dp)
-                        .clickable { onDismiss() },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.Close,
-                        contentDescription = "Close",
-                        tint = colors.muted,
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-            }
-            HorizontalDivider(thickness = 1.dp, color = colors.border)
-
-            Column(
-                modifier = Modifier
-                    .weight(1f, fill = false)
-                    .verticalScroll(rememberScrollState())
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                if (record.sourceTitle.isNotBlank()) {
-                    Text(
-                        text = "Source: ${record.sourceTitle}",
-                        fontFamily = LikkhoFontFamilies.Mono,
-                        fontSize = 11.sp,
-                        color = colors.muted
-                    )
-                }
-                AnalysisSection("1. MEANINGS & DEFINITIONS", record.meanings)
-                AnalysisSection("2. SYNONYMS", if (record.synonyms.isNotEmpty()) listOf(record.synonyms.joinToString(", ")) else emptyList())
-                AnalysisSection("3. ANTONYMS", if (record.antonyms.isNotEmpty()) listOf(record.antonyms.joinToString(", ")) else emptyList())
-                AnalysisSection("4. USAGE EXAMPLES", record.usageExamples)
-                if (record.etymology.isNotBlank()) {
-                    AnalysisSection("5. ETYMOLOGY & ROOTS", listOf(record.etymology))
-                }
-                if (record.mnemonic.isNotBlank()) {
-                    AnalysisSection("6. MEMORY TIP", listOf(record.mnemonic))
-                }
-            }
-
-            HorizontalDivider(thickness = 1.dp, color = colors.hairline)
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(colors.surface)
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Box(
-                    modifier = Modifier
-                        .height(36.dp)
-                        .background(colors.crimson.copy(alpha = 0.08f))
-                        .border(1.dp, colors.crimson)
-                        .clickable { onDelete() }
-                        .padding(horizontal = 12.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "Delete",
-                        fontFamily = LikkhoFontFamilies.Sans,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 12.sp,
-                        color = colors.crimson
-                    )
-                }
-                Box(
-                    modifier = Modifier
-                        .height(36.dp)
-                        .background(colors.bg)
-                        .border(1.dp, colors.border)
-                        .clickable { onDismiss() }
-                        .padding(horizontal = 16.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "Close",
-                        fontFamily = LikkhoFontFamilies.Sans,
-                        fontSize = 12.sp,
-                        color = colors.text
-                    )
-                }
-            }
+        if (record.sourceTitle.isNotBlank()) {
+            Text(
+                text = "Source: ${record.sourceTitle}",
+                fontFamily = LikkhoFontFamilies.Mono,
+                fontSize = 11.sp,
+                color = colors.muted
+            )
+        }
+        AnalysisSection("1. MEANINGS & DEFINITIONS", record.meanings)
+        AnalysisSection("2. SYNONYMS", if (record.synonyms.isNotEmpty()) listOf(record.synonyms.joinToString(", ")) else emptyList())
+        AnalysisSection("3. ANTONYMS", if (record.antonyms.isNotEmpty()) listOf(record.antonyms.joinToString(", ")) else emptyList())
+        AnalysisSection("4. USAGE EXAMPLES", record.usageExamples)
+        if (record.etymology.isNotBlank()) {
+            AnalysisSection("5. ETYMOLOGY & ROOTS", listOf(record.etymology))
+        }
+        if (record.mnemonic.isNotBlank()) {
+            AnalysisSection("6. MEMORY TIP", listOf(record.mnemonic))
         }
     }
 }
@@ -2602,91 +2293,42 @@ private fun LegalAndAboutSubScreen(
     }
 
     if (showClearConfirm) {
-        Dialog(
+        LikkhoHairlineDialog(
             onDismissRequest = { showClearConfirm = false },
-            properties = DialogProperties(usePlatformDefaultWidth = false)
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 24.dp)
-                    .background(colors.bg)
-                    .border(1.dp, colors.crimson)
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.WarningAmber,
-                        contentDescription = null,
-                        tint = colors.crimson,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Text(
-                        text = "Clear All Local Data?",
-                        fontFamily = LikkhoFontFamilies.Serif,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 17.sp,
-                        color = colors.crimson
-                    )
-                }
-                Text(
-                    text = "This permanently deletes all local diaries, media, voice notes, passwords, quick notes, and passcodes inside Likkho. External SAF backups are untouched.",
-                    fontFamily = LikkhoFontFamilies.Sans,
-                    fontSize = 12.sp,
-                    lineHeight = 18.sp,
-                    color = colors.text
+            title = "Clear All Local Data?",
+            leadingIcon = Icons.Outlined.WarningAmber,
+            leadingIconTint = colors.crimson,
+            borderColor = colors.crimson.copy(alpha = 0.7f),
+            titleColor = colors.crimson,
+            maxWidth = 400.dp,
+            footer = {
+                LikkhoDialogOutlineButton(
+                    text = "Cancel",
+                    onClick = { showClearConfirm = false }
                 )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .height(36.dp)
-                            .background(colors.surface)
-                            .border(1.dp, colors.border)
-                            .clickable { showClearConfirm = false }
-                            .padding(horizontal = 14.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "Cancel",
-                            fontFamily = LikkhoFontFamilies.Sans,
-                            fontSize = 12.sp,
-                            color = colors.text
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Box(
-                        modifier = Modifier
-                            .height(36.dp)
-                            .background(colors.crimson)
-                            .clickable {
-                                showClearConfirm = false
-                                scope.launch {
-                                    withContext(Dispatchers.IO) {
-                                        repository.clearAllVaultData()
-                                    }
-                                    onClearAllDataCompleted()
-                                }
+                Spacer(modifier = Modifier.width(8.dp))
+                LikkhoDialogPrimaryButton(
+                    text = "Erase Everything",
+                    bgColor = colors.crimson,
+                    onClick = {
+                        showClearConfirm = false
+                        scope.launch {
+                            withContext(Dispatchers.IO) {
+                                repository.clearAllVaultData()
                             }
-                            .padding(horizontal = 14.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "Erase Everything",
-                            fontFamily = LikkhoFontFamilies.Sans,
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 12.sp,
-                            color = Color.White
-                        )
+                            onClearAllDataCompleted()
+                        }
                     }
-                }
+                )
             }
+        ) {
+            Text(
+                text = "This permanently deletes all local diaries, media, voice notes, passwords, quick notes, and passcodes inside Likkho. External SAF backups are untouched.",
+                fontFamily = LikkhoFontFamilies.Sans,
+                fontSize = 12.sp,
+                lineHeight = 18.sp,
+                color = colors.text
+            )
         }
     }
 }
@@ -2734,143 +2376,45 @@ private fun AppUpdateDialog(
 ) {
     val colors = LikkhoTheme.colors
     val uriHandler = LocalUriHandler.current
-    Dialog(
+    LikkhoHairlineDialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp)
-                .heightIn(max = 560.dp)
-                .background(colors.bg)
-                .border(1.dp, colors.border)
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(colors.surface)
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.SystemUpdate,
-                        contentDescription = null,
-                        tint = colors.accent,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Text(
-                        text = "Update Available",
-                        fontFamily = LikkhoFontFamilies.Serif,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 17.sp,
-                        color = colors.text
-                    )
+        title = "Update Available",
+        subtitle = "Installed v${result.currentVersion} → Latest v${result.latestVersion}",
+        leadingIcon = Icons.Outlined.SystemUpdate,
+        maxWidth = 440.dp,
+        maxHeight = 560.dp,
+        bodyPadding = 16.dp,
+        footer = {
+            LikkhoDialogOutlineButton(
+                text = "Later",
+                onClick = onDismiss
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            LikkhoDialogPrimaryButton(
+                text = "Download Update",
+                leadingIcon = Icons.Outlined.Download,
+                onClick = {
+                    runCatching { uriHandler.openUri(result.downloadUrl) }
+                    onDismiss()
                 }
-                Box(
-                    modifier = Modifier
-                        .size(32.dp)
-                        .clickable { onDismiss() },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.Close,
-                        contentDescription = "Close",
-                        tint = colors.muted,
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-            }
-            HorizontalDivider(thickness = 1.dp, color = colors.border)
-
-            Column(
-                modifier = Modifier
-                    .weight(1f, fill = false)
-                    .verticalScroll(rememberScrollState())
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Text(
-                    text = "${result.releaseName} (v${result.latestVersion})",
-                    fontFamily = LikkhoFontFamilies.Serif,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 15.sp,
-                    color = colors.accent
-                )
-                Text(
-                    text = "Installed: v${result.currentVersion} → Latest: v${result.latestVersion}",
-                    fontFamily = LikkhoFontFamilies.Mono,
-                    fontSize = 11.sp,
-                    color = colors.muted
-                )
-                HorizontalDivider(thickness = 1.dp, color = colors.hairline)
-                Text(
-                    text = result.releaseNotes.ifBlank { "A new version of Likkho is available on GitHub." },
-                    fontFamily = LikkhoFontFamilies.Sans,
-                    fontSize = 12.sp,
-                    lineHeight = 18.sp,
-                    color = colors.text
-                )
-            }
-
-            HorizontalDivider(thickness = 1.dp, color = colors.hairline)
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(colors.surface)
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                horizontalArrangement = Arrangement.End
-            ) {
-                Box(
-                    modifier = Modifier
-                        .height(36.dp)
-                        .background(colors.bg)
-                        .border(1.dp, colors.border)
-                        .clickable { onDismiss() }
-                        .padding(horizontal = 14.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "Later",
-                        fontFamily = LikkhoFontFamilies.Sans,
-                        fontSize = 12.sp,
-                        color = colors.text
-                    )
-                }
-                Spacer(modifier = Modifier.width(8.dp))
-                Row(
-                    modifier = Modifier
-                        .height(36.dp)
-                        .background(colors.accent)
-                        .clickable {
-                            runCatching { uriHandler.openUri(result.downloadUrl) }
-                            onDismiss()
-                        }
-                        .padding(horizontal = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(5.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.Download,
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Text(
-                        text = "Download Update",
-                        fontFamily = LikkhoFontFamilies.Sans,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 12.sp,
-                        color = Color.White
-                    )
-                }
-            }
+            )
         }
+    ) {
+        Text(
+            text = "${result.releaseName} (v${result.latestVersion})",
+            fontFamily = LikkhoFontFamilies.Serif,
+            fontWeight = FontWeight.Bold,
+            fontSize = 15.sp,
+            color = colors.accent
+        )
+        HorizontalDivider(thickness = LikkhoHairlineBorder, color = colors.hairline)
+        Text(
+            text = result.releaseNotes.ifBlank { "A new version of Likkho is available on GitHub." },
+            fontFamily = LikkhoFontFamilies.Sans,
+            fontSize = 12.sp,
+            lineHeight = 18.sp,
+            color = colors.text
+        )
     }
 }
 

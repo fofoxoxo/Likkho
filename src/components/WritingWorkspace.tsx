@@ -2823,8 +2823,8 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
               }}
               className={
                 pendingCanvasMediaSkeleton.kind === 'audio'
-                  ? 'pointer-events-none flex animate-pulse items-center gap-3 border border-[#8e1b1b] bg-[#b32424] px-3 text-white shadow-md'
-                  : 'pointer-events-none flex animate-pulse flex-col items-center justify-center gap-2 border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3 text-center shadow-sm'
+                  ? 'pointer-events-none flex animate-pulse items-center gap-3 border border-[#8e1b1b] bg-[#b32424] px-3 text-white'
+                  : 'pointer-events-none flex animate-pulse flex-col items-center justify-center gap-2 border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3 text-center'
               }
             >
               {pendingCanvasMediaSkeleton.kind === 'audio' ? (
@@ -2833,7 +2833,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
                     <Loader2 className="h-4 w-4 animate-spin text-white" />
                   </div>
                   <div className="min-w-0 flex-1 space-y-1.5">
-                    <div className="h-2.5 w-32 rounded-xs bg-white/30" />
+                    <div className="h-2.5 w-32 bg-white/30" />
                     <div className="text-[10px] font-medium text-white/85 truncate">
                       {pendingCanvasMediaSkeleton.label
                         ? `Preparing ${pendingCanvasMediaSkeleton.label}...`
@@ -2845,8 +2845,8 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
                 <>
                   <Loader2 className="h-5 w-5 animate-spin text-[#3366cc]" />
                   <div className="w-3/4 max-w-[140px] space-y-1.5">
-                    <div className="mx-auto h-2 w-4/5 rounded-xs bg-[var(--wiki-border)]/70" />
-                    <div className="mx-auto h-1.5 w-3/5 rounded-xs bg-[var(--wiki-border)]/50" />
+                    <div className="mx-auto h-2 w-4/5 bg-[var(--wiki-border)]/70" />
+                    <div className="mx-auto h-1.5 w-3/5 bg-[var(--wiki-border)]/50" />
                   </div>
                   <span className="text-[10px] font-medium text-[var(--wiki-muted)] truncate max-w-full">
                     {pendingCanvasMediaSkeleton.label
@@ -3131,14 +3131,14 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
       {/* Unlock / Disable Spoiler Text Passcode Modal */}
       {activeSpoilerSpan && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-4"
           onClick={() => setActiveSpoilerSpan(null)}
         >
           <div
-            className="w-full max-w-xs border border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-text)] shadow-xl"
+            className="flex max-h-[88dvh] w-full max-w-xs flex-col border border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-text)] overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between border-b border-[var(--wiki-hairline)] bg-[var(--wiki-surface)] px-4 py-3">
+            <div className="flex shrink-0 items-center justify-between border-b border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-4 py-3">
               <div className="flex items-center gap-2">
                 <Eye className="h-4 w-4 text-[#3366cc]" />
                 <h3 className="font-wiki-serif text-base font-bold">
@@ -3148,46 +3148,48 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
               <button
                 type="button"
                 onClick={() => setActiveSpoilerSpan(null)}
-                className="flex h-7 w-7 items-center justify-center text-[var(--wiki-muted)] hover:text-[var(--wiki-text)]"
+                className="flex h-7 w-7 items-center justify-center border border-transparent text-[var(--wiki-muted)] hover:border-[var(--wiki-border)] hover:text-[var(--wiki-text)]"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
 
-            <form onSubmit={handleVerifySpoilerView} className="p-4 space-y-3">
-              {spoilerCooldownSec > 0 ? (
-                <p className="text-xs font-semibold text-[#b32424]">
-                  Locked for {spoilerCooldownSec}s due to continuous wrong attempts.
-                </p>
-              ) : (
-                spoilerUnlockError && (
-                  <p className="text-xs font-medium text-[#b32424]">
-                    {spoilerUnlockError}
+            <form onSubmit={handleVerifySpoilerView} className="flex flex-col overflow-y-auto">
+              <div className="space-y-3 p-4">
+                {spoilerCooldownSec > 0 ? (
+                  <p className="text-xs font-semibold text-[#b32424]">
+                    Locked for {spoilerCooldownSec}s due to continuous wrong attempts.
                   </p>
-                )
-              )}
-              <div>
-                <label className="mb-1 block text-xs font-medium text-[var(--wiki-text)]">
-                  Enter Spoiler Passcode
-                </label>
-                <input
-                  type="password"
-                  value={spoilerUnlockInput}
-                  disabled={spoilerCooldownSec > 0}
-                  onChange={(e) => {
-                    setSpoilerUnlockInput(e.target.value);
-                    setSpoilerUnlockError(null);
-                  }}
-                  placeholder="Passcode..."
-                  className="h-9 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3 text-xs text-[var(--wiki-text)] outline-none focus:border-[#3366cc] disabled:opacity-50"
-                  autoFocus
-                />
+                ) : (
+                  spoilerUnlockError && (
+                    <p className="text-xs font-medium text-[#b32424]">
+                      {spoilerUnlockError}
+                    </p>
+                  )
+                )}
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-[var(--wiki-text)]">
+                    Enter Spoiler Passcode
+                  </label>
+                  <input
+                    type="password"
+                    value={spoilerUnlockInput}
+                    disabled={spoilerCooldownSec > 0}
+                    onChange={(e) => {
+                      setSpoilerUnlockInput(e.target.value);
+                      setSpoilerUnlockError(null);
+                    }}
+                    placeholder="Passcode..."
+                    className="h-9 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3 text-xs text-[var(--wiki-text)] outline-none focus:border-[#3366cc] disabled:opacity-50"
+                    autoFocus
+                  />
+                </div>
               </div>
-              <div className="flex flex-wrap items-center justify-end gap-1.5 pt-1">
+              <div className="flex flex-wrap items-center justify-end gap-1.5 border-t border-[var(--wiki-hairline)] bg-[var(--wiki-surface)] px-4 py-3">
                 <button
                   type="button"
                   onClick={() => setActiveSpoilerSpan(null)}
-                  className="h-9 border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-2.5 text-xs font-medium text-[var(--wiki-text)]"
+                  className="h-9 border border-[var(--wiki-border)] bg-[var(--wiki-bg)] px-2.5 text-xs font-medium text-[var(--wiki-text)]"
                 >
                   Cancel
                 </button>
@@ -3206,7 +3208,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
                 <button
                   type="submit"
                   disabled={spoilerCooldownSec > 0}
-                  className="h-9 bg-[#3366cc] px-3 text-xs font-semibold text-white disabled:opacity-50"
+                  className="h-9 border border-[#3366cc] bg-[#3366cc] px-3 text-xs font-semibold text-white disabled:opacity-50"
                 >
                   {spoilerCooldownSec > 0 ? `Wait ${spoilerCooldownSec}s` : 'View Text'}
                 </button>
@@ -3219,21 +3221,21 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
       {/* Edit Existing Inline LaTeX Formula Modal */}
       {activeLatexSpan && !isReadingMode && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-4"
           onClick={() => setActiveLatexSpan(null)}
         >
           <div
-            className="w-full max-w-sm border border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-text)] shadow-xl"
+            className="flex max-h-[88dvh] w-full max-w-sm flex-col border border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-text)] overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between border-b border-[var(--wiki-hairline)] bg-[var(--wiki-surface)] px-4 py-3">
+            <div className="flex shrink-0 items-center justify-between border-b border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-4 py-3">
               <h3 className="font-wiki-serif text-base font-bold">
                 Edit LaTeX Formula
               </h3>
               <button
                 type="button"
                 onClick={() => setActiveLatexSpan(null)}
-                className="flex h-7 w-7 items-center justify-center text-[var(--wiki-muted)] hover:text-[var(--wiki-text)]"
+                className="flex h-7 w-7 items-center justify-center border border-transparent text-[var(--wiki-muted)] hover:border-[var(--wiki-border)] hover:text-[var(--wiki-text)]"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -3253,37 +3255,39 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
                 pushCanvasSnapshot({ contentHtml: editorRef.current.innerHTML });
                 setActiveLatexSpan(null);
               }}
-              className="p-4 space-y-3"
+              className="flex flex-col overflow-y-auto"
             >
-              <div>
-                <label className="mb-1 block text-xs font-semibold text-[var(--wiki-text)]">
-                  LaTeX Expression
-                </label>
-                <input
-                  type="text"
-                  value={editLatexInput}
-                  onChange={(e) => setEditLatexInput(e.target.value)}
-                  placeholder="e.g. \frac{a}{b}, \sum_{i=1}^{n} x_i"
-                  className="h-9 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3 font-wiki-mono text-xs text-[var(--wiki-text)] outline-none focus:border-[#3366cc]"
-                  autoFocus
-                />
-              </div>
-
-              {editLatexInput.trim().length > 0 && (
-                <div className="flex items-center gap-2 border border-[var(--wiki-hairline)] bg-[var(--wiki-surface)] px-3 py-2 text-xs">
-                  <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--wiki-muted)]">
-                    Preview:
-                  </span>
-                  <span
-                    className="wiki-latex-formula text-sm text-[var(--wiki-text)]"
-                    dangerouslySetInnerHTML={{
-                      __html: renderLatexExpressionToHtml(editLatexInput),
-                    }}
+              <div className="space-y-3 p-4">
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-[var(--wiki-text)]">
+                    LaTeX Expression
+                  </label>
+                  <input
+                    type="text"
+                    value={editLatexInput}
+                    onChange={(e) => setEditLatexInput(e.target.value)}
+                    placeholder="e.g. \frac{a}{b}, \sum_{i=1}^{n} x_i"
+                    className="h-9 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3 font-wiki-mono text-xs text-[var(--wiki-text)] outline-none focus:border-[#3366cc]"
+                    autoFocus
                   />
                 </div>
-              )}
 
-              <div className="flex items-center justify-between gap-2 pt-1">
+                {editLatexInput.trim().length > 0 && (
+                  <div className="flex items-center gap-2 border border-[var(--wiki-hairline)] bg-[var(--wiki-surface)] px-3 py-2 text-xs">
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--wiki-muted)]">
+                      Preview:
+                    </span>
+                    <span
+                      className="wiki-latex-formula text-sm text-[var(--wiki-text)]"
+                      dangerouslySetInnerHTML={{
+                        __html: renderLatexExpressionToHtml(editLatexInput),
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center justify-between gap-2 border-t border-[var(--wiki-hairline)] bg-[var(--wiki-surface)] px-4 py-3">
                 <button
                   type="button"
                   onClick={() => {

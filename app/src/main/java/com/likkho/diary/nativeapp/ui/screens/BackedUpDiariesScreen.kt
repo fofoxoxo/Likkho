@@ -70,6 +70,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -85,14 +86,16 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.core.text.HtmlCompat
 import com.likkho.diary.nativeapp.crypto.InvalidEncryptionKeyException
 import com.likkho.diary.nativeapp.crypto.StreamCryptoEngine
 import com.likkho.diary.nativeapp.data.NativeVaultRepository
 import com.likkho.diary.nativeapp.media.NativeMediaEngine
 import com.likkho.diary.nativeapp.model.CanvasAudioAttachment
+import com.likkho.diary.nativeapp.ui.components.LikkhoDialogOutlineButton
+import com.likkho.diary.nativeapp.ui.components.LikkhoDialogPrimaryButton
+import com.likkho.diary.nativeapp.ui.components.LikkhoHairlineBorder
+import com.likkho.diary.nativeapp.ui.components.LikkhoHairlineDialog
 import com.likkho.diary.nativeapp.model.DiaryLog
 import com.likkho.diary.nativeapp.model.VaultBackupBundle
 import com.likkho.diary.nativeapp.model.VaultConfig
@@ -1078,151 +1081,104 @@ fun BackedUpDiariesScreen(
     // ==================== Individual Diary PIN Dialog ====================
     val lockedTarget = pendingLockedDiary
     if (lockedTarget != null) {
-        Dialog(
+        LikkhoHairlineDialog(
             onDismissRequest = { pendingLockedDiary = null },
-            properties = DialogProperties(usePlatformDefaultWidth = false)
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 24.dp)
-                    .background(colors.bg)
-                    .border(1.dp, colors.border)
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.Lock,
-                        contentDescription = null,
-                        tint = colors.accent,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Text(
-                        text = "Locked Diary Entry",
-                        fontFamily = LikkhoFontFamilies.Serif,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp,
-                        color = colors.text
-                    )
-                }
-                Text(
-                    text = "Enter the individual PIN for \"${lockedTarget.heading.ifBlank { "Untitled Diary" }}\".",
-                    fontFamily = LikkhoFontFamilies.Sans,
-                    fontSize = 12.sp,
-                    color = colors.muted
+            title = "Locked Diary Entry",
+            leadingIcon = Icons.Outlined.Lock,
+            maxWidth = 400.dp,
+            footer = {
+                LikkhoDialogOutlineButton(
+                    text = "Cancel",
+                    onClick = { pendingLockedDiary = null }
                 )
-                if (!diaryPinError.isNullOrBlank()) {
-                    Text(
-                        text = diaryPinError!!,
-                        fontFamily = LikkhoFontFamilies.Sans,
-                        fontSize = 12.sp,
-                        color = colors.crimson
-                    )
-                }
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(42.dp)
-                        .background(colors.surface)
-                        .border(1.dp, colors.border)
-                        .padding(horizontal = 12.dp),
-                    contentAlignment = Alignment.CenterStart
-                ) {
-                    if (diaryPinInput.isEmpty()) {
-                        Text(
-                            text = "Enter Diary PIN",
-                            fontFamily = LikkhoFontFamilies.Sans,
-                            fontSize = 12.sp,
-                            color = colors.muted
-                        )
-                    }
-                    BasicTextField(
-                        value = diaryPinInput,
-                        onValueChange = { ch ->
-                            if (ch.length <= 8 && ch.all { it.isDigit() }) {
-                                diaryPinInput = ch
-                                diaryPinError = null
+                Spacer(modifier = Modifier.width(8.dp))
+                LikkhoDialogPrimaryButton(
+                    text = "Unlock",
+                    onClick = {
+                        scope.launch {
+                            val rem = withContext(Dispatchers.IO) {
+                                repository.getRemainingPasscodeCooldownSeconds()
                             }
-                        },
-                        singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                        textStyle = TextStyle(
-                            fontFamily = LikkhoFontFamilies.Mono,
-                            fontSize = 14.sp,
-                            color = colors.text
-                        ),
-                        cursorBrush = SolidColor(colors.accent),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .height(36.dp)
-                            .background(colors.surface)
-                            .border(1.dp, colors.border)
-                            .clickable { pendingLockedDiary = null }
-                            .padding(horizontal = 14.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "Cancel",
-                            fontFamily = LikkhoFontFamilies.Sans,
-                            fontSize = 12.sp,
-                            color = colors.text
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Box(
-                        modifier = Modifier
-                            .height(36.dp)
-                            .background(colors.accent)
-                            .clickable {
-                                scope.launch {
-                                    val rem = withContext(Dispatchers.IO) {
-                                        repository.getRemainingPasscodeCooldownSeconds()
-                                    }
-                                    if (rem > 0) {
-                                        cooldownSec = rem
-                                        diaryPinError = "Too many wrong attempts. Wait ${rem}s."
-                                        return@launch
-                                    }
-                                    if (diaryPinInput == lockedTarget.diaryLockPin) {
-                                        withContext(Dispatchers.IO) { repository.resetPasscodeFailures() }
-                                        pendingLockedDiary = null
-                                        viewingDiary = lockedTarget
-                                    } else {
-                                        val fail = withContext(Dispatchers.IO) { repository.recordPasscodeFailure() }
-                                        diaryPinInput = ""
-                                        diaryPinError = if (fail.cooldownSeconds > 0) {
-                                            cooldownSec = fail.cooldownSeconds
-                                            "Incorrect PIN. Locked for ${fail.cooldownSeconds}s."
-                                        } else {
-                                            "Incorrect Diary PIN."
-                                        }
-                                    }
+                            if (rem > 0) {
+                                cooldownSec = rem
+                                diaryPinError = "Too many wrong attempts. Wait ${rem}s."
+                                return@launch
+                            }
+                            if (diaryPinInput == lockedTarget.diaryLockPin) {
+                                withContext(Dispatchers.IO) { repository.resetPasscodeFailures() }
+                                pendingLockedDiary = null
+                                viewingDiary = lockedTarget
+                            } else {
+                                val fail = withContext(Dispatchers.IO) { repository.recordPasscodeFailure() }
+                                diaryPinInput = ""
+                                diaryPinError = if (fail.cooldownSeconds > 0) {
+                                    cooldownSec = fail.cooldownSeconds
+                                    "Incorrect PIN. Locked for ${fail.cooldownSeconds}s."
+                                } else {
+                                    "Incorrect Diary PIN."
                                 }
                             }
-                            .padding(horizontal = 14.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "Unlock",
-                            fontFamily = LikkhoFontFamilies.Sans,
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 12.sp,
-                            color = Color.White
-                        )
+                        }
                     }
+                )
+            }
+        ) {
+            Text(
+                text = "Enter the individual PIN for \"${lockedTarget.heading.ifBlank { "Untitled Diary" }}\".",
+                fontFamily = LikkhoFontFamilies.Sans,
+                fontSize = 12.sp,
+                lineHeight = 18.sp,
+                color = colors.muted
+            )
+            if (!diaryPinError.isNullOrBlank()) {
+                Text(
+                    text = diaryPinError!!,
+                    fontFamily = LikkhoFontFamilies.Sans,
+                    fontSize = 12.sp,
+                    color = colors.crimson,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(colors.crimson.copy(alpha = 0.08f))
+                        .border(LikkhoHairlineBorder, colors.crimson, RectangleShape)
+                        .padding(8.dp)
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(42.dp)
+                    .background(colors.surface)
+                    .border(LikkhoHairlineBorder, colors.border, RectangleShape)
+                    .padding(horizontal = 12.dp),
+                contentAlignment = Alignment.CenterStart
+            ) {
+                if (diaryPinInput.isEmpty()) {
+                    Text(
+                        text = "Enter Diary PIN",
+                        fontFamily = LikkhoFontFamilies.Sans,
+                        fontSize = 12.sp,
+                        color = colors.muted
+                    )
                 }
+                BasicTextField(
+                    value = diaryPinInput,
+                    onValueChange = { ch ->
+                        if (ch.length <= 8 && ch.all { it.isDigit() }) {
+                            diaryPinInput = ch
+                            diaryPinError = null
+                        }
+                    },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                    textStyle = TextStyle(
+                        fontFamily = LikkhoFontFamilies.Mono,
+                        fontSize = 14.sp,
+                        color = colors.text
+                    ),
+                    cursorBrush = SolidColor(colors.accent),
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
         }
     }
@@ -1252,82 +1208,45 @@ fun BackedUpDiariesScreen(
     // ==================== Delete From Backup Confirmation Dialog ====================
     val deleteTarget = pendingDeleteDiary
     if (deleteTarget != null) {
-        Dialog(
+        LikkhoHairlineDialog(
             onDismissRequest = { if (!isUpdatingBackup) pendingDeleteDiary = null },
-            properties = DialogProperties(usePlatformDefaultWidth = false)
+            title = "Delete from Backup?",
+            leadingIcon = Icons.Outlined.WarningAmber,
+            leadingIconTint = colors.crimson,
+            borderColor = colors.crimson.copy(alpha = 0.7f),
+            titleColor = colors.crimson,
+            dismissEnabled = !isUpdatingBackup,
+            maxWidth = 400.dp,
+            footer = {
+                LikkhoDialogOutlineButton(
+                    text = "Cancel",
+                    enabled = !isUpdatingBackup,
+                    onClick = { pendingDeleteDiary = null }
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                LikkhoDialogPrimaryButton(
+                    text = if (isUpdatingBackup) "Updating..." else "Delete",
+                    bgColor = colors.crimson,
+                    enabled = !isUpdatingBackup,
+                    onClick = { handleDeleteFromBackup(deleteTarget) }
+                )
+            }
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 24.dp)
-                    .background(colors.bg)
-                    .border(1.dp, colors.border)
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Text(
-                    text = "Delete from Backup?",
-                    fontFamily = LikkhoFontFamilies.Serif,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 17.sp,
-                    color = colors.crimson
+            Text(
+                text = "Remove \"${deleteTarget.heading.ifBlank { "Untitled Diary" }}\" permanently from ${vaultCfg.dbFilename}? This rewrites the encrypted backup archive.",
+                fontFamily = LikkhoFontFamilies.Sans,
+                fontSize = 12.sp,
+                lineHeight = 18.sp,
+                color = colors.text
+            )
+            if (isUpdatingBackup) {
+                LinearProgressIndicator(
+                    color = colors.crimson,
+                    trackColor = colors.hairline,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(4.dp)
                 )
-                Text(
-                    text = "Remove \"${deleteTarget.heading.ifBlank { "Untitled Diary" }}\" permanently from ${vaultCfg.dbFilename}? This rewrites the encrypted backup archive.",
-                    fontFamily = LikkhoFontFamilies.Sans,
-                    fontSize = 12.sp,
-                    lineHeight = 18.sp,
-                    color = colors.text
-                )
-                if (isUpdatingBackup) {
-                    LinearProgressIndicator(
-                        color = colors.crimson,
-                        trackColor = colors.hairline,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(4.dp)
-                    )
-                }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .height(36.dp)
-                            .alpha(if (isUpdatingBackup) 0.5f else 1f)
-                            .background(colors.surface)
-                            .border(1.dp, colors.border)
-                            .clickable(enabled = !isUpdatingBackup) { pendingDeleteDiary = null }
-                            .padding(horizontal = 14.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "Cancel",
-                            fontFamily = LikkhoFontFamilies.Sans,
-                            fontSize = 12.sp,
-                            color = colors.text
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Box(
-                        modifier = Modifier
-                            .height(36.dp)
-                            .alpha(if (isUpdatingBackup) 0.5f else 1f)
-                            .background(colors.crimson)
-                            .clickable(enabled = !isUpdatingBackup) { handleDeleteFromBackup(deleteTarget) }
-                            .padding(horizontal = 14.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = if (isUpdatingBackup) "Updating..." else "Delete",
-                            fontFamily = LikkhoFontFamilies.Sans,
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 12.sp,
-                            color = Color.White
-                        )
-                    }
-                }
             }
         }
     }
@@ -1424,27 +1343,45 @@ private fun BackedUpDiaryReaderDialog(
         }
     }
 
-    Dialog(
+    LikkhoHairlineDialog(
         onDismissRequest = {
             stopPlayback()
             onDismiss()
         },
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+        title = diary.heading.ifBlank { "Untitled Diary" },
+        subtitle = "${diary.dateStamp} · ${diary.timeStamp}",
+        leadingIcon = Icons.Outlined.Book,
+        maxWidth = 520.dp,
+        maxHeight = 680.dp,
+        bodyPadding = 16.dp,
+        footer = {
+            LikkhoDialogPrimaryButton(
+                text = "Restore this Diary to App",
+                leadingIcon = Icons.Outlined.Restore,
+                modifier = Modifier.weight(1f),
+                onClick = {
+                    stopPlayback()
+                    onRestoreThisDiary()
+                }
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            LikkhoDialogOutlineButton(
+                text = "Close",
+                onClick = {
+                    stopPlayback()
+                    onDismiss()
+                }
+            )
+        }
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp)
-                .heightIn(max = 680.dp)
-                .background(colors.bg)
-                .border(1.dp, colors.border)
-        ) {
-            // Reader Header
+        val bmp = pfpBitmap
+        if (bmp != null) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(colors.surface)
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                    .border(LikkhoHairlineBorder, colors.hairline, RectangleShape)
+                    .padding(10.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
@@ -1452,239 +1389,138 @@ private fun BackedUpDiaryReaderDialog(
                     modifier = Modifier
                         .size(42.dp)
                         .background(colors.bg)
-                        .border(1.dp, colors.border),
+                        .border(LikkhoHairlineBorder, colors.border, RectangleShape),
                     contentAlignment = Alignment.Center
                 ) {
-                    val bmp = pfpBitmap
-                    if (bmp != null) {
-                        Image(
-                            bitmap = bmp.asImageBitmap(),
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    } else {
-                        Text(
-                            text = diary.heading.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "L",
-                            fontFamily = LikkhoFontFamilies.Serif,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 18.sp,
-                            color = colors.muted
-                        )
-                    }
+                    Image(
+                        bitmap = bmp.asImageBitmap(),
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
                 }
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
+                        text = "ENCRYPTED BACKUP ENTRY",
+                        fontFamily = LikkhoFontFamilies.Mono,
+                        fontSize = 10.sp,
+                        color = colors.accent
+                    )
+                    Text(
                         text = diary.heading.ifBlank { "Untitled Diary" },
                         fontFamily = LikkhoFontFamilies.Serif,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 19.sp,
-                        color = colors.text,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = "${diary.dateStamp} · ${diary.timeStamp}",
-                        style = TextStyle(
-                            fontFamily = LikkhoFontFamilies.Mono,
-                            fontSize = 10.sp,
-                            color = colors.muted,
-                            fontFeatureSettings = "tnum"
-                        )
-                    )
-                }
-                Box(
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clickable {
-                            stopPlayback()
-                            onDismiss()
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.Close,
-                        contentDescription = "Close",
-                        tint = colors.muted,
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-            }
-            HorizontalDivider(thickness = 1.dp, color = colors.border)
-
-            // Body
-            Column(
-                modifier = Modifier
-                    .weight(1f, fill = false)
-                    .verticalScroll(rememberScrollState())
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
-            ) {
-                Text(
-                    text = readableBody.ifBlank { "Empty diary entry." },
-                    fontFamily = LikkhoFontFamilies.Serif,
-                    fontSize = 14.sp,
-                    lineHeight = 22.sp,
-                    color = colors.text
-                )
-
-                if (decodedImages.isNotEmpty()) {
-                    HorizontalDivider(thickness = 1.dp, color = colors.hairline)
-                    Text(
-                        text = "ATTACHED IMAGES (${decodedImages.size})",
-                        fontFamily = LikkhoFontFamilies.Sans,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 11.sp,
-                        color = colors.muted
-                    )
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        decodedImages.chunked(2).forEach { rowBmps ->
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                rowBmps.forEach { bmp ->
-                                    Box(
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .aspectRatio(1.33f)
-                                            .background(colors.surface)
-                                            .border(1.dp, colors.border)
-                                    ) {
-                                        Image(
-                                            bitmap = bmp.asImageBitmap(),
-                                            contentDescription = null,
-                                            contentScale = ContentScale.Crop,
-                                            modifier = Modifier.fillMaxSize()
-                                        )
-                                    }
-                                }
-                                if (rowBmps.size == 1) {
-                                    Spacer(modifier = Modifier.weight(1f))
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if (diary.audioAttachments.isNotEmpty()) {
-                    HorizontalDivider(thickness = 1.dp, color = colors.hairline)
-                    Text(
-                        text = "VOICE NOTES (${diary.audioAttachments.size})",
-                        fontFamily = LikkhoFontFamilies.Sans,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 11.sp,
-                        color = colors.muted
-                    )
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        diary.audioAttachments.forEach { aud ->
-                            val isPlaying = playingAudioId == aud.id
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .background(colors.surface)
-                                    .border(1.dp, if (isPlaying) colors.accent else colors.border)
-                                    .clickable { toggleAudio(aud) }
-                                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(32.dp)
-                                        .background(if (isPlaying) colors.accent else colors.bg)
-                                        .border(1.dp, if (isPlaying) colors.accent else colors.border),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        imageVector = if (isPlaying) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
-                                        contentDescription = if (isPlaying) "Pause" else "Play",
-                                        tint = if (isPlaying) Color.White else colors.accent,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = aud.name.ifBlank { "Voice Note" },
-                                        fontFamily = LikkhoFontFamilies.Sans,
-                                        fontWeight = FontWeight.SemiBold,
-                                        fontSize = 12.sp,
-                                        color = colors.text,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    val durText = aud.durationSec?.let { formatAudioDuration(it) } ?: aud.format.uppercase(Locale.US)
-                                    Text(
-                                        text = "${aud.format.uppercase(Locale.US)} · $durText",
-                                        fontFamily = LikkhoFontFamilies.Mono,
-                                        fontSize = 10.sp,
-                                        color = colors.muted
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Reader Footer
-            HorizontalDivider(thickness = 1.dp, color = colors.hairline)
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(colors.surface)
-                    .padding(horizontal = 14.dp, vertical = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Row(
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(38.dp)
-                        .background(colors.accent)
-                        .clickable {
-                            stopPlayback()
-                            onRestoreThisDiary()
-                        },
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.Restore,
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "Restore this Diary to App",
-                        fontFamily = LikkhoFontFamilies.Sans,
                         fontWeight = FontWeight.SemiBold,
-                        fontSize = 12.sp,
-                        color = Color.White,
+                        fontSize = 13.sp,
+                        color = colors.text,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
+            }
+        }
 
-                Box(
-                    modifier = Modifier
-                        .height(38.dp)
-                        .background(colors.bg)
-                        .border(1.dp, colors.border)
-                        .clickable {
-                            stopPlayback()
-                            onDismiss()
+        Text(
+            text = readableBody.ifBlank { "Empty diary entry." },
+            fontFamily = LikkhoFontFamilies.Serif,
+            fontSize = 14.sp,
+            lineHeight = 22.sp,
+            color = colors.text
+        )
+
+        if (decodedImages.isNotEmpty()) {
+            HorizontalDivider(thickness = LikkhoHairlineBorder, color = colors.hairline)
+            Text(
+                text = "ATTACHED IMAGES (${decodedImages.size})",
+                fontFamily = LikkhoFontFamilies.Sans,
+                fontWeight = FontWeight.Bold,
+                fontSize = 11.sp,
+                color = colors.muted
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                decodedImages.chunked(2).forEach { rowBmps ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        rowBmps.forEach { imgBmp ->
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .aspectRatio(1.33f)
+                                    .background(colors.surface)
+                                    .border(LikkhoHairlineBorder, colors.border, RectangleShape)
+                            ) {
+                                Image(
+                                    bitmap = imgBmp.asImageBitmap(),
+                                    contentDescription = null,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            }
                         }
-                        .padding(horizontal = 14.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "Close",
-                        fontFamily = LikkhoFontFamilies.Sans,
-                        fontWeight = FontWeight.Medium,
-                        fontSize = 12.sp,
-                        color = colors.text
-                    )
+                        if (rowBmps.size == 1) {
+                            Spacer(modifier = Modifier.weight(1f))
+                        }
+                    }
+                }
+            }
+        }
+
+        if (diary.audioAttachments.isNotEmpty()) {
+            HorizontalDivider(thickness = LikkhoHairlineBorder, color = colors.hairline)
+            Text(
+                text = "VOICE NOTES (${diary.audioAttachments.size})",
+                fontFamily = LikkhoFontFamilies.Sans,
+                fontWeight = FontWeight.Bold,
+                fontSize = 11.sp,
+                color = colors.muted
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                diary.audioAttachments.forEach { aud ->
+                    val isPlaying = playingAudioId == aud.id
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(colors.surface)
+                            .border(LikkhoHairlineBorder, if (isPlaying) colors.accent else colors.border, RectangleShape)
+                            .clickable { toggleAudio(aud) }
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(32.dp)
+                                .background(if (isPlaying) colors.accent else colors.bg)
+                                .border(LikkhoHairlineBorder, if (isPlaying) colors.accent else colors.border, RectangleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = if (isPlaying) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
+                                contentDescription = if (isPlaying) "Pause" else "Play",
+                                tint = if (isPlaying) Color.White else colors.accent,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = aud.name.ifBlank { "Voice Note" },
+                                fontFamily = LikkhoFontFamilies.Sans,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 12.sp,
+                                color = colors.text,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            val durText = aud.durationSec?.let { formatAudioDuration(it) } ?: aud.format.uppercase(Locale.US)
+                            Text(
+                                text = "${aud.format.uppercase(Locale.US)} · $durText",
+                                fontFamily = LikkhoFontFamilies.Mono,
+                                fontSize = 10.sp,
+                                color = colors.muted
+                            )
+                        }
+                    }
                 }
             }
         }

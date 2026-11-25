@@ -46,10 +46,13 @@ export const ReminderModal: React.FC<ReminderModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs">
-      <div className="w-full max-w-sm border border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-text)] shadow-xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-4" onClick={onClose}>
+      <div
+        className="flex max-h-[88dvh] w-full max-w-sm flex-col border border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-text)] overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-[var(--wiki-hairline)] bg-[var(--wiki-surface)] px-4 py-3">
+        <div className="flex shrink-0 items-center justify-between border-b border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-4 py-3">
           <div className="flex items-center gap-2">
             <BellRing className="h-4 w-4 text-[#3366cc]" />
             <h3 className="font-wiki-serif text-lg font-semibold">Set Date &amp; Time</h3>
@@ -63,45 +66,47 @@ export const ReminderModal: React.FC<ReminderModalProps> = ({
           </button>
         </div>
 
-        <form onSubmit={handleSchedule} className="p-4 space-y-4">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="mb-1 block text-xs font-medium text-[var(--wiki-muted)]">
-                Date
-              </label>
-              <input
-                type="date"
-                value={dateVal}
-                onChange={(e) => {
-                  setDateVal(e.target.value);
-                  setErrorMsg('');
-                }}
-                className="h-10 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-2.5 font-wiki-mono text-xs text-[var(--wiki-text)] outline-none focus:border-[#3366cc]"
-                required
-              />
+        <form onSubmit={handleSchedule} className="flex flex-1 flex-col overflow-hidden">
+          <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-[var(--wiki-muted)]">
+                  Date
+                </label>
+                <input
+                  type="date"
+                  value={dateVal}
+                  onChange={(e) => {
+                    setDateVal(e.target.value);
+                    setErrorMsg('');
+                  }}
+                  className="h-10 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-2.5 font-wiki-mono text-xs text-[var(--wiki-text)] outline-none focus:border-[#3366cc]"
+                  required
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-[var(--wiki-muted)]">
+                  Time
+                </label>
+                <input
+                  type="time"
+                  value={timeVal}
+                  onChange={(e) => {
+                    setTimeVal(e.target.value);
+                    setErrorMsg('');
+                  }}
+                  className="h-10 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-2.5 font-wiki-mono text-xs text-[var(--wiki-text)] outline-none focus:border-[#3366cc]"
+                  required
+                />
+              </div>
             </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-[var(--wiki-muted)]">
-                Time
-              </label>
-              <input
-                type="time"
-                value={timeVal}
-                onChange={(e) => {
-                  setTimeVal(e.target.value);
-                  setErrorMsg('');
-                }}
-                className="h-10 w-full border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-2.5 font-wiki-mono text-xs text-[var(--wiki-text)] outline-none focus:border-[#3366cc]"
-                required
-              />
-            </div>
+
+            {errorMsg && (
+              <p className="text-xs font-medium text-[#b32424]">{errorMsg}</p>
+            )}
           </div>
 
-          {errorMsg && (
-            <p className="text-xs font-medium text-[#b32424]">{errorMsg}</p>
-          )}
-
-          <div className="flex items-center justify-between border-t border-[var(--wiki-hairline)] pt-3">
+          <div className="flex shrink-0 items-center justify-between border-t border-[var(--wiki-hairline)] bg-[var(--wiki-surface)] px-4 py-3">
             {currentReminder ? (
               <button
                 type="button"
@@ -109,7 +114,7 @@ export const ReminderModal: React.FC<ReminderModalProps> = ({
                   onSaveReminder(null);
                   onClose();
                 }}
-                className="flex h-10 items-center gap-1.5 border border-[#b32424]/40 px-3 text-xs font-medium text-[#b32424]"
+                className="flex h-9 items-center gap-1.5 border border-[#b32424]/45 bg-[var(--wiki-bg)] px-3 text-xs font-medium text-[#b32424]"
               >
                 <Trash2 className="h-3.5 w-3.5" />
                 Clear
@@ -122,13 +127,13 @@ export const ReminderModal: React.FC<ReminderModalProps> = ({
               <button
                 type="button"
                 onClick={onClose}
-                className="h-10 border border-[var(--wiki-border)] bg-[var(--wiki-bg)] px-4 text-xs font-medium text-[var(--wiki-text)]"
+                className="h-9 border border-[var(--wiki-border)] bg-[var(--wiki-bg)] px-4 text-xs font-medium text-[var(--wiki-text)]"
               >
                 Cancel
               </button>
               <button
                 type="submit"
-                className="flex h-10 items-center gap-1.5 bg-[#3366cc] px-4 text-xs font-semibold text-white hover:bg-[#2a56b0]"
+                className="flex h-9 items-center gap-1.5 border border-[#3366cc] bg-[#3366cc] px-4 text-xs font-semibold text-white hover:bg-[#2a56b0]"
               >
                 <Bell className="h-3.5 w-3.5" />
                 Set

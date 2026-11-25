@@ -166,8 +166,11 @@ export const QuickNoteCreatorModal: React.FC<QuickNoteCreatorModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/80 p-3 sm:p-4 backdrop-blur-xs">
-      <div className="flex max-h-[92dvh] w-full max-w-lg flex-col border border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-text)] shadow-2xl overflow-hidden">
+    <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/65 p-3 sm:p-4" onClick={handleDismissModal}>
+      <div
+        className="flex max-h-[88dvh] w-full max-w-lg flex-col border border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-text)] overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header — Clean title & Close button without To-Do toggle */}
         <div className="flex shrink-0 items-center justify-between border-b border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-4 py-3">
           <div className="flex items-center gap-2.5 min-w-0">
@@ -319,13 +322,13 @@ export const QuickNoteCreatorModal: React.FC<QuickNoteCreatorModalProps> = ({
               <button
                 type="button"
                 onClick={handleDismissModal}
-                className="h-10 border border-[var(--wiki-border)] bg-[var(--wiki-bg)] px-3.5 text-xs font-medium text-[var(--wiki-text)] hover:bg-[var(--wiki-surface)]"
+                className="h-9 border border-[var(--wiki-border)] bg-[var(--wiki-bg)] px-3.5 text-xs font-medium text-[var(--wiki-text)] hover:bg-[var(--wiki-surface)]"
               >
                 Cancel
               </button>
               <button
                 type="submit"
-                className="flex h-10 items-center gap-1.5 bg-[#3366cc] px-4 text-xs font-semibold text-white hover:bg-[#2a56b0] shadow-2xs"
+                className="flex h-9 items-center gap-1.5 border border-[#3366cc] bg-[#3366cc] px-4 text-xs font-semibold text-white hover:bg-[#2a56b0]"
               >
                 <Check className="h-4 w-4" />
                 <span>Save Note</span>

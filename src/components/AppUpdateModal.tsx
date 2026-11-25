@@ -38,8 +38,11 @@ export const AppUpdateModal: React.FC<AppUpdateModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-xs">
-      <div className="flex max-h-[90dvh] w-full max-w-md flex-col border border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-text)] shadow-2xl overflow-hidden">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-4" onClick={onClose}>
+      <div
+        className="flex max-h-[88dvh] w-full max-w-md flex-col border border-[var(--wiki-border)] bg-[var(--wiki-bg)] text-[var(--wiki-text)] overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header */}
         <div className="flex shrink-0 items-center justify-between border-b border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-4 py-3">
           <div className="flex items-center gap-2.5 min-w-0">
@@ -120,7 +123,7 @@ export const AppUpdateModal: React.FC<AppUpdateModalProps> = ({
               <button
                 type="button"
                 onClick={handleDirectApkDownload}
-                className="flex h-9 items-center justify-center gap-1.5 bg-[#3366cc] px-4 text-xs font-semibold text-white hover:bg-[#2a56b0] shadow-2xs"
+                className="flex h-9 items-center justify-center gap-1.5 border border-[#3366cc] bg-[#3366cc] px-4 text-xs font-semibold text-white hover:bg-[#2a56b0]"
               >
                 <Download className="h-4 w-4" />
                 <span>Download &amp; Install APK</span>
@@ -130,7 +133,7 @@ export const AppUpdateModal: React.FC<AppUpdateModalProps> = ({
             <button
               type="button"
               onClick={handleOpenReleasePage}
-              className="flex h-9 items-center justify-center gap-1.5 bg-[#3366cc] px-4 text-xs font-semibold text-white hover:bg-[#2a56b0] shadow-2xs"
+              className="flex h-9 items-center justify-center gap-1.5 border border-[#3366cc] bg-[#3366cc] px-4 text-xs font-semibold text-white hover:bg-[#2a56b0]"
             >
               <ExternalLink className="h-4 w-4" />
               <span>Open on GitHub &amp; Download</span>
