@@ -512,6 +512,9 @@ class StreamCryptoEngine(
 
         val att = item.audioAttachment
         val audioFile = repository.resolveExistingAudioFile(item.id, att?.format)
+            ?: att?.audioUri?.takeIf { it.isNotBlank() }?.let {
+                repository.resolveExistingAudioFile(repository.normalizeMediaId(it), att.format)
+            }
         if (audioFile != null && audioFile.exists() && audioFile.length() > 0L) {
             return BufferedInputStream(FileInputStream(audioFile), IO_BUFFER_SIZE) to audioFile.length()
         }

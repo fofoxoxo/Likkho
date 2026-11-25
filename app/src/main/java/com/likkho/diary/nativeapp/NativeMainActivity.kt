@@ -1554,11 +1554,12 @@ class NativeMainActivity : FragmentActivity(), NativeCanvasActivityHost {
                     val target = current.firstOrNull { it.id == targetLogId } ?: return@withContext null
                     val now = System.currentTimeMillis()
                     val stamp = SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.US).format(Date(now))
-                    val fmt = micSettings.format.wireValue
+                    val actualExt = file.extension.lowercase(Locale.US).ifBlank { "wav" }
+                    val stableId = file.nameWithoutExtension.ifBlank { "rec_${now}" }
                     val newAttachment = CanvasAudioAttachment(
-                        id = "rec_${now}",
-                        name = "Voice ($stamp).$fmt",
-                        format = fmt,
+                        id = stableId,
+                        name = "Voice ($stamp).$actualExt",
+                        format = actualExt,
                         dataUrl = "",
                         audioUri = assetUrl,
                         durationSec = duration.toDouble(),

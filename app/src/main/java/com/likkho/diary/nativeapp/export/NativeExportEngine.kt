@@ -1419,8 +1419,12 @@ class NativeExportEngine(
 
     private fun resolveAudioSourceForZip(aud: CanvasAudioAttachment, preferredExt: String): ZipBinarySource? {
         val audioFile = repository.resolveExistingAudioFile(aud.id, preferredExt)
+            ?: aud.audioUri?.takeIf { it.isNotBlank() }?.let {
+                repository.resolveExistingAudioFile(repository.normalizeMediaId(it), preferredExt)
+            }
         if (audioFile != null && audioFile.exists() && audioFile.length() > 0L) {
-            return ZipBinarySource.FileSource(audioFile, preferredExt, mimeForAudioExt(preferredExt))
+            val actualExt = audioFile.extension.lowercase().ifBlank { preferredExt }
+            return ZipBinarySource.FileSource(audioFile, actualExt, mimeForAudioExt(actualExt))
         }
         val rawUri = aud.audioUri?.takeIf { it.isNotBlank() }
         if (rawUri != null) {

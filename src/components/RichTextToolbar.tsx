@@ -1669,16 +1669,23 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
         audioPayload.startsWith('/data/');
 
       if (isNative) {
+        const cleanUrlPath = audioPayload.split('?')[0].split('#')[0];
+        const rawFileName = cleanUrlPath.substring(cleanUrlPath.lastIndexOf('/') + 1);
+        const dotIdx = rawFileName.lastIndexOf('.');
+        const fileStem = dotIdx > 0 ? rawFileName.slice(0, dotIdx) : rawFileName;
+        const fileExt = dotIdx > 0 ? rawFileName.slice(dotIdx + 1).toLowerCase() : '';
+        const resolvedFormat = fileExt || micSettings.format || 'wav';
+        const resolvedId = fileStem || `rec_${nowMs}`;
         onAddAudioAttachment({
-          id: `rec_${nowMs}`,
-          name: `Voice (${stampLabel}).${micSettings.format || 'wav'}`,
-          format: micSettings.format || 'wav',
+          id: resolvedId,
+          name: `Voice (${stampLabel}).${resolvedFormat}`,
+          format: resolvedFormat,
           audioUri: audioPayload,
           dataUrl: '',
           durationSec: Math.max(1, durationSec || 1),
           createdAt: nowMs,
         });
-        showBriefHint(`Saved voice recording (.${micSettings.format || 'wav'})`);
+        showBriefHint(`Saved voice recording (.${resolvedFormat})`);
         return;
       }
 

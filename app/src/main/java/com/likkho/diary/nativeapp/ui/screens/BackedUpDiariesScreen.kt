@@ -1684,6 +1684,9 @@ private fun resolvePlayableAudioFile(
     attachment: CanvasAudioAttachment
 ): File? {
     repository.resolveExistingAudioFile(attachment.id, attachment.format)?.let { return it }
+    attachment.audioUri?.takeIf { it.isNotBlank() }?.let { uri ->
+        repository.resolveExistingAudioFile(repository.normalizeMediaId(uri), attachment.format)?.let { return it }
+    }
     val rawUrl = attachment.dataUrl
     if (!rawUrl.isNullOrBlank() && rawUrl.startsWith("data:")) {
         val parsed = mediaEngine.parseDataUrl(rawUrl)

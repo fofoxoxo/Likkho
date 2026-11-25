@@ -203,6 +203,8 @@ class NativeVaultRepository(context: Context) {
             }
             log.audioAttachments.forEach { aud ->
                 if (aud.id.isNotBlank()) refs.add(aud.id)
+                val uriRef = aud.audioUri?.takeIf { it.isNotBlank() }?.let { normalizeMediaId(it) }
+                if (!uriRef.isNullOrBlank()) refs.add(uriRef)
             }
         }
         return refs
@@ -233,8 +235,12 @@ class NativeVaultRepository(context: Context) {
             }
         }
         for (aud in removed.audioAttachments) {
+            val uriRef = aud.audioUri?.takeIf { it.isNotBlank() }?.let { normalizeMediaId(it) }
             if (aud.id.isNotBlank() && aud.id !in stillReferenced) {
                 resolveExistingAudioFile(aud.id, aud.format)?.delete()
+            }
+            if (!uriRef.isNullOrBlank() && uriRef !in stillReferenced) {
+                resolveExistingAudioFile(uriRef, aud.format)?.delete()
             }
         }
     }
