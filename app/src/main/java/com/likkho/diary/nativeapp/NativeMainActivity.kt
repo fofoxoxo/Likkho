@@ -274,16 +274,6 @@ class NativeMainActivity : FragmentActivity(), NativeCanvasActivityHost {
                             }
                         }
 
-                        showStandaloneQuickNoteModal -> {
-                            QuickNoteModal(
-                                initialNote = null,
-                                onDismiss = { dismissStandaloneQuickNoteModal() },
-                                onSave = { savedNote ->
-                                    saveStandaloneQuickNote(savedNote)
-                                }
-                            )
-                        }
-
                         isLocked -> {
                             PasscodeLockScreen(
                                 repository = repository,
@@ -450,6 +440,16 @@ class NativeMainActivity : FragmentActivity(), NativeCanvasActivityHost {
                                 }
                             }
                         }
+                    }
+
+                    if (!isMigratingLegacyData && showStandaloneQuickNoteModal) {
+                        QuickNoteModal(
+                            initialNote = null,
+                            onDismiss = { dismissStandaloneQuickNoteModal() },
+                            onSave = { savedNote ->
+                                saveStandaloneQuickNote(savedNote)
+                            }
+                        )
                     }
                 }
             }

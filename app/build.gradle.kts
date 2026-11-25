@@ -14,8 +14,8 @@ android {
         applicationId = "com.likkho.diary"
         minSdk = 24
         targetSdk = 34
-        versionCode = 20
-        versionName = "2.1.3"
+        versionCode = 21
+        versionName = "2.1.4"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
             ignoreAssetsPattern = "!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~"

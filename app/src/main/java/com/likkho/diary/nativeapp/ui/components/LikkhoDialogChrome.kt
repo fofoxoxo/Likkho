@@ -1,5 +1,12 @@
 package com.likkho.diary.nativeapp.ui.components
 
+import android.graphics.Color as AndroidColor
+import android.graphics.drawable.ColorDrawable
+import android.os.Build
+import android.view.View
+import android.view.ViewParent
+import android.view.Window
+import android.view.WindowManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -30,13 +37,16 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -44,6 +54,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
 import com.likkho.diary.nativeapp.ui.theme.LikkhoFontFamilies
 import com.likkho.diary.nativeapp.ui.theme.LikkhoTheme
 
@@ -82,20 +93,37 @@ fun LikkhoHairlineDialog(
 
     Dialog(
         onDismissRequest = { if (dismissEnabled) onDismissRequest() },
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false
+        )
     ) {
+        val view = LocalView.current
+        SideEffect {
+            findDialogWindow(view)?.let { win ->
+                win.setBackgroundDrawable(ColorDrawable(AndroidColor.TRANSPARENT))
+                win.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+                win.setDimAmount(0f)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    win.isStatusBarContrastEnforced = false
+                    win.isNavigationBarContrastEnforced = false
+                }
+            }
+        }
+
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .statusBarsPadding()
-                .navigationBarsPadding()
-                .imePadding()
+                .background(Color.Black.copy(alpha = 0.54f))
                 .clickable(
                     interactionSource = scrimInteraction,
                     indication = null
                 ) {
                     if (dismissEnabled) onDismissRequest()
                 }
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .imePadding()
                 .padding(horizontal = 16.dp, vertical = 14.dp),
             contentAlignment = Alignment.Center
         ) {
@@ -104,6 +132,7 @@ fun LikkhoHairlineDialog(
                     .widthIn(max = maxWidth)
                     .fillMaxWidth()
                     .heightIn(max = maxHeight)
+                    .shadow(16.dp, RectangleShape)
                     .clickable(
                         interactionSource = cardInteraction,
                         indication = null
@@ -308,4 +337,15 @@ fun LikkhoDialogPrimaryButton(
             overflow = TextOverflow.Ellipsis
         )
     }
+}
+
+private fun findDialogWindow(view: View): Window? {
+    var parent: ViewParent? = view.parent
+    while (parent != null) {
+        if (parent is DialogWindowProvider) {
+            return parent.window
+        }
+        parent = parent.parent
+    }
+    return null
 }
