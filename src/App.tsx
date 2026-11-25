@@ -56,6 +56,7 @@ import {
 import {
   getImageObjectUrl,
   getCanvasPreviewUrl,
+  preloadLogImages,
   migrateLogsMediaToBlobStore,
   dataUrlToBlob,
   processImageFileToBlob,
@@ -1649,7 +1650,8 @@ export default function App() {
           logs={logs}
           customFonts={customFonts}
           savedKeyHash={savedKeyHash}
-          onRestoreSingleDiary={(singleLog) => {
+          onRestoreSingleDiary={async (singleLog) => {
+            await preloadLogImages([singleLog]);
             setLogs((prev) => {
               const exists = prev.some((l) => l.id === singleLog.id);
               if (exists) {
@@ -1708,6 +1710,7 @@ export default function App() {
             localStorage.setItem(encHashKey, hash);
           }}
           onRestoreBundle={async (bundle) => {
+            await preloadLogImages(bundle.logs);
             setLogs(bundle.logs);
             if (bundle.customFonts && bundle.customFonts.length > 0) {
               setCustomFonts(bundle.customFonts);
@@ -1813,7 +1816,6 @@ export default function App() {
                 const avatarSrc =
                   getCanvasPreviewUrl(log.pfpDataUrl) ||
                   getImageObjectUrl(log.pfpDataUrl) ||
-                  log.pfpDataUrl ||
                   getFallbackMonographPfp();
                 const isMenuOpen = openMenuLogId === log.id;
 

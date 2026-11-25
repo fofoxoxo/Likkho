@@ -17,7 +17,7 @@ const IMAGE_DB_NAME = 'likkho_image_media_vault_v1';
 const IMAGE_STORE_NAME = 'image_blobs';
 const PREVIEW_DB_NAME = 'likkho_image_preview_cache_v1';
 const PREVIEW_STORE_NAME = 'image_previews';
-const MAX_ACTIVE_PREVIEW_URLS = 40;
+const MAX_ACTIVE_PREVIEW_URLS = 200;
 
 // Map of currently active Object URLs: mediaRef -> blobUrl
 const activeImageObjectUrls = new Map<string, string>();
@@ -177,6 +177,8 @@ async function deletePreviewBlobFromStore(key: string): Promise<void> {
  */
 export async function saveImageBlobToStore(id: string, blob: Blob): Promise<void> {
   try {
+    releaseCanvasPreviewUrl(id);
+    releaseImageObjectUrl(id);
     const db = await getImageDB();
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(IMAGE_STORE_NAME, 'readwrite');
@@ -434,7 +436,7 @@ export async function ensureCanvasPreviewUrl(
     try {
       // 1. Try persistent disk preview cache first (zero full-res decode cost!)
       let previewBlob = await getPreviewBlobFromStore(mediaRef);
-      if (!previewBlob) {
+      if (!previewBlob || previewBlob.size === 0) {
         // 2. Load original blob once, downsample into compact preview, and persist preview
         const fullBlob = await getImageBlobFromStore(mediaRef);
         if (!fullBlob) return '';

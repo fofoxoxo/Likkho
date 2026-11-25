@@ -58,6 +58,7 @@ import {
 import {
   getImageObjectUrl,
   getCanvasPreviewUrl,
+  ensureImageObjectUrl,
   ensureCanvasPreviewUrl,
   releaseCanvasPreviewUrls,
   processImageFileToBlob,
@@ -445,7 +446,10 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     const resolveWorkspaceHeaderAndBg = async () => {
       let needsRerender = false;
       if (pfpDataUrl && !getCanvasPreviewUrl(pfpDataUrl) && !getImageObjectUrl(pfpDataUrl)) {
-        await ensureCanvasPreviewUrl(pfpDataUrl, 192);
+        const previewUrl = await ensureCanvasPreviewUrl(pfpDataUrl, 192);
+        if (!previewUrl) {
+          await ensureImageObjectUrl(pfpDataUrl);
+        }
         needsRerender = true;
       }
       if (
@@ -1844,16 +1848,21 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
                 : 'Set Diary PFP (Photo, Emoji/Text & Background Color)'
             }
           >
-            {pfpDataUrl ? (
-              <img
-                src={getImageObjectUrl(pfpDataUrl) || pfpDataUrl}
-                alt="Diary PFP"
-                referrerPolicy="no-referrer"
-                className="h-full w-full object-cover"
-              />
-            ) : (
-              <ImagePlus className="h-5 w-5 text-[var(--wiki-muted)] group-hover:text-[#3366cc]" />
-            )}
+            {(() => {
+              const resolvedPfpSrc = pfpDataUrl
+                ? getCanvasPreviewUrl(pfpDataUrl) || getImageObjectUrl(pfpDataUrl)
+                : '';
+              return resolvedPfpSrc ? (
+                <img
+                  src={resolvedPfpSrc}
+                  alt="Diary PFP"
+                  referrerPolicy="no-referrer"
+                  className="h-full w-full object-cover"
+                />
+              ) : (
+                <ImagePlus className="h-5 w-5 text-[var(--wiki-muted)] group-hover:text-[#3366cc]" />
+              );
+            })()}
           </button>
 
           <div className="flex flex-1 items-center gap-1.5 min-w-0">
@@ -2803,7 +2812,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
               setSelectedCanvasImgId(newId);
               setSelectedCanvasAudioId(null);
             };
-            tempImg.src = getImageObjectUrl(rawDataUrl) || rawDataUrl;
+            tempImg.src = getCanvasPreviewUrl(rawDataUrl) || getImageObjectUrl(rawDataUrl) || rawDataUrl;
           }}
           onOpenMediaAudioStudio={(rawAudioDataUrl, fileName, ext, blob) => {
             const validExts: AudioFormatOption[] = [
