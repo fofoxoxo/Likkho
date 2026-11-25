@@ -162,11 +162,11 @@ private data class SavedWordAnalysisRecord(
     val rawJson: JSONObject
 )
 
-private const val APP_CURRENT_VERSION = "2.1.1"
-private const val DEFAULT_GITHUB_REPO = "madhu-raagii/Likkho"
+private const val APP_CURRENT_VERSION = "2.1.2"
+private const val DEFAULT_GITHUB_REPO = "fofoxoxo/Likkho"
 private const val AUTHOR_NAME = "Sayan Saha"
 private const val AUTHOR_EMAIL = "sayan996969saha@gmail.com"
-private const val GITHUB_REPO_URL = "https://github.com/madhu-raagii/Likkho"
+private const val GITHUB_REPO_URL = "https://github.com/fofoxoxo/Likkho"
 
 /**
  * Native Compose Settings Screen & Sub-Pages (1:1 parity with `src/components/SettingsPage.tsx`).
@@ -2941,10 +2941,11 @@ private fun compareSemver(a: String, b: String): Int {
     return 0
 }
 
-private fun fetchLatestGithubRelease(): GithubUpdateCheckResult {
+private fun fetchGithubJson(endpointUrl: String): Pair<Int, String?> {
+    var conn: HttpURLConnection? = null
     return try {
-        val url = URL("https://api.github.com/repos/$DEFAULT_GITHUB_REPO/releases/latest")
-        val conn = (url.openConnection() as HttpURLConnection).apply {
+        val url = URL(endpointUrl)
+        conn = (url.openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             connectTimeout = 8000
             readTimeout = 8000
@@ -2952,7 +2953,65 @@ private fun fetchLatestGithubRelease(): GithubUpdateCheckResult {
             setRequestProperty("User-Agent", "Likkho-Android/$APP_CURRENT_VERSION")
         }
         val code = conn.responseCode
-        if (code !in 200..299) {
+        val body = if (code in 200..299) {
+            conn.inputStream.bufferedReader().use { it.readText() }
+        } else {
+            null
+        }
+        code to body
+    } finally {
+        conn?.disconnect()
+    }
+}
+
+private fun fetchLatestGithubRelease(): GithubUpdateCheckResult {
+    return try {
+        val (latestCode, latestBody) = fetchGithubJson(
+            "https://api.github.com/repos/$DEFAULT_GITHUB_REPO/releases/latest"
+        )
+
+        val releaseJson: JSONObject? = when {
+            latestCode in 200..299 && !latestBody.isNullOrBlank() -> JSONObject(latestBody)
+            latestCode == 404 -> {
+                val (listCode, listBody) = fetchGithubJson(
+                    "https://api.github.com/repos/$DEFAULT_GITHUB_REPO/releases?per_page=5"
+                )
+                if (listCode !in 200..299 || listBody.isNullOrBlank()) {
+                    return GithubUpdateCheckResult(
+                        hasUpdate = false,
+                        currentVersion = APP_CURRENT_VERSION,
+                        latestVersion = APP_CURRENT_VERSION,
+                        releaseName = "",
+                        releaseNotes = "",
+                        downloadUrl = GITHUB_REPO_URL,
+                        error = "Unable to check updates right now (HTTP $listCode)."
+                    )
+                }
+                val arr = JSONArray(listBody)
+                var chosen: JSONObject? = null
+                for (i in 0 until arr.length()) {
+                    val item = arr.optJSONObject(i) ?: continue
+                    if (!item.optBoolean("draft", false)) {
+                        chosen = item
+                        break
+                    }
+                }
+                chosen
+            }
+            else -> {
+                return GithubUpdateCheckResult(
+                    hasUpdate = false,
+                    currentVersion = APP_CURRENT_VERSION,
+                    latestVersion = APP_CURRENT_VERSION,
+                    releaseName = "",
+                    releaseNotes = "",
+                    downloadUrl = GITHUB_REPO_URL,
+                    error = "Unable to check updates right now (HTTP $latestCode)."
+                )
+            }
+        }
+
+        if (releaseJson == null) {
             return GithubUpdateCheckResult(
                 hasUpdate = false,
                 currentVersion = APP_CURRENT_VERSION,
@@ -2960,19 +3019,18 @@ private fun fetchLatestGithubRelease(): GithubUpdateCheckResult {
                 releaseName = "",
                 releaseNotes = "",
                 downloadUrl = GITHUB_REPO_URL,
-                error = "Unable to check updates right now (HTTP $code)."
+                error = null
             )
         }
-        val body = conn.inputStream.bufferedReader().use { it.readText() }
-        val json = JSONObject(body)
-        val tag = json.optString("tag_name", APP_CURRENT_VERSION)
+
+        val tag = releaseJson.optString("tag_name", APP_CURRENT_VERSION)
         val latestClean = tag.trim().removePrefix("v").removePrefix("V")
-        val releaseName = json.optString("name", tag).ifBlank { tag }
-        val releaseNotes = json.optString("body", "")
-        val htmlUrl = json.optString("html_url", GITHUB_REPO_URL)
+        val releaseName = releaseJson.optString("name", tag).ifBlank { tag }
+        val releaseNotes = releaseJson.optString("body", "")
+        val htmlUrl = releaseJson.optString("html_url", GITHUB_REPO_URL)
 
         var downloadUrl = htmlUrl
-        val assets = json.optJSONArray("assets")
+        val assets = releaseJson.optJSONArray("assets")
         if (assets != null) {
             var anyApk: String? = null
             var signedReleaseApk: String? = null

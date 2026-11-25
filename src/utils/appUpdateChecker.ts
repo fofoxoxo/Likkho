@@ -8,8 +8,8 @@
  * 4. Throttle protection (checks once per session or on data connect).
  */
 
-export const APP_CURRENT_VERSION = '2.1.1';
-export const DEFAULT_GITHUB_REPO = 'madhu-raagii/Likkho';
+export const APP_CURRENT_VERSION = '2.1.2';
+export const DEFAULT_GITHUB_REPO = 'fofoxoxo/Likkho';
 
 export interface AppUpdateInfo {
   hasUpdate: boolean;
@@ -84,17 +84,31 @@ export async function checkForAppUpdate(
   }
 
   try {
-    const res = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
+    let res = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
       headers: {
         Accept: 'application/vnd.github.v3+json',
       },
     });
 
-    if (!res.ok) {
+    let data: any = null;
+    if (res.ok) {
+      data = await res.json();
+    } else if (res.status === 404) {
+      res = await fetch(`https://api.github.com/repos/${repo}/releases?per_page=5`, {
+        headers: {
+          Accept: 'application/vnd.github.v3+json',
+        },
+      });
+      if (!res.ok) return null;
+      const list = await res.json();
+      if (Array.isArray(list)) {
+        data = list.find((item: any) => !item?.draft) || null;
+      }
+    } else {
       return null;
     }
 
-    const data = await res.json();
+    if (!data) return null;
     const tagName = data.tag_name || '';
     if (!tagName) return null;
 
