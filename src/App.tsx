@@ -76,6 +76,7 @@ import {
   readAppSpecificInternalFile,
   deleteAppSpecificInternalFile,
 } from './utils/internalEncryptedStorage';
+import { runLegacyWebViewMigration } from './utils/legacyWebMigration';
 
 type PageRoute = 'home' | 'workspace' | 'settings' | 'backup';
 
@@ -193,7 +194,217 @@ function injectGlobalFontFaceCss(fontFamily: string, dataUrl: string) {
   }
 }
 
+interface NativeCanvasLaunchPayload {
+  vaultMode: VaultMode;
+  isDarkTheme: boolean;
+  startInEditMode: boolean;
+  log: DiaryLog | null;
+  customFonts: CustomFontItem[];
+  micSettings: MicRecordingSettings;
+  wordAnalysesJson?: string;
+}
+
+function detectRuntimeShellMode(): 'migrate' | 'canvas' | 'web' {
+  if (typeof window === 'undefined') return 'web';
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const modeParam = params.get('mode');
+    if (modeParam === 'migrate' || Boolean(window.LikkhoLegacyMigrationBridge)) {
+      return 'migrate';
+    }
+    if (modeParam === 'canvas' || Boolean(window.LikkhoCanvasBridge)) {
+      return 'canvas';
+    }
+  } catch {
+    // ignore
+  }
+  return 'web';
+}
+
+function LegacyMigrationShell() {
+  useEffect(() => {
+    runLegacyWebViewMigration();
+  }, []);
+  return <div className="h-full w-full bg-[var(--wiki-bg)]" />;
+}
+
+function CanvasOnlyShell() {
+  const [payload, setPayload] = useState<NativeCanvasLaunchPayload>(() => {
+    let initialDark = false;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      initialDark = params.get('dark') === '1';
+    } catch {
+      // ignore
+    }
+    return {
+      vaultMode: 'primary',
+      isDarkTheme: initialDark,
+      startInEditMode: false,
+      log: null,
+      customFonts: [],
+      micSettings: DEFAULT_MIC_SETTINGS,
+    };
+  });
+  const [customFonts, setCustomFonts] = useState<CustomFontItem[]>([]);
+  const [darkMode, setDarkMode] = useState<boolean>(payload.isDarkTheme);
+  const [sessionSeq, setSessionSeq] = useState<number>(0);
+  const [hasLoadedPayload, setHasLoadedPayload] = useState<boolean>(false);
+  const backHandlerRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    if (darkMode) {
+      root.classList.add('dark');
+      root.style.backgroundColor = '#101418';
+      root.style.colorScheme = 'dark';
+    } else {
+      root.classList.remove('dark');
+      root.style.backgroundColor = '#ffffff';
+      root.style.colorScheme = 'light';
+    }
+  }, [darkMode]);
+
+  useEffect(() => {
+    const applyIncomingPayload = (rawJson: string) => {
+      if (!rawJson || !rawJson.trim()) return;
+      try {
+        const parsed = JSON.parse(rawJson) as Partial<NativeCanvasLaunchPayload>;
+        const mode: VaultMode = parsed.vaultMode === 'decoy' ? 'decoy' : 'primary';
+        const fonts = Array.isArray(parsed.customFonts) ? parsed.customFonts : [];
+        for (const f of fonts) {
+          if (f?.fontFamily && f?.dataUrl) {
+            injectGlobalFontFaceCss(f.fontFamily, f.dataUrl);
+          }
+        }
+        if (typeof parsed.wordAnalysesJson === 'string' && parsed.wordAnalysesJson.trim()) {
+          const storageKey =
+            mode === 'decoy'
+              ? 'wikilog_decoy_v2_saved_word_analyses'
+              : 'wikilog_v1_saved_word_analyses';
+          try {
+            localStorage.setItem(storageKey, parsed.wordAnalysesJson);
+          } catch {
+            // ignore
+          }
+        }
+        setCustomFonts(fonts);
+        if (typeof parsed.isDarkTheme === 'boolean') {
+          setDarkMode(parsed.isDarkTheme);
+        }
+        setPayload({
+          vaultMode: mode,
+          isDarkTheme: Boolean(parsed.isDarkTheme),
+          startInEditMode: Boolean(parsed.startInEditMode),
+          log: parsed.log || null,
+          customFonts: fonts,
+          micSettings: parsed.micSettings || DEFAULT_MIC_SETTINGS,
+          wordAnalysesJson: parsed.wordAnalysesJson,
+        });
+        setSessionSeq((s) => s + 1);
+        setHasLoadedPayload(true);
+      } catch (err) {
+        console.error('Failed to parse native canvas payload:', err);
+      }
+    };
+
+    window.__likkhoCanvasLoad = applyIncomingPayload;
+    window.__likkhoCanvasSetTheme = (isDark: boolean) => {
+      setDarkMode(Boolean(isDark));
+    };
+    window.__handleLikkhoAndroidBack = () => {
+      if (backHandlerRef.current) {
+        backHandlerRef.current();
+      } else {
+        window.LikkhoCanvasBridge?.exitWithoutSave?.();
+      }
+      return 'handled';
+    };
+
+    try {
+      const initialRaw = window.LikkhoCanvasBridge?.consumeInitialCanvasPayload?.();
+      if (initialRaw && initialRaw.trim().length > 0) {
+        applyIncomingPayload(initialRaw);
+      }
+      window.LikkhoCanvasBridge?.onCanvasReady?.();
+    } catch {
+      // ignore
+    }
+
+    return () => {
+      window.__likkhoCanvasLoad = undefined;
+      window.__likkhoCanvasSetTheme = undefined;
+      window.__handleLikkhoAndroidBack = undefined;
+    };
+  }, []);
+
+  if (!hasLoadedPayload) {
+    return (
+      <div className="flex h-full w-full items-center justify-center bg-[var(--wiki-bg)] text-[var(--wiki-text)]">
+        <Loader2 className="h-6 w-6 animate-spin text-[#3366cc]" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="h-full w-full bg-[var(--wiki-bg)] text-[var(--wiki-text)] font-wiki-sans">
+      <WritingWorkspace
+        key={`${payload.vaultMode}_${payload.log?.id || 'new'}_${sessionSeq}`}
+        canvasOnly={true}
+        vaultMode={payload.vaultMode}
+        initialLog={payload.log}
+        startInEditMode={payload.startInEditMode}
+        customFonts={customFonts}
+        micSettings={payload.micSettings}
+        registerBackHandler={(fn) => {
+          backHandlerRef.current = fn;
+        }}
+        onAddCustomFont={(font) => {
+          injectGlobalFontFaceCss(font.fontFamily, font.dataUrl);
+          setCustomFonts((prev) => [...prev, font]);
+          try {
+            window.LikkhoCanvasBridge?.onAddCustomFontJson?.(JSON.stringify(font));
+          } catch {
+            // ignore
+          }
+        }}
+        onSaveLog={(savedLog, exitAfterSave) => {
+          try {
+            window.LikkhoCanvasBridge?.saveLogJson?.(
+              JSON.stringify(savedLog),
+              exitAfterSave
+            );
+          } catch (err) {
+            console.error('Failed to save log across LikkhoCanvasBridge:', err);
+          }
+        }}
+        onDeleteLog={(logId) => {
+          try {
+            window.LikkhoCanvasBridge?.deleteLog?.(logId);
+          } catch {
+            // ignore
+          }
+        }}
+        onExitWithoutSave={() => {
+          try {
+            window.LikkhoCanvasBridge?.exitWithoutSave?.();
+          } catch {
+            // ignore
+          }
+        }}
+      />
+    </div>
+  );
+}
+
 export default function App() {
+  const mode = detectRuntimeShellMode();
+  if (mode === 'migrate') return <LegacyMigrationShell />;
+  if (mode === 'canvas') return <CanvasOnlyShell />;
+  return <FullWebApp />;
+}
+
+function FullWebApp() {
   // Active Vault Mode ('primary' -> real_vault.db, 'decoy' -> decoy_vault.db)
   const [vaultMode, setVaultMode] = useState<VaultMode>('primary');
   const isVaultHydratedRef = useRef<boolean>(false);

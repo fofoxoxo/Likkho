@@ -393,10 +393,17 @@ class NativeVaultRepository(context: Context) {
         return raw?.takeIf { it.isNotEmpty() }
     }
 
-    fun setEncryptionKeyPassphrase(mode: VaultMode, passphrase: String): String {
+  fun setEncryptionKeyPassphrase(mode: VaultMode, passphrase: String): String {
         val hash = hashPassphrase(passphrase.trim(), mode)
         writeEncryptedText(File(vaultDir(mode), FILE_KEY_HASH), hash)
         return hash
+    }
+
+    fun restorePreHashedEncryptionKeyHint(mode: VaultMode, existingHash: String) {
+        val clean = existingHash.trim()
+        if (clean.isNotEmpty()) {
+            writeEncryptedText(File(vaultDir(mode), FILE_KEY_HASH), clean)
+        }
     }
 
     fun verifyEncryptionKeyPassphrase(mode: VaultMode, passphrase: String): Boolean {

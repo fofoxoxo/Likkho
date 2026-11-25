@@ -113,6 +113,7 @@ interface RichTextToolbarProps {
   onImportDocument?: (title: string, html: string, editableImages?: string[]) => void;
   currentLogId?: string;
   onMediaLoadingChange?: (loading: { kind: 'image' | 'audio'; label?: string } | null) => void;
+  canvasOnly?: boolean;
 }
 
 interface ActiveFormats {
@@ -211,6 +212,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
   onImportDocument,
   currentLogId,
   onMediaLoadingChange,
+  canvasOnly = false,
 }) => {
   const [showColorPicker, setShowColorPicker] = useState<'text' | 'highlight' | null>(null);
   const [showLinkInput, setShowLinkInput] = useState<boolean>(false);
@@ -2260,7 +2262,17 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     try {
       const contextText = editorRef.current?.innerText?.slice(0, 400) || cleaned;
       const analysis = await analyzeWordOnline(cleaned, contextText);
-      saveWordAnalysisToStore(analysis, vaultMode);
+      const updatedAnalyses = saveWordAnalysisToStore(analysis, vaultMode);
+      if (canvasOnly && window.LikkhoCanvasBridge?.onWordAnalysesUpdated) {
+        try {
+          window.LikkhoCanvasBridge.onWordAnalysesUpdated(
+            JSON.stringify(updatedAnalyses),
+            vaultMode || 'primary'
+          );
+        } catch {
+          // ignore
+        }
+      }
       setActiveWordAnalysisRecord(analysis);
       setShowWordAnalysisPopover(false);
       setWordAnalysisQuery('');
@@ -2624,6 +2636,12 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
               type="button"
               onMouseDown={preventFocusLoss}
               onClick={() => {
+                if (canvasOnly && window.LikkhoCanvasBridge?.pickCanvasImage) {
+                  setShowMediaPickerMenu(false);
+                  markExternalFilePickerPending();
+                  window.LikkhoCanvasBridge.pickCanvasImage();
+                  return;
+                }
                 triggerAndroidMediaPermission();
                 mediaImageInputRef.current?.click();
               }}
@@ -2636,6 +2654,12 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
               type="button"
               onMouseDown={preventFocusLoss}
               onClick={() => {
+                if (canvasOnly && window.LikkhoCanvasBridge?.pickAudioAttachment) {
+                  setShowMediaPickerMenu(false);
+                  markExternalFilePickerPending();
+                  window.LikkhoCanvasBridge.pickAudioAttachment();
+                  return;
+                }
                 triggerAndroidMediaPermission();
                 mediaAudioInputRef.current?.click();
               }}
@@ -2777,7 +2801,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
               <span className="text-xs font-semibold text-[var(--wiki-text)]">
                 Canvas Background
               </span>
-              {canvasBgDataUrl && (
+              {canvasBgDataUrl && canvasBgDataUrl.startsWith('data:') && (
                 <span className="truncate font-wiki-mono text-[11px] font-medium text-[var(--wiki-muted)]">
                   · File size:{' '}
                   <strong className="font-semibold text-[var(--wiki-text)]">
@@ -2803,6 +2827,11 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
               type="button"
               onMouseDown={preventFocusLoss}
               onClick={() => {
+                if (canvasOnly && window.LikkhoCanvasBridge?.pickCanvasBgImage) {
+                  markExternalFilePickerPending();
+                  window.LikkhoCanvasBridge.pickCanvasBgImage();
+                  return;
+                }
                 triggerAndroidMediaPermission();
                 bgFileInputRef.current?.click();
               }}

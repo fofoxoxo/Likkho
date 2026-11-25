@@ -157,7 +157,60 @@ declare global {
       notifyAppReady?: () => void;
       closeQuickNotePopup?: (showToast?: boolean) => void;
     };
+    LikkhoCanvasBridge?: {
+      consumeInitialCanvasPayload?: () => string;
+      onCanvasReady?: () => void;
+      saveLogJson?: (logJson: string, exitAfterSave: boolean) => void;
+      deleteLog?: (logId: string) => void;
+      exitWithoutSave?: () => void;
+      openNativePfpDialog?: (currentPfpUrl: string) => void;
+      pickCanvasImage?: () => void;
+      pickCanvasBgImage?: () => void;
+      openNativeImageStudio?: (
+        mediaUrlOrId: string,
+        targetKind: string,
+        targetItemId: string,
+        currentOpacity: number
+      ) => void;
+      pickAudioAttachment?: () => void;
+      onAddCustomFontJson?: (fontJson: string) => void;
+      onWordAnalysesUpdated?: (jsonArrayStr: string, vaultMode: string) => void;
+      openExternalUrl?: (url: string) => void;
+    };
+    LikkhoLegacyMigrationBridge?: {
+      writeMediaImageChunk?: (
+        id: string,
+        mimeType: string,
+        base64Chunk: string,
+        isFirst: boolean,
+        isLast: boolean
+      ) => boolean;
+      writeMediaAudioChunk?: (
+        id: string,
+        mimeType: string,
+        base64Chunk: string,
+        isFirst: boolean,
+        isLast: boolean
+      ) => boolean;
+      commitVaultPayload?: (payloadJson: string) => void;
+      markMigrationDone?: (summaryJson: string) => void;
+      markMigrationError?: (errorMessage: string) => void;
+    };
     __handleLikkhoAndroidBack?: () => string;
+    __likkhoCanvasLoad?: (payloadJson: string) => void;
+    __likkhoCanvasSetTheme?: (isDark: boolean) => void;
+    __onLikkhoNativePfpResult?: (assetUrl: string) => void;
+    __onLikkhoNativeImageResult?: (
+      targetKind: string,
+      targetItemId: string,
+      assetUrl: string,
+      width: number,
+      height: number,
+      sizeBytes: number,
+      originalSizeBytes: number,
+      opacity: number
+    ) => void;
+    __onLikkhoNativeAudioPicked?: (audioJson: string) => void;
     __onLikkhoQuickNoteDone?: (noteId: string) => void;
     __onLikkhoOpenQuickNoteCreator?: () => string | void;
     __onLikkhoNewDiaryAction?: () => string | void;

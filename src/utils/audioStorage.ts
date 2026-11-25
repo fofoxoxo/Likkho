@@ -328,10 +328,11 @@ export async function ensureNativeAudioDiskFile(
     return '';
   }
 
-  // 1. Check if attachment already points to a native local file path
+  // 1. Check if attachment already points to a native local file path or WebViewAssetLoader local URL
   if (attachment.audioUri) {
     const raw = attachment.audioUri;
     if (raw.startsWith('/')) return raw;
+    if (raw.startsWith('https://appassets.androidplatform.net/')) return raw;
     if (raw.startsWith('http://localhost/_capacitor_file_')) {
       return raw.replace('http://localhost/_capacitor_file_', '');
     }

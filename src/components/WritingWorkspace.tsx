@@ -84,6 +84,7 @@ interface WritingWorkspaceProps {
   micSettings: MicRecordingSettings;
   registerBackHandler?: (fn: () => void) => void;
   startInEditMode?: boolean;
+  canvasOnly?: boolean;
 }
 
 interface CanvasHistorySnapshot {
@@ -356,6 +357,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
   micSettings,
   registerBackHandler,
   startInEditMode = false,
+  canvasOnly = false,
 }) => {
   const stableLogIdRef = useRef<string>(
     initialLog?.id || `log_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
@@ -600,6 +602,163 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     };
   }, []);
 
+  // Bridge callbacks from Kotlin Native PFP Cropper, Image Studio, and Media/Audio pickers when running in canvasOnly mode
+  const latestStateCallbackRef = useRef<{
+    pushSnapshot: (overrides?: Partial<CanvasHistorySnapshot>) => void;
+    selectAudioCard: (audioId: string) => void;
+    canvasBgOpacity: number;
+  }>({
+    pushSnapshot: () => {},
+    selectAudioCard: () => {},
+    canvasBgOpacity: 0.25,
+  });
+
+  useEffect(() => {
+    if (!canvasOnly) return;
+
+    window.__onLikkhoNativePfpResult = (assetUrl: string) => {
+      clearExternalFilePickerPending();
+      const nextUrl = assetUrl && assetUrl.trim() ? assetUrl.trim() : null;
+      setPfpDataUrl(nextUrl);
+      setRawSelectedImage(null);
+      setShowPfpStudioModal(false);
+      latestStateCallbackRef.current.pushSnapshot({ pfpDataUrl: nextUrl });
+    };
+
+    window.__onLikkhoNativeImageResult = (
+      targetKind: string,
+      targetItemId: string,
+      assetUrl: string,
+      width: number,
+      height: number,
+      sizeBytes: number,
+      originalSizeBytes: number,
+      opacity: number
+    ) => {
+      clearExternalFilePickerPending();
+      if (!assetUrl) return;
+      const safeOpacity = opacity > 0 && opacity <= 1 ? opacity : 1;
+
+      if (targetKind === 'canvas_bg') {
+        const bgOpacity =
+          opacity > 0 && opacity < 1 ? opacity : latestStateCallbackRef.current.canvasBgOpacity;
+        setCanvasBgDataUrl(assetUrl);
+        setCanvasBgOpacity(bgOpacity);
+        latestStateCallbackRef.current.pushSnapshot({
+          canvasBgDataUrl: assetUrl,
+          canvasBgOpacity: bgOpacity,
+        });
+        return;
+      }
+
+      if (targetKind === 'inline' && targetItemId && editorRef.current) {
+        const inlineEl = editorRef.current.querySelector(
+          `#${CSS.escape(targetItemId)}`
+        ) as HTMLImageElement | null;
+        if (inlineEl) {
+          inlineEl.src = assetUrl;
+          inlineEl.style.opacity = String(safeOpacity);
+          if (width > 0) {
+            inlineEl.style.width = `${Math.min(640, width)}px`;
+          }
+          setSelectedInlineImgId(targetItemId);
+          setInlineImgTick((t) => t + 1);
+          latestStateCallbackRef.current.pushSnapshot({
+            contentHtml: editorRef.current.innerHTML,
+          });
+        }
+        return;
+      }
+
+      if (targetKind === 'canvas_edit' && targetItemId) {
+        setCanvasImages((prev) => {
+          const next = prev.map((item) => {
+            if (item.id !== targetItemId) return item;
+            const aspectH =
+              width > 0 && height > 0
+                ? Math.max(40, Math.round((item.width * height) / width))
+                : item.height;
+            return {
+              ...item,
+              dataUrl: assetUrl,
+              opacity: safeOpacity,
+              height: aspectH,
+              sizeBytes: sizeBytes > 0 ? sizeBytes : item.sizeBytes,
+              originalSizeBytes:
+                originalSizeBytes > 0 ? originalSizeBytes : item.originalSizeBytes,
+            };
+          });
+          latestStateCallbackRef.current.pushSnapshot({ canvasImages: next });
+          return next;
+        });
+        setSelectedCanvasImgId(targetItemId);
+        return;
+      }
+
+      // Default: canvas_new
+      const displayW = Math.min(260, Math.max(80, width || 220));
+      const displayH =
+        width > 0 && height > 0 ? Math.max(48, Math.round((displayW * height) / width)) : 165;
+      const newId = `img_${Date.now()}`;
+      setCanvasImages((prev) => {
+        const next: CanvasDraggableImage[] = [
+          ...prev,
+          {
+            id: newId,
+            dataUrl: assetUrl,
+            x: 24 + (prev.length * 18) % 100,
+            y: 36 + (prev.length * 24) % 120,
+            width: displayW,
+            height: displayH,
+            opacity: safeOpacity,
+            rotation: 0,
+            layer: 'foreground',
+            sizeBytes: sizeBytes > 0 ? sizeBytes : undefined,
+            originalSizeBytes: originalSizeBytes > 0 ? originalSizeBytes : undefined,
+          },
+        ];
+        latestStateCallbackRef.current.pushSnapshot({ canvasImages: next });
+        return next;
+      });
+      setSelectedCanvasImgId(newId);
+      setSelectedCanvasAudioId(null);
+    };
+
+    window.__onLikkhoNativeAudioPicked = (audioJson: string) => {
+      clearExternalFilePickerPending();
+      try {
+        const parsed = JSON.parse(audioJson) as CanvasAudioAttachment;
+        if (!parsed || !parsed.id) return;
+        setAudioAttachments((prev) => {
+          const next: CanvasAudioAttachment[] = [
+            ...prev,
+            {
+              ...parsed,
+              x: parsed.x ?? 24 + (prev.length * 18) % 90,
+              y: parsed.y ?? 120 + (prev.length * 76) % 260,
+              width: parsed.width ?? 270,
+              height: parsed.height ?? 56,
+              rotation: parsed.rotation ?? 0,
+              playbackRate: parsed.playbackRate ?? 1,
+              layer: parsed.layer ?? 'foreground',
+            },
+          ];
+          latestStateCallbackRef.current.pushSnapshot({ audioAttachments: next });
+          return next;
+        });
+        latestStateCallbackRef.current.selectAudioCard(parsed.id);
+      } catch (err) {
+        console.error('Failed to parse native picked audio:', err);
+      }
+    };
+
+    return () => {
+      window.__onLikkhoNativePfpResult = undefined;
+      window.__onLikkhoNativeImageResult = undefined;
+      window.__onLikkhoNativeAudioPicked = undefined;
+    };
+  }, [canvasOnly]);
+
   const normalizeSpoilersAndSelectionForSave = (rawHtml: string): string => {
     const cleaned = normalizeSpoilersToLockedForSave(rawHtml);
     const temp = document.createElement('div');
@@ -708,6 +867,12 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     } catch {
       // ignore background auto-save errors
     }
+  };
+
+  latestStateCallbackRef.current = {
+    pushSnapshot: pushCanvasSnapshot,
+    selectAudioCard: selectAudioCardSafely,
+    canvasBgOpacity,
   };
 
   const applyCanvasSnapshot = (snap: CanvasHistorySnapshot) => {
@@ -1547,6 +1712,10 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     if (anchor && anchor.href) {
       e.preventDefault();
       e.stopPropagation();
+      if (canvasOnly && window.LikkhoCanvasBridge?.openExternalUrl) {
+        window.LikkhoCanvasBridge.openExternalUrl(anchor.href);
+        return;
+      }
       const tempLink = document.createElement('a');
       tempLink.href = anchor.href;
       tempLink.target = '_blank';
@@ -1836,6 +2005,10 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
             disabled={isReadingMode}
             onClick={() => {
               if (isReadingMode) return;
+              if (canvasOnly && window.LikkhoCanvasBridge?.openNativePfpDialog) {
+                window.LikkhoCanvasBridge.openNativePfpDialog(pfpDataUrl || '');
+                return;
+              }
               setRawSelectedImage(null);
               setShowPfpStudioModal(true);
             }}
@@ -2073,6 +2246,15 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
             <button
               type="button"
               onClick={() => {
+                if (canvasOnly && window.LikkhoCanvasBridge?.openNativeImageStudio) {
+                  window.LikkhoCanvasBridge.openNativeImageStudio(
+                    selectedCanvasImage.dataUrl,
+                    'canvas_edit',
+                    selectedCanvasImage.id,
+                    selectedCanvasImage.opacity ?? 1
+                  );
+                  return;
+                }
                 setEditingCanvasImageId(selectedCanvasImage.id);
                 setRawMediaStudioImage(selectedCanvasImage.dataUrl);
               }}
@@ -2225,9 +2407,25 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
             <button
               type="button"
               onClick={() => {
+                const src = selectedInlineImgElement.src;
+                if (
+                  canvasOnly &&
+                  window.LikkhoCanvasBridge?.openNativeImageStudio &&
+                  (src.startsWith('https://appassets.androidplatform.net/') ||
+                    src.startsWith('img_blob_'))
+                ) {
+                  const op = parseFloat(selectedInlineImgElement.style.opacity || '1');
+                  window.LikkhoCanvasBridge.openNativeImageStudio(
+                    src,
+                    'inline',
+                    selectedInlineImgElement.id,
+                    Number.isFinite(op) ? op : 1
+                  );
+                  return;
+                }
                 setEditingInlineImgId(selectedInlineImgElement.id);
                 setEditingCanvasImageId(null);
-                setRawMediaStudioImage(selectedInlineImgElement.src);
+                setRawMediaStudioImage(src);
               }}
               className="flex h-7 items-center gap-1 border border-[#3366cc] bg-[#3366cc]/10 px-2.5 font-semibold text-[#3366cc] hover:bg-[#3366cc] hover:text-white transition-colors"
               title="Open Image Studio (Optional Compression, Crop, Opacity, Adjust & 22+ Filters) right in place"
@@ -2750,7 +2948,19 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
               canvasBgOpacity: opacity,
             });
           }}
-          onOpenBgImageStudio={(rawBgDataUrl) => setRawBgStudioImage(rawBgDataUrl)}
+          onOpenBgImageStudio={(rawBgDataUrl) => {
+            if (canvasOnly && window.LikkhoCanvasBridge?.openNativeImageStudio) {
+              window.LikkhoCanvasBridge.openNativeImageStudio(
+                rawBgDataUrl,
+                'canvas_bg',
+                '',
+                canvasBgOpacity
+              );
+              return;
+            }
+            setRawBgStudioImage(rawBgDataUrl);
+          }}
+          canvasOnly={canvasOnly}
           onOpenMediaImageStudio={(rawDataUrl) => {
             setEditingCanvasImageId(null);
             setRawMediaStudioImage(rawDataUrl);
