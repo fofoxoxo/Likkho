@@ -371,18 +371,27 @@ class LegacyWebViewMigrationHelper(
         }
         val nextAudios = log.audioAttachments.map { aud ->
             val diskAudio = repository.resolveExistingAudioFile(aud.id, aud.format)
-            val nextUri = when {
+            val rawDataUrl = aud.dataUrl
+            val nextUri: String? = when {
                 diskAudio != null -> "$ASSET_AUDIO_PREFIX${diskAudio.name}"
-                !aud.dataUrl.isNullOrBlank() && aud.dataUrl.startsWith("data:") -> {
+                !rawDataUrl.isNullOrBlank() && rawDataUrl.startsWith("data:") -> {
                     runCatching {
-                        mediaEngine.importAudioDataUrl(aud.dataUrl, aud.id, aud.name, aud.format).assetUrl
+                        mediaEngine.parseDataUrl(rawDataUrl)?.let { parsed ->
+                            val resolvedFormat = aud.format.ifBlank { parsed.ext }
+                            mediaEngine.importAudioFromBytes(
+                                bytes = parsed.bytes,
+                                format = resolvedFormat,
+                                displayName = aud.name.ifBlank { "Voice Note" },
+                                preferredId = aud.id.ifBlank { null }
+                            ).assetUrl
+                        }
                     }.getOrNull() ?: aud.audioUri
                 }
                 else -> aud.audioUri
             }
             aud.copy(
                 audioUri = nextUri,
-                dataUrl = if (nextUri != null) "" else aud.dataUrl
+                dataUrl = if (nextUri != null) "" else rawDataUrl
             )
         }
         return log.copy(

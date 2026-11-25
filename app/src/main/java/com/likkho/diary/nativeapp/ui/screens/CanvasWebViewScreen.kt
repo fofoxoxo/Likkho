@@ -950,13 +950,13 @@ private fun NativePfpStudioDialog(
                             Box(
                                 modifier = Modifier
                                     .height(36.dp)
-                                    .border(1.dp, colors.destructive.copy(alpha = 0.5f), RectangleShape)
-                                    .background(colors.destructive.copy(alpha = 0.08f))
+                                    .border(1.dp, colors.crimson.copy(alpha = 0.5f), RectangleShape)
+                                    .background(colors.crimson.copy(alpha = 0.08f))
                                     .clickable { onResult("") }
                                     .padding(horizontal = 12.dp),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text("Remove", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = colors.destructive)
+                                Text("Remove", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = colors.crimson)
                             }
                         }
                     }
@@ -1376,7 +1376,7 @@ private fun NativeImageStudioDialog(
                 }
 
                 errorMsg?.let { msg ->
-                    Text(msg, fontSize = 11.sp, color = colors.destructive)
+                    Text(msg, fontSize = 11.sp, color = colors.crimson)
                 }
             }
 
