@@ -1,6 +1,7 @@
 package com.likkho.diary.nativeapp.ui.screens
 
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -147,6 +148,12 @@ fun BackupRestoreScreen(
         mutableIntStateOf(repository.getRemainingPasscodeCooldownSeconds())
     }
     val isCoolingDown = cooldownSec > 0
+
+    BackHandler {
+        if (!isBusy) {
+            onBack()
+        }
+    }
 
     LaunchedEffect(cooldownSec) {
         while (true) {
@@ -444,7 +451,7 @@ fun BackupRestoreScreen(
                 text = "Backup & Restore",
                 fontFamily = LikkhoFontFamilies.Serif,
                 fontWeight = FontWeight.Bold,
-                fontSize = 20.sp,
+                fontSize = 22.sp,
                 color = colors.text
             )
         }
@@ -541,7 +548,7 @@ fun BackupRestoreScreen(
                             text = "Backup Folder (SAF)",
                             fontFamily = LikkhoFontFamilies.Serif,
                             fontWeight = FontWeight.Bold,
-                            fontSize = 16.sp,
+                            fontSize = 18.sp,
                             color = colors.text
                         )
                     }
@@ -635,7 +642,7 @@ fun BackupRestoreScreen(
                             text = "Set Encryption Key",
                             fontFamily = LikkhoFontFamilies.Serif,
                             fontWeight = FontWeight.Bold,
-                            fontSize = 16.sp,
+                            fontSize = 18.sp,
                             color = colors.text
                         )
                     }
@@ -721,7 +728,7 @@ fun BackupRestoreScreen(
                         text = "Backup",
                         fontFamily = LikkhoFontFamilies.Serif,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp,
+                        fontSize = 18.sp,
                         color = colors.text
                     )
                 }
@@ -826,7 +833,7 @@ fun BackupRestoreScreen(
                         text = "Restore",
                         fontFamily = LikkhoFontFamilies.Serif,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp,
+                        fontSize = 18.sp,
                         color = colors.text
                     )
                 }

@@ -2,6 +2,7 @@ package com.likkho.diary.nativeapp.ui.screens
 
 import android.content.Context
 import android.content.ContextWrapper
+import androidx.activity.compose.BackHandler
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.compose.foundation.background
@@ -161,7 +162,7 @@ private data class SavedWordAnalysisRecord(
     val rawJson: JSONObject
 )
 
-private const val APP_CURRENT_VERSION = "2.0.0"
+private const val APP_CURRENT_VERSION = "2.1.0"
 private const val DEFAULT_GITHUB_REPO = "madhu-raagii/Likkho"
 private const val AUTHOR_NAME = "Sayan Saha"
 private const val AUTHOR_EMAIL = "sayan996969saha@gmail.com"
@@ -377,6 +378,15 @@ fun SettingsScreen(
         SettingsSubPage.MAIN -> Unit
     }
 
+    BackHandler {
+        when {
+            showPasscodeDialog -> showPasscodeDialog = false
+            showMicDialog -> showMicDialog = false
+            updateModalResult != null -> updateModalResult = null
+            else -> onBack()
+        }
+    }
+
     // ==================== Main Settings Layout ====================
     Column(
         modifier = modifier
@@ -412,7 +422,7 @@ fun SettingsScreen(
                 text = "Settings",
                 fontFamily = LikkhoFontFamilies.Serif,
                 fontWeight = FontWeight.Bold,
-                fontSize = 20.sp,
+                fontSize = 22.sp,
                 color = colors.text
             )
         }
@@ -528,9 +538,9 @@ fun SettingsScreen(
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = "Set Passcode",
-                            fontFamily = LikkhoFontFamilies.Sans,
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 14.sp,
+                            fontFamily = LikkhoFontFamilies.Serif,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 17.sp,
                             color = colors.text
                         )
                         Text(
@@ -644,9 +654,9 @@ fun SettingsScreen(
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = if (isCheckingUpdate) "Checking for Updates..." else "Check for Updates",
-                            fontFamily = LikkhoFontFamilies.Sans,
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 14.sp,
+                            fontFamily = LikkhoFontFamilies.Serif,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 17.sp,
                             color = colors.text
                         )
                         Text(
@@ -782,9 +792,9 @@ private fun SettingsNavRow(
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = title,
-                fontFamily = LikkhoFontFamilies.Sans,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 14.sp,
+                fontFamily = LikkhoFontFamilies.Serif,
+                fontWeight = FontWeight.Bold,
+                fontSize = 17.sp,
                 color = colors.text
             )
             Text(
@@ -833,9 +843,9 @@ private fun SettingsSwitchRow(
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = title,
-                fontFamily = LikkhoFontFamilies.Sans,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 14.sp,
+                fontFamily = LikkhoFontFamilies.Serif,
+                fontWeight = FontWeight.Bold,
+                fontSize = 17.sp,
                 color = colors.text
             )
             Text(
@@ -1379,6 +1389,14 @@ private fun SavedPasswordsSubScreen(
     var viewingItem by remember { mutableStateOf<SavedPasswordItem?>(null) }
     var feedbackBanner by remember { mutableStateOf<String?>(null) }
 
+    BackHandler {
+        when {
+            viewingItem != null -> viewingItem = null
+            showAddDialog -> showAddDialog = false
+            else -> onBack()
+        }
+    }
+
     LaunchedEffect(feedbackBanner) {
         if (feedbackBanner != null) {
             delay(2500L)
@@ -1430,7 +1448,7 @@ private fun SavedPasswordsSubScreen(
                     text = "Passwords",
                     fontFamily = LikkhoFontFamilies.Serif,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 20.sp,
+                    fontSize = 22.sp,
                     color = colors.text
                 )
             }
@@ -1543,9 +1561,9 @@ private fun SavedPasswordsSubScreen(
                                 )
                                 Text(
                                     text = pw.name.ifBlank { "Untitled" },
-                                    fontFamily = LikkhoFontFamilies.Sans,
-                                    fontWeight = FontWeight.SemiBold,
-                                    fontSize = 12.sp,
+                                    fontFamily = LikkhoFontFamilies.Serif,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 15.sp,
                                     color = colors.text,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
@@ -1913,6 +1931,14 @@ private fun SavedWordAnalysisSubScreen(
     var searchQuery by remember { mutableStateOf("") }
     var selectedRecord by remember { mutableStateOf<SavedWordAnalysisRecord?>(null) }
 
+    BackHandler {
+        when {
+            selectedRecord != null -> selectedRecord = null
+            searchQuery.isNotEmpty() -> searchQuery = ""
+            else -> onBack()
+        }
+    }
+
     val sortedFiltered = remember(records, searchQuery) {
         val q = searchQuery.trim().lowercase()
         val sorted = records.sortedBy { it.word.lowercase(Locale.US) }
@@ -1965,7 +1991,7 @@ private fun SavedWordAnalysisSubScreen(
                 text = "Saved Word Analysis (A–Z)",
                 fontFamily = LikkhoFontFamilies.Serif,
                 fontWeight = FontWeight.Bold,
-                fontSize = 18.sp,
+                fontSize = 20.sp,
                 color = colors.text,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -2332,6 +2358,13 @@ private fun LegalAndAboutSubScreen(
     var statusMessage by remember { mutableStateOf<String?>(null) }
     var showClearConfirm by remember { mutableStateOf(false) }
 
+    BackHandler {
+        when {
+            showClearConfirm -> showClearConfirm = false
+            !isExportingZip -> onBack()
+        }
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -2365,7 +2398,7 @@ private fun LegalAndAboutSubScreen(
                 text = "Legal, About & Data Notice",
                 fontFamily = LikkhoFontFamilies.Serif,
                 fontWeight = FontWeight.Bold,
-                fontSize = 18.sp,
+                fontSize = 20.sp,
                 color = colors.text,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis

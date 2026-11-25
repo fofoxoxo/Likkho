@@ -2,6 +2,7 @@ package com.likkho.diary.nativeapp.ui.screens
 
 import android.graphics.BitmapFactory
 import android.util.Base64
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -162,6 +163,25 @@ fun HomeScreen(
     var pendingUnlockRequest by remember { mutableStateOf<PendingDiaryUnlockRequest?>(null) }
     var pendingDeleteLog by remember { mutableStateOf<DiaryLog?>(null) }
     var exportingLog by remember { mutableStateOf<DiaryLog?>(null) }
+
+    BackHandler(
+        enabled = openMenuLogId != null ||
+            pendingUnlockRequest != null ||
+            pendingDeleteLog != null ||
+            exportingLog != null ||
+            isSearchOpen
+    ) {
+        when {
+            openMenuLogId != null -> openMenuLogId = null
+            pendingUnlockRequest != null -> pendingUnlockRequest = null
+            pendingDeleteLog != null -> pendingDeleteLog = null
+            exportingLog != null -> exportingLog = null
+            isSearchOpen -> {
+                isSearchOpen = false
+                searchQuery = ""
+            }
+        }
+    }
 
     val sortedAndFilteredLogs = remember(logs, searchQuery) {
         val q = searchQuery.trim().lowercase(Locale.getDefault())
@@ -358,7 +378,7 @@ fun HomeScreen(
                 text = "Create",
                 fontFamily = LikkhoFontFamilies.Serif,
                 fontWeight = FontWeight.Bold,
-                fontSize = 16.sp,
+                fontSize = 18.sp,
                 color = Color.White
             )
         }
@@ -503,7 +523,7 @@ private fun HomeHeaderBar(
                     text = "Likkho",
                     fontFamily = LikkhoFontFamilies.Serif,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 24.sp,
+                    fontSize = 26.sp,
                     color = colors.text
                 )
             }
@@ -607,7 +627,7 @@ private fun HomeEmptyState(
             text = if (hasSearchQuery) "No Matching Diaries Found" else "No Logs Yet",
             fontFamily = LikkhoFontFamilies.Serif,
             fontWeight = FontWeight.Bold,
-            fontSize = 20.sp,
+            fontSize = 22.sp,
             color = colors.text,
             textAlign = TextAlign.Center
         )
@@ -679,7 +699,7 @@ private fun DiaryLogRow(
                     text = "Likkho",
                     fontFamily = LikkhoFontFamilies.Serif,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 12.sp,
+                    fontSize = 13.sp,
                     color = Color(0xFF202122),
                     textAlign = TextAlign.Center
                 )
@@ -712,7 +732,7 @@ private fun DiaryLogRow(
                     text = log.heading.ifBlank { "Untitled" },
                     fontFamily = LikkhoFontFamilies.Serif,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 18.sp,
+                    fontSize = 20.sp,
                     color = colors.text,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -727,7 +747,7 @@ private fun DiaryLogRow(
             Text(
                 text = previewText,
                 fontFamily = LikkhoFontFamilies.Prose,
-                fontSize = 12.sp,
+                fontSize = 13.sp,
                 color = colors.muted,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,

@@ -13,10 +13,13 @@ import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.likkho.diary.R
 
 /**
  * Wikipedia Editorial Design Tokens for Likkho Native UI.
@@ -81,9 +84,18 @@ val DarkLikkhoColors = LikkhoColors(
 
 val LocalLikkhoColors = staticCompositionLocalOf { LightLikkhoColors }
 
+val CormorantGaramondFontFamily: FontFamily = FontFamily(
+    Font(R.font.cormorant_garamond_regular, FontWeight.Normal, FontStyle.Normal),
+    Font(R.font.cormorant_garamond_medium, FontWeight.Medium, FontStyle.Normal),
+    Font(R.font.cormorant_garamond_semibold, FontWeight.SemiBold, FontStyle.Normal),
+    Font(R.font.cormorant_garamond_bold, FontWeight.Bold, FontStyle.Normal),
+    Font(R.font.cormorant_garamond_italic, FontWeight.Normal, FontStyle.Italic)
+)
+
 object LikkhoFontFamilies {
-    val Serif: FontFamily = FontFamily.Serif
-    val Prose: FontFamily = FontFamily.Serif
+    val Serif: FontFamily = CormorantGaramondFontFamily
+    val Cormorant: FontFamily = CormorantGaramondFontFamily
+    val Prose: FontFamily = CormorantGaramondFontFamily
     val Sans: FontFamily = FontFamily.SansSerif
     val Mono: FontFamily = FontFamily.Monospace
 }

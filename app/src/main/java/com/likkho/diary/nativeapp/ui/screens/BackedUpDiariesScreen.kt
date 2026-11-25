@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.media.MediaPlayer
 import android.net.Uri
 import android.util.Base64
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
@@ -159,6 +160,19 @@ fun BackedUpDiariesScreen(
         mutableIntStateOf(repository.getRemainingPasscodeCooldownSeconds())
     }
     val isCoolingDown = cooldownSec > 0
+
+    BackHandler {
+        when {
+            pendingDeleteDiary != null -> if (!isUpdatingBackup) pendingDeleteDiary = null
+            viewingDiary != null -> viewingDiary = null
+            pendingLockedDiary != null -> pendingLockedDiary = null
+            isSearchVisible -> {
+                isSearchVisible = false
+                searchQuery = ""
+            }
+            !isUnlocking && !isUpdatingBackup -> onBack()
+        }
+    }
 
     LaunchedEffect(cooldownSec) {
         while (true) {
@@ -346,7 +360,7 @@ fun BackedUpDiariesScreen(
                     text = "Backed-up Diaries",
                     fontFamily = LikkhoFontFamilies.Serif,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 20.sp,
+                    fontSize = 22.sp,
                     color = colors.text,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -1464,7 +1478,7 @@ private fun BackedUpDiaryReaderDialog(
                         text = diary.heading.ifBlank { "Untitled Diary" },
                         fontFamily = LikkhoFontFamilies.Serif,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 17.sp,
+                        fontSize = 19.sp,
                         color = colors.text,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis

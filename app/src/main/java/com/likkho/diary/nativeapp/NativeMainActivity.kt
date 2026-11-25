@@ -238,7 +238,7 @@ class NativeMainActivity : FragmentActivity(), NativeCanvasActivityHost {
                                 Text(
                                     text = "Likkho",
                                     fontFamily = LikkhoFontFamilies.Serif,
-                                    fontSize = 30.sp,
+                                    fontSize = 34.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = LikkhoTheme.colors.text
                                 )

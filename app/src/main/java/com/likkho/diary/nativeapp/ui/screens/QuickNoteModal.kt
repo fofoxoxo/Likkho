@@ -15,6 +15,7 @@ import android.content.pm.ShortcutManager
 import android.graphics.drawable.Icon
 import android.os.Build
 import android.service.quicksettings.TileService
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -498,7 +499,7 @@ fun QuickNoteModal(
                         text = if (initialNote != null) "Edit Quick Note" else "Quick Note",
                         fontFamily = LikkhoFontFamilies.Serif,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 17.sp,
+                        fontSize = 19.sp,
                         color = colors.text,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -884,6 +885,16 @@ fun QuickNotesManagerScreen(
     var isCreatingNew by remember { mutableStateOf(false) }
     var toastMsg by remember { mutableStateOf<String?>(null) }
 
+    BackHandler {
+        when {
+            isCreatingNew || editingNote != null -> {
+                isCreatingNew = false
+                editingNote = null
+            }
+            else -> onBack()
+        }
+    }
+
     fun persistAndSync(next: List<QuickNote>, targetForNotif: QuickNote?, cancelId: String?, feedback: String?) {
         onNotesUpdated(next)
         scope.launch(Dispatchers.IO) {
@@ -948,7 +959,7 @@ fun QuickNotesManagerScreen(
                     text = "Quick Notes",
                     fontFamily = LikkhoFontFamilies.Serif,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 20.sp,
+                    fontSize = 22.sp,
                     color = colors.text,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -1246,7 +1257,7 @@ private fun QuickNoteCardItem(
                         text = note.title.ifBlank { "Quick Note" },
                         fontFamily = LikkhoFontFamilies.Serif,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp,
+                        fontSize = 18.sp,
                         color = if (note.isDone) colors.muted else colors.text,
                         textDecoration = if (note.isDone) TextDecoration.LineThrough else TextDecoration.None,
                         maxLines = 1,

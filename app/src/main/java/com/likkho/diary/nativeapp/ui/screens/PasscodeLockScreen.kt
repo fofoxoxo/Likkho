@@ -341,7 +341,7 @@ fun PasscodeLockScreen(
                 text = "Likkho Locked",
                 fontFamily = LikkhoFontFamilies.Serif,
                 fontWeight = FontWeight.Bold,
-                fontSize = 24.sp,
+                fontSize = 26.sp,
                 color = colors.text,
                 textAlign = TextAlign.Center
             )
@@ -607,7 +607,7 @@ private fun KeypadDigitButton(
             text = label,
             fontFamily = LikkhoFontFamilies.Serif,
             fontWeight = FontWeight.SemiBold,
-            fontSize = 21.sp,
+            fontSize = 23.sp,
             color = colors.text
         )
     }
