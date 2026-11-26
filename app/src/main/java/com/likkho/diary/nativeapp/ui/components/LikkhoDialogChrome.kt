@@ -93,11 +93,9 @@ fun LikkhoHairlineDialog(
         modifier = Modifier
             .fillMaxSize()
             .zIndex(100f)
-            .statusBarsPadding()
-            .navigationBarsPadding()
             .background(Color.Black.copy(alpha = 0.54f))
     ) {
-        // Scrim touch/drag blocker over the dimmed underlying page
+        // Scrim touch/drag blocker over the dimmed underlying page and system bar regions
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -128,10 +126,12 @@ fun LikkhoHairlineDialog(
                 }
         )
 
-        // Centered floating dialog card container
+        // Centered floating dialog card container (respects status bar, navigation bar & IME)
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding()
                 .imePadding()
                 .padding(horizontal = 16.dp, vertical = 14.dp),
             contentAlignment = Alignment.Center

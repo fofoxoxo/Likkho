@@ -39,9 +39,15 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsBottomHeight
+import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.getValue
@@ -240,11 +246,26 @@ class NativeMainActivity : FragmentActivity(), NativeCanvasActivityHost {
 
         setContent {
             LikkhoTheme(darkTheme = isDarkTheme) {
+                val rootColors = LikkhoTheme.colors
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(LikkhoTheme.colors.bg)
+                        .background(rootColors.bg)
                 ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .windowInsetsTopHeight(WindowInsets.statusBars)
+                            .background(rootColors.surface)
+                            .align(Alignment.TopCenter)
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .windowInsetsBottomHeight(WindowInsets.navigationBars)
+                            .background(rootColors.bg)
+                            .align(Alignment.BottomCenter)
+                    )
                     when {
                         isMigratingLegacyData -> {
                             Column(
@@ -1663,20 +1684,22 @@ class NativeMainActivity : FragmentActivity(), NativeCanvasActivityHost {
                 }
                 WindowCompat.setDecorFitsSystemWindows(win, false)
 
-                val statusHex = if (dark) "#1a1f24" else "#f8f9fa"
                 val navHex = if (dark) "#101418" else "#ffffff"
-                val statusColor = AndroidColor.parseColor(statusHex)
                 val navColor = AndroidColor.parseColor(navHex)
 
                 @Suppress("DEPRECATION")
-                win.statusBarColor = statusColor
+                win.statusBarColor = AndroidColor.TRANSPARENT
                 @Suppress("DEPRECATION")
-                win.navigationBarColor = navColor
+                win.navigationBarColor = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O || dark) {
+                    AndroidColor.TRANSPARENT
+                } else {
+                    AndroidColor.parseColor("#80000000")
+                }
                 win.setBackgroundDrawable(ColorDrawable(navColor))
                 decor.setBackgroundColor(navColor)
 
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                    win.navigationBarDividerColor = navColor
+                    win.navigationBarDividerColor = AndroidColor.TRANSPARENT
                 }
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     win.isStatusBarContrastEnforced = false

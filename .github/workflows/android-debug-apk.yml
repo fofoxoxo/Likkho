@@ -1065,7 +1065,7 @@ jobs:
 
             ### 🎨 UI Fixes & Improvements:
             - **Live Dimmed Page Behind Popups (No White Dialog Window):** Replaced Android's separate `Dialog` window in `LikkhoHairlineDialog` with an in-Activity Compose overlay so the active page (Settings, Home, Backed-up Diaries, etc.) remains visibly dimmed behind every popup card instead of showing a blank white dimmed background.
-            - **Normal OS Status & Navigation Bar Behavior:** Placed system bar insets before the dim scrim and kept everything inside the Activity's window so OS status bar and navigation bar colors, icons, and Full Screen mode behavior remain completely normal when popups open.
+            - **Dimmed Status & Navigation Bars with Normal OS Behavior:** Rendered system bar background strips inside the Compose root with transparent Activity system bar colors so popups cleanly dim the status bar and navigation bar along with the screen while keeping OS icons and Full Screen mode behavior normal.
 
             ### 📦 Release Downloads:
             - **Signed Release APK**: `likkho-release-v2.1.5.apk`
