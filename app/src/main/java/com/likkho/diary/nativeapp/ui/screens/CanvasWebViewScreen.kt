@@ -2,8 +2,6 @@ package com.likkho.diary.nativeapp.ui.screens
 
 import android.annotation.SuppressLint
 import android.content.Intent
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
 import android.net.Uri
@@ -20,6 +18,7 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -67,6 +66,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -216,16 +216,22 @@ fun CanvasWebViewScreen(
         val callback = pendingFileChooserCallback
         pendingFileChooserCallback = null
         val uris = WebChromeClient.FileChooserParams.parseResult(result.resultCode, result.data)
+        if (uris == null || uris.isEmpty()) {
+            evaluateJs("if(window.__onLikkhoNativePickerCancelled){window.__onLikkhoNativePickerCancelled();}")
+        }
         callback?.onReceiveValue(uris)
     }
 
     // Native Gallery Picker for Canvas Images & Canvas Background Image
-    var pendingImageTargetKind by remember { mutableStateOf("canvas_new") }
+    var pendingImageTargetKind by rememberSaveable { mutableStateOf("canvas_new") }
     val galleryImageLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri ->
         activityHost.onSystemPickerStateChanged(false)
-        if (uri == null) return@rememberLauncherForActivityResult
+        if (uri == null) {
+            evaluateJs("if(window.__onLikkhoNativePickerCancelled){window.__onLikkhoNativePickerCancelled();}")
+            return@rememberLauncherForActivityResult
+        }
         val targetKind = pendingImageTargetKind
         isProcessingNativeMedia = true
         scope.launch {
@@ -240,6 +246,13 @@ fun CanvasWebViewScreen(
                         JSONObject.quote(targetKind)
                     },'',${JSONObject.quote(imported.assetUrl)},${imported.width},${imported.height},${imported.sizeBytes},${imported.originalSizeBytes},$defaultOpacity);}"
                 )
+            }.onFailure { err ->
+                evaluateJs("if(window.__onLikkhoNativePickerCancelled){window.__onLikkhoNativePickerCancelled();}")
+                Toast.makeText(
+                    context,
+                    err.message ?: "Unable to insert selected image.",
+                    Toast.LENGTH_SHORT
+                ).show()
             }
             isProcessingNativeMedia = false
         }
@@ -250,7 +263,10 @@ fun CanvasWebViewScreen(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
         activityHost.onSystemPickerStateChanged(false)
-        if (uri == null) return@rememberLauncherForActivityResult
+        if (uri == null) {
+            evaluateJs("if(window.__onLikkhoNativePickerCancelled){window.__onLikkhoNativePickerCancelled();}")
+            return@rememberLauncherForActivityResult
+        }
         isProcessingNativeMedia = true
         scope.launch {
             runCatching {
@@ -272,6 +288,13 @@ fun CanvasWebViewScreen(
                         JSONObject.quote(audioObj.toJson().toString())
                     });}"
                 )
+            }.onFailure { err ->
+                evaluateJs("if(window.__onLikkhoNativePickerCancelled){window.__onLikkhoNativePickerCancelled();}")
+                Toast.makeText(
+                    context,
+                    err.message ?: "Unable to attach selected audio.",
+                    Toast.LENGTH_SHORT
+                ).show()
             }
             isProcessingNativeMedia = false
         }
@@ -304,7 +327,17 @@ fun CanvasWebViewScreen(
                 val file = repository.resolveExistingImageFile(clean) ?: return@PathHandler null
                 val mime = guessImageMimeFromHeaderOrExt(clean, file)
                 runCatching {
-                    WebResourceResponse(mime, null, BufferedInputStream(FileInputStream(file)))
+                    WebResourceResponse(
+                        mime,
+                        null,
+                        200,
+                        "OK",
+                        mapOf(
+                            "Access-Control-Allow-Origin" to "*",
+                            "Cache-Control" to "no-store"
+                        ),
+                        BufferedInputStream(FileInputStream(file))
+                    )
                 }.getOrNull()
             })
             .addPathHandler("/likkho-audio/", WebViewAssetLoader.PathHandler { path ->
@@ -318,7 +351,17 @@ fun CanvasWebViewScreen(
                     ?: return@PathHandler null
                 val mime = guessAudioMimeFromExt(file.name)
                 runCatching {
-                    WebResourceResponse(mime, null, BufferedInputStream(FileInputStream(file)))
+                    WebResourceResponse(
+                        mime,
+                        null,
+                        200,
+                        "OK",
+                        mapOf(
+                            "Access-Control-Allow-Origin" to "*",
+                            "Cache-Control" to "no-store"
+                        ),
+                        BufferedInputStream(FileInputStream(file))
+                    )
                 }.getOrNull()
             })
             .addPathHandler("/", WebViewAssetLoader.PathHandler { path ->
@@ -432,7 +475,13 @@ fun CanvasWebViewScreen(
                                 mainHandler.post {
                                     pendingImageTargetKind = "canvas_new"
                                     activityHost.onSystemPickerStateChanged(true)
-                                    galleryImageLauncher.launch("image/*")
+                                    runCatching {
+                                        galleryImageLauncher.launch("image/*")
+                                    }.onFailure {
+                                        activityHost.onSystemPickerStateChanged(false)
+                                        evaluateJs("if(window.__onLikkhoNativePickerCancelled){window.__onLikkhoNativePickerCancelled();}")
+                                        Toast.makeText(context, "Unable to open gallery picker.", Toast.LENGTH_SHORT).show()
+                                    }
                                 }
                             }
 
@@ -441,7 +490,13 @@ fun CanvasWebViewScreen(
                                 mainHandler.post {
                                     pendingImageTargetKind = "canvas_bg"
                                     activityHost.onSystemPickerStateChanged(true)
-                                    galleryImageLauncher.launch("image/*")
+                                    runCatching {
+                                        galleryImageLauncher.launch("image/*")
+                                    }.onFailure {
+                                        activityHost.onSystemPickerStateChanged(false)
+                                        evaluateJs("if(window.__onLikkhoNativePickerCancelled){window.__onLikkhoNativePickerCancelled();}")
+                                        Toast.makeText(context, "Unable to open gallery picker.", Toast.LENGTH_SHORT).show()
+                                    }
                                 }
                             }
 
@@ -466,7 +521,13 @@ fun CanvasWebViewScreen(
                             fun pickAudioAttachment() {
                                 mainHandler.post {
                                     activityHost.onSystemPickerStateChanged(true)
-                                    audioAttachmentLauncher.launch(arrayOf("audio/*"))
+                                    runCatching {
+                                        audioAttachmentLauncher.launch(arrayOf("audio/*"))
+                                    }.onFailure {
+                                        activityHost.onSystemPickerStateChanged(false)
+                                        evaluateJs("if(window.__onLikkhoNativePickerCancelled){window.__onLikkhoNativePickerCancelled();}")
+                                        Toast.makeText(context, "Unable to open audio picker.", Toast.LENGTH_SHORT).show()
+                                    }
                                 }
                             }
 
@@ -667,11 +728,27 @@ fun CanvasWebViewScreen(
                         ): Boolean {
                             pendingFileChooserCallback?.onReceiveValue(null)
                             pendingFileChooserCallback = filePathCallback
-                            val intent = runCatching {
-                                fileChooserParams?.createIntent()
-                            }.getOrNull() ?: Intent(Intent.ACTION_GET_CONTENT).apply {
-                                type = "*/*"
-                                addCategory(Intent.CATEGORY_OPENABLE)
+                            val acceptTypes = fileChooserParams?.acceptTypes
+                                ?.mapNotNull { it.trim().takeIf { s -> s.isNotEmpty() } }
+                                .orEmpty()
+                            val hasExtensionFilter = acceptTypes.any { it.startsWith(".") } ||
+                                acceptTypes.isEmpty() ||
+                                acceptTypes.contains("*/*")
+                            val intent = if (hasExtensionFilter) {
+                                Intent(Intent.ACTION_GET_CONTENT).apply {
+                                    addCategory(Intent.CATEGORY_OPENABLE)
+                                    type = "*/*"
+                                    if (fileChooserParams?.mode == FileChooserParams.MODE_OPEN_MULTIPLE) {
+                                        putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+                                    }
+                                }
+                            } else {
+                                runCatching {
+                                    fileChooserParams?.createIntent()
+                                }.getOrNull() ?: Intent(Intent.ACTION_GET_CONTENT).apply {
+                                    type = "*/*"
+                                    addCategory(Intent.CATEGORY_OPENABLE)
+                                }
                             }
                             activityHost.onSystemPickerStateChanged(true)
                             return try {
@@ -680,6 +757,7 @@ fun CanvasWebViewScreen(
                             } catch (_: Exception) {
                                 activityHost.onSystemPickerStateChanged(false)
                                 pendingFileChooserCallback = null
+                                evaluateJs("if(window.__onLikkhoNativePickerCancelled){window.__onLikkhoNativePickerCancelled();}")
                                 false
                             }
                         }
@@ -772,24 +850,25 @@ private fun NativePfpStudioDialog(
     var selectedBgHex by remember { mutableStateOf("#3366cc") }
     var selectedFgHex by remember { mutableStateOf("#ffffff") }
     var isSaving by remember { mutableStateOf(false) }
+    var errorMsg by remember { mutableStateOf<String?>(null) }
 
     val pfpBgSwatches = remember {
         listOf("#3366cc", "#14866d", "#b32424", "#202122", "#6b4ba1", "#ac6600", "#f8f9fa", "#ffffff")
     }
 
     LaunchedEffect(pickedPhotoUri, currentPfpUrl) {
+        errorMsg = null
         val bmp = withContext(Dispatchers.IO) {
-            runCatching {
-                when {
-                    pickedPhotoUri != null -> context.contentResolver.openInputStream(pickedPhotoUri!!)?.use { s ->
-                        decodeSampledBitmapStream(s, 720)
-                    }
-                    currentPfpUrl.isNotBlank() -> repository.resolveExistingImageFile(currentPfpUrl)?.let { file ->
-                        decodeSampledBitmapFile(file.absolutePath, 720)
-                    }
-                    else -> null
+            when {
+                pickedPhotoUri != null -> mediaEngine.decodePreviewBitmapFromUri(pickedPhotoUri!!, 720)
+                currentPfpUrl.isNotBlank() -> repository.resolveExistingImageFile(currentPfpUrl)?.let { file ->
+                    mediaEngine.decodePreviewBitmapFromFile(file, 720)
                 }
-            }.getOrNull()
+                else -> null
+            }
+        }
+        if (pickedPhotoUri != null && bmp == null) {
+            errorMsg = "Could not preview selected photo."
         }
         previewBitmap = bmp?.asImageBitmap()
     }
@@ -799,6 +878,7 @@ private fun NativePfpStudioDialog(
     ) { uri ->
         onSystemPickerStateChanged(false)
         if (uri != null) {
+            errorMsg = null
             pickedPhotoUri = uri
             zoom = 1f
             panX = 0f
@@ -829,8 +909,9 @@ private fun NativePfpStudioDialog(
                 bgColor = if (canSave) colors.accent else colors.muted,
                 onClick = {
                     isSaving = true
+                    errorMsg = null
                     scope.launch {
-                        val res = withContext(Dispatchers.IO) {
+                        val result = withContext(Dispatchers.IO) {
                             runCatching {
                                 if (tabIndex == 1) {
                                     mediaEngine.renderEmojiTextPfp(
@@ -854,11 +935,15 @@ private fun NativePfpStudioDialog(
                                         panYFraction = panY
                                     )
                                 }
-                            }.getOrNull()
+                            }
                         }
                         isSaving = false
-                        if (res != null) {
+                        result.onSuccess { res ->
                             onResult(res.assetUrl)
+                        }.onFailure { err ->
+                            val msg = err.message ?: "Could not save PFP image."
+                            errorMsg = msg
+                            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                         }
                     }
                 }
@@ -961,7 +1046,12 @@ private fun NativePfpStudioDialog(
                             .background(colors.surface)
                             .clickable {
                                 onSystemPickerStateChanged(true)
-                                pickerLauncher.launch("image/*")
+                                runCatching {
+                                    pickerLauncher.launch("image/*")
+                                }.onFailure {
+                                    onSystemPickerStateChanged(false)
+                                    errorMsg = "Unable to open photo picker."
+                                }
                             },
                         contentAlignment = Alignment.Center
                     ) {
@@ -1073,6 +1163,10 @@ private fun NativePfpStudioDialog(
                 }
             }
         }
+        errorMsg?.let { msg ->
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(msg, fontSize = 11.sp, color = colors.crimson)
+        }
     }
 }
 
@@ -1105,7 +1199,7 @@ private fun NativeImageStudioDialog(
     LaunchedEffect(request.sourceRef) {
         val bmp = withContext(Dispatchers.IO) {
             repository.resolveExistingImageFile(request.sourceRef)?.let { file ->
-                decodeSampledBitmapFile(file.absolutePath, 720)
+                mediaEngine.decodePreviewBitmapFromFile(file, 720)
             }
         }
         sourceBitmap = bmp?.asImageBitmap()
@@ -1410,30 +1504,6 @@ private fun FilterChipBox(
     ) {
         Text(label, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = if (active) Color.White else text)
     }
-}
-
-private fun decodeSampledBitmapStream(stream: java.io.InputStream, maxDim: Int): Bitmap? {
-    val bytes = stream.readBytes()
-    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-    var sample = 1
-    val maxSide = maxOf(bounds.outWidth, bounds.outHeight)
-    while (maxSide / (sample * 2) >= maxDim) sample *= 2
-    return BitmapFactory.decodeByteArray(
-        bytes,
-        0,
-        bytes.size,
-        BitmapFactory.Options().apply { inSampleSize = sample }
-    )
-}
-
-private fun decodeSampledBitmapFile(path: String, maxDim: Int): Bitmap? {
-    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-    BitmapFactory.decodeFile(path, bounds)
-    var sample = 1
-    val maxSide = maxOf(bounds.outWidth, bounds.outHeight)
-    while (maxSide / (sample * 2) >= maxDim) sample *= 2
-    return BitmapFactory.decodeFile(path, BitmapFactory.Options().apply { inSampleSize = sample })
 }
 
 private fun guessWebAssetMime(path: String): String {

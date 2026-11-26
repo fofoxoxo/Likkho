@@ -50,13 +50,39 @@ class LegacyWebViewMigrationHelper(
 
     fun needsMigration(): Boolean {
         if (prefs.getBoolean(KEY_MIGRATED_V1, false)) return false
-        val hasPrimaryLogs = repository.loadLogs(VaultMode.PRIMARY).isNotEmpty()
-        val hasPrimaryPin = repository.hasPrimaryPasscode()
-        if (hasPrimaryLogs || hasPrimaryPin) {
+        if (repository.hasEncryptedLogsFile(VaultMode.PRIMARY) || repository.hasSecurityConfigFile()) {
+            prefs.edit().putBoolean(KEY_MIGRATED_V1, true).apply()
+            return false
+        }
+        if (!hasLegacyStorageArtifactsOnDisk()) {
             prefs.edit().putBoolean(KEY_MIGRATED_V1, true).apply()
             return false
         }
         return true
+    }
+
+    private fun hasLegacyStorageArtifactsOnDisk(): Boolean {
+        return try {
+            val internalDir = File(appContext.filesDir, "likkho_internal_data")
+            if (internalDir.exists() && internalDir.isDirectory &&
+                internalDir.listFiles()?.any { it.isFile && it.length() > 0L } == true
+            ) {
+                return true
+            }
+            val dataRoot = appContext.filesDir.parentFile ?: return false
+            val legacyPaths = listOf(
+                "app_webview/Default/Local Storage/leveldb",
+                "app_webview/Local Storage/leveldb",
+                "app_webview/Default/IndexedDB",
+                "app_webview/IndexedDB"
+            )
+            legacyPaths.any { rel ->
+                val dir = File(dataRoot, rel)
+                dir.exists() && dir.isDirectory && (dir.list()?.isNotEmpty() == true)
+            }
+        } catch (_: Exception) {
+            false
+        }
     }
 
     @SuppressLint("SetJavaScriptEnabled")

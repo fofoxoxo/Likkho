@@ -59,6 +59,10 @@ class NativeVaultRepository(context: Context) {
     private val safPrefs: SharedPreferences =
         appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     private val secureRandom = SecureRandom()
+    private val securityLock = Any()
+
+    @Volatile
+    private var cachedSecurityJson: JSONObject? = null
 
     val mediaImagesDir: File
         get() = File(appContext.filesDir, MEDIA_IMAGES_DIR).apply { if (!exists()) mkdirs() }
@@ -145,6 +149,11 @@ class NativeVaultRepository(context: Context) {
     }
 
     // ==================== Diary Logs ====================
+
+    fun hasEncryptedLogsFile(mode: VaultMode): Boolean {
+        val f = File(vaultDir(mode), FILE_LOGS)
+        return f.exists() && f.isFile && f.length() > 0L
+    }
 
     fun loadLogs(mode: VaultMode): List<DiaryLog> {
         val raw = readEncryptedText(File(vaultDir(mode), FILE_LOGS)) ?: return emptyList()
@@ -423,25 +432,62 @@ class NativeVaultRepository(context: Context) {
 
     // ==================== App Passcode & Covert Decoy Passcode ====================
 
+    private fun securityConfigFile(): File = File(appContext.filesDir, "$VAULTS_ROOT_DIR/$FILE_SECURITY")
+
+    fun hasSecurityConfigFile(): Boolean {
+        val f = securityConfigFile()
+        return f.exists() && f.isFile && f.length() > 0L
+    }
+
+    /**
+     * Fast startup hint backed by SharedPreferences + security file existence.
+     * Returns false immediately when no passcode has ever been written.
+     */
+    fun isPasscodeProtectionFastHint(): Boolean {
+        if (!hasSecurityConfigFile()) return false
+        return if (safPrefs.contains(KEY_PASSCODE_PROTECTED)) {
+            safPrefs.getBoolean(KEY_PASSCODE_PROTECTED, false)
+        } else {
+            isAppPasscodeProtectionEnabled()
+        }
+    }
+
     private fun readSecurityJson(): JSONObject {
-        val raw = readEncryptedText(File(appContext.filesDir, "$VAULTS_ROOT_DIR/$FILE_SECURITY"))
-        return try {
-            if (!raw.isNullOrBlank()) JSONObject(raw) else JSONObject()
-        } catch (_: Exception) {
-            JSONObject()
+        synchronized(securityLock) {
+            cachedSecurityJson?.let { cached ->
+                return JSONObject(cached.toString())
+            }
+            val file = securityConfigFile()
+            if (!file.exists() || !file.isFile || file.length() == 0L) {
+                val empty = JSONObject()
+                cachedSecurityJson = empty
+                return JSONObject()
+            }
+            val raw = readEncryptedText(file)
+            val parsed = try {
+                if (!raw.isNullOrBlank()) JSONObject(raw) else JSONObject()
+            } catch (_: Exception) {
+                JSONObject()
+            }
+            cachedSecurityJson = parsed
+            return JSONObject(parsed.toString())
         }
     }
 
     private fun writeSecurityJson(obj: JSONObject): Boolean {
-        val root = File(appContext.filesDir, VAULTS_ROOT_DIR).apply { if (!exists()) mkdirs() }
-        val ok = writeEncryptedText(File(root, FILE_SECURITY), obj.toString())
-        val hasAnyPin = obj.optString("primaryPinHash").isNotEmpty() || obj.optString("decoyPinHash").isNotEmpty()
-        safPrefs.edit().putBoolean(KEY_PASSCODE_PROTECTED, hasAnyPin).apply()
-        return ok
+        synchronized(securityLock) {
+            val root = File(appContext.filesDir, VAULTS_ROOT_DIR).apply { if (!exists()) mkdirs() }
+            val ok = writeEncryptedText(File(root, FILE_SECURITY), obj.toString())
+            cachedSecurityJson = JSONObject(obj.toString())
+            val hasAnyPin = obj.optString("primaryPinHash").isNotEmpty() || obj.optString("decoyPinHash").isNotEmpty()
+            safPrefs.edit().putBoolean(KEY_PASSCODE_PROTECTED, hasAnyPin).apply()
+            return ok
+        }
     }
 
     fun isAppPasscodeProtectionEnabled(): Boolean {
-        return hasPrimaryPasscode() || hasDecoyPasscode()
+        val obj = readSecurityJson()
+        return obj.optString("primaryPinHash").isNotEmpty() || obj.optString("decoyPinHash").isNotEmpty()
     }
 
     fun hasPrimaryPasscode(): Boolean = readSecurityJson().optString("primaryPinHash").isNotEmpty()
@@ -638,6 +684,9 @@ class NativeVaultRepository(context: Context) {
     // ==================== Clear All Data ====================
 
     fun clearAllVaultData() {
+        synchronized(securityLock) {
+            cachedSecurityJson = null
+        }
         File(appContext.filesDir, VAULTS_ROOT_DIR).deleteRecursively()
         mediaImagesDir.deleteRecursively()
         mediaAudioDir.deleteRecursively()
@@ -650,20 +699,30 @@ class NativeVaultRepository(context: Context) {
     // ==================== At-Rest Encryption Helpers (AndroidKeyStore AES-GCM) ====================
 
     private fun getOrCreateMasterKey(): SecretKey {
-        val ks = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
-        (ks.getKey(KEYSTORE_ALIAS, null) as? SecretKey)?.let { return it }
+        cachedMasterKey?.let { return it }
+        synchronized(masterKeyLock) {
+            cachedMasterKey?.let { return it }
+            val ks = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+            val existing = ks.getKey(KEYSTORE_ALIAS, null) as? SecretKey
+            if (existing != null) {
+                cachedMasterKey = existing
+                return existing
+            }
 
-        val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
-        val spec = KeyGenParameterSpec.Builder(
-            KEYSTORE_ALIAS,
-            KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
-        )
-            .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-            .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-            .setKeySize(256)
-            .build()
-        generator.init(spec)
-        return generator.generateKey()
+            val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
+            val spec = KeyGenParameterSpec.Builder(
+                KEYSTORE_ALIAS,
+                KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
+            )
+                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                .setKeySize(256)
+                .build()
+            generator.init(spec)
+            val created = generator.generateKey()
+            cachedMasterKey = created
+            return created
+        }
     }
 
     private fun writeEncryptedText(targetFile: File, plaintext: String): Boolean {
@@ -735,6 +794,10 @@ class NativeVaultRepository(context: Context) {
         private const val FILE_BACKUP_META = "backup_meta.enc"
         private const val FILE_KEY_HASH = "encryption_key_hash.enc"
         private const val FILE_SECURITY = "app_security.enc"
+
+        private val masterKeyLock = Any()
+        @Volatile
+        private var cachedMasterKey: SecretKey? = null
 
         private const val PIN_KDF_ITERATIONS = 50_000
         private const val ASSET_MEDIA_PREFIX = "https://appassets.androidplatform.net/likkho-media/"

@@ -8,6 +8,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
+import android.graphics.ImageDecoder
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Typeface
@@ -22,6 +23,7 @@ import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.ByteArrayInputStream
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
@@ -93,40 +95,27 @@ class NativeMediaEngine(
         val resolver = appContext.contentResolver
         val rawMime = (resolver.getType(uri) ?: "").lowercase()
         val originalSizeBytes = queryUriSize(resolver, uri)
-
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        resolver.openInputStream(uri)?.use { stream ->
-            BitmapFactory.decodeStream(BufferedInputStream(stream, IO_BUFFER_SIZE), null, bounds)
-        } ?: throw IOException("Unable to open image stream.")
-
-        val srcW = bounds.outWidth
-        val srcH = bounds.outHeight
-        if (srcW <= 0 || srcH <= 0) {
-            throw IOException("Unsupported or corrupted image file.")
+        val stagedFile = stageUriToTempCacheFile(uri, "img_stage")
+        try {
+            val decoded = decodeBitmapFromFileWithFallback(stagedFile, maxDimension)
+            val resolvedOriginalSize = when {
+                originalSizeBytes > 0L -> originalSizeBytes
+                stagedFile.length() > 0L -> stagedFile.length()
+                else -> 0L
+            }
+            return processAndPersistBitmap(
+                decodedBitmap = decoded.bitmap,
+                exifOrientation = decoded.pendingExifOrientation,
+                maxDimension = maxDimension,
+                preferPng = rawMime == "image/png" || decoded.bitmap.hasAlpha(),
+                quality = 88,
+                originalSizeBytes = resolvedOriginalSize,
+                preferredId = preferredId,
+                idPrefix = "img_blob"
+            )
+        } finally {
+            runCatching { stagedFile.delete() }
         }
-
-        val exifOrientation = readExifOrientationFromUri(resolver, uri)
-        val sampleSize = calculateInSampleSize(srcW, srcH, maxDimension)
-
-        val decodeOpts = BitmapFactory.Options().apply {
-            inSampleSize = sampleSize
-            inPreferredConfig = Bitmap.Config.ARGB_8888
-            inMutable = false
-        }
-        val sampledBitmap = resolver.openInputStream(uri)?.use { stream ->
-            BitmapFactory.decodeStream(BufferedInputStream(stream, IO_BUFFER_SIZE), null, decodeOpts)
-        } ?: throw IOException("Failed to decode image.")
-
-        return processAndPersistBitmap(
-            decodedBitmap = sampledBitmap,
-            exifOrientation = exifOrientation,
-            maxDimension = maxDimension,
-            preferPng = rawMime == "image/png" || sampledBitmap.hasAlpha(),
-            quality = 88,
-            originalSizeBytes = if (originalSizeBytes > 0L) originalSizeBytes else 0L,
-            preferredId = preferredId,
-            idPrefix = "img_blob"
-        )
     }
 
     fun importImageFromBytes(
@@ -200,40 +189,48 @@ class NativeMediaEngine(
     ): ImportedMediaResult {
         val resolver = appContext.contentResolver
         val originalSize = queryUriSize(resolver, uri)
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        resolver.openInputStream(uri)?.use { stream ->
-            BitmapFactory.decodeStream(BufferedInputStream(stream, IO_BUFFER_SIZE), null, bounds)
-        } ?: throw IOException("Unable to read PFP image bounds.")
-
-        val exifOrientation = readExifOrientationFromUri(resolver, uri)
+        val stagedFile = stageUriToTempCacheFile(uri, "pfp_stage")
         val decodeTarget = max(outputSizePx * 2, 1024)
-        val sampleSize = calculateInSampleSize(bounds.outWidth, bounds.outHeight, decodeTarget)
-
-        val sampled = resolver.openInputStream(uri)?.use { stream ->
-            BitmapFactory.decodeStream(
-                BufferedInputStream(stream, IO_BUFFER_SIZE),
-                null,
-                BitmapFactory.Options().apply {
-                    inSampleSize = sampleSize
-                    inPreferredConfig = Bitmap.Config.ARGB_8888
-                }
-            )
-        } ?: throw IOException("Unable to decode PFP image.")
-
-        val oriented = applyExifOrientation(sampled, exifOrientation)
+        var sampled: Bitmap? = null
+        var oriented: Bitmap? = null
         return try {
+            val decoded = decodeBitmapFromFileWithFallback(stagedFile, decodeTarget)
+            sampled = decoded.bitmap
+            oriented = applyExifOrientation(decoded.bitmap, decoded.pendingExifOrientation)
+            val resolvedOriginalSize = if (originalSize > 0L) originalSize else stagedFile.length()
             renderSquareCroppedPfp(
                 source = oriented,
                 zoom = zoom,
                 panXFraction = panXFraction,
                 panYFraction = panYFraction,
                 outputSizePx = outputSizePx,
-                originalSizeBytes = originalSize
+                originalSizeBytes = resolvedOriginalSize
             )
         } finally {
-            if (oriented !== sampled) sampled.recycle()
-            oriented.recycle()
+            if (oriented != null && oriented !== sampled) oriented.recycle()
+            sampled?.recycle()
+            runCatching { stagedFile.delete() }
         }
+    }
+
+    fun decodePreviewBitmapFromUri(uri: Uri, maxDim: Int = DEFAULT_CANVAS_PREVIEW_PX): Bitmap? {
+        val stagedFile = runCatching { stageUriToTempCacheFile(uri, "prev_stage") }.getOrNull() ?: return null
+        return try {
+            decodePreviewBitmapFromFile(stagedFile, maxDim)
+        } finally {
+            runCatching { stagedFile.delete() }
+        }
+    }
+
+    fun decodePreviewBitmapFromFile(file: File, maxDim: Int = DEFAULT_CANVAS_PREVIEW_PX): Bitmap? {
+        return runCatching {
+            val decoded = decodeBitmapFromFileWithFallback(file, maxDim)
+            val oriented = applyExifOrientation(decoded.bitmap, decoded.pendingExifOrientation)
+            if (oriented !== decoded.bitmap) {
+                decoded.bitmap.recycle()
+            }
+            oriented
+        }.getOrNull()
     }
 
     fun cropSquarePfpFromMediaId(
@@ -663,18 +660,9 @@ class NativeMediaEngine(
         val tmpFile = File(destFile.parentFile, "${destFile.name}.tmp")
 
         try {
-            val inp = resolver.openInputStream(uri)
-                ?: throw IOException("Unable to open selected audio file.")
-            inp.use { stream ->
-                BufferedOutputStream(FileOutputStream(tmpFile), IO_BUFFER_SIZE).use { out ->
-                    val buf = ByteArray(IO_BUFFER_SIZE)
-                    while (true) {
-                        val read = stream.read(buf)
-                        if (read == -1) break
-                        out.write(buf, 0, read)
-                    }
-                    out.flush()
-                }
+            copyUriToFile(uri, tmpFile, "Unable to open selected audio file.")
+            if (!tmpFile.exists() || tmpFile.length() <= 0L) {
+                throw IOException("Selected audio file is empty.")
             }
             if (!tmpFile.renameTo(destFile)) {
                 tmpFile.copyTo(destFile, overwrite = true)
@@ -827,11 +815,115 @@ class NativeMediaEngine(
         }
     }
 
-    private fun readExifOrientationFromUri(resolver: ContentResolver, uri: Uri): Int {
+    private data class DecodedBitmapWithExif(
+        val bitmap: Bitmap,
+        val pendingExifOrientation: Int
+    )
+
+    private fun stageUriToTempCacheFile(uri: Uri, prefix: String): File {
+        val stageDir = File(appContext.cacheDir, "likkho_media_stage").apply { if (!exists()) mkdirs() }
+        val tmp = File(stageDir, "${prefix}_${System.currentTimeMillis()}_${UUID.randomUUID().toString().take(6)}.tmp")
         return try {
-            resolver.openInputStream(uri)?.use { stream ->
-                readExifOrientationFromStream(stream)
-            } ?: ExifInterface.ORIENTATION_NORMAL
+            copyUriToFile(uri, tmp, "Unable to read selected file.")
+            if (!tmp.exists() || tmp.length() <= 0L) {
+                throw IOException("Selected file is empty.")
+            }
+            tmp
+        } catch (err: Throwable) {
+            runCatching { tmp.delete() }
+            throw err
+        }
+    }
+
+    private fun copyUriToFile(uri: Uri, targetFile: File, emptyErrorMessage: String) {
+        targetFile.parentFile?.let { if (!it.exists()) it.mkdirs() }
+        val resolver = appContext.contentResolver
+        val stream = runCatching { resolver.openInputStream(uri) }.getOrNull()
+        if (stream != null) {
+            stream.use { input ->
+                BufferedOutputStream(FileOutputStream(targetFile), IO_BUFFER_SIZE).use { out ->
+                    val buf = ByteArray(IO_BUFFER_SIZE)
+                    while (true) {
+                        val read = input.read(buf)
+                        if (read == -1) break
+                        out.write(buf, 0, read)
+                    }
+                    out.flush()
+                }
+            }
+            return
+        }
+
+        val pfd = runCatching { resolver.openFileDescriptor(uri, "r") }.getOrNull()
+            ?: throw IOException(emptyErrorMessage)
+        pfd.use { fd ->
+            FileInputStream(fd.fileDescriptor).use { input ->
+                BufferedOutputStream(FileOutputStream(targetFile), IO_BUFFER_SIZE).use { out ->
+                    val buf = ByteArray(IO_BUFFER_SIZE)
+                    while (true) {
+                        val read = input.read(buf)
+                        if (read == -1) break
+                        out.write(buf, 0, read)
+                    }
+                    out.flush()
+                }
+            }
+        }
+    }
+
+    private fun decodeBitmapFromFileWithFallback(file: File, maxDimension: Int): DecodedBitmapWithExif {
+        val safeMax = maxDimension.coerceIn(128, 4096)
+        val exifOrientation = readExifOrientationFromFile(file)
+
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(file.absolutePath, bounds)
+        if (bounds.outWidth > 0 && bounds.outHeight > 0) {
+            var sampleSize = calculateInSampleSize(bounds.outWidth, bounds.outHeight, safeMax)
+            for (attempt in 0..2) {
+                try {
+                    val decodeOpts = BitmapFactory.Options().apply {
+                        inSampleSize = sampleSize
+                        inPreferredConfig = Bitmap.Config.ARGB_8888
+                        inMutable = false
+                    }
+                    val bmp = BitmapFactory.decodeFile(file.absolutePath, decodeOpts)
+                    if (bmp != null) {
+                        return DecodedBitmapWithExif(bmp, exifOrientation)
+                    }
+                    break
+                } catch (_: OutOfMemoryError) {
+                    sampleSize *= 2
+                }
+            }
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val source = ImageDecoder.createSource(file)
+            val decoded = ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
+                decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                val srcW = info.size.width
+                val srcH = info.size.height
+                if (srcW > 0 && srcH > 0) {
+                    val scale = computeDownscaleFactor(srcW, srcH, safeMax)
+                    if (scale < 0.999f) {
+                        decoder.setTargetSize(
+                            max(1, (srcW * scale).roundToInt()),
+                            max(1, (srcH * scale).roundToInt())
+                        )
+                    }
+                }
+            }
+            // ImageDecoder applies EXIF rotation automatically on API 28+
+            return DecodedBitmapWithExif(decoded, ExifInterface.ORIENTATION_NORMAL)
+        }
+
+        throw IOException("Unsupported or corrupted image file.")
+    }
+
+    private fun readExifOrientationFromFile(file: File): Int {
+        return try {
+            val exif = ExifInterface(file.absolutePath)
+            exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
         } catch (_: Exception) {
             ExifInterface.ORIENTATION_NORMAL
         }

@@ -1897,17 +1897,6 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
     }
   };
 
-  const triggerAndroidMediaPermission = () => {
-    markExternalFilePickerPending();
-    try {
-      if (window.LikkhoNative?.requestFilesAndMediaPermission) {
-        window.LikkhoNative.requestFilesAndMediaPermission();
-      }
-    } catch {
-      // ignore
-    }
-  };
-
   const handleMediaImagePicked = async (e: React.ChangeEvent<HTMLInputElement>) => {
     clearExternalFilePickerPending();
     const file = e.target.files?.[0];
@@ -2533,7 +2522,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
               onMouseDown={preventFocusLoss}
               onClick={() => {
                 saveCurrentSelection();
-                triggerAndroidMediaPermission();
+                markExternalFilePickerPending();
                 ttfFontInputRef.current?.click();
               }}
               className="flex h-8 items-center gap-1.5 border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3 text-xs font-semibold hover:border-[#3366cc]"
@@ -2649,7 +2638,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
                   window.LikkhoCanvasBridge.pickCanvasImage();
                   return;
                 }
-                triggerAndroidMediaPermission();
+                markExternalFilePickerPending();
                 mediaImageInputRef.current?.click();
               }}
               className="flex h-8 items-center gap-1.5 bg-[#3366cc] px-3 text-xs font-semibold text-white"
@@ -2667,7 +2656,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
                   window.LikkhoCanvasBridge.pickAudioAttachment();
                   return;
                 }
-                triggerAndroidMediaPermission();
+                markExternalFilePickerPending();
                 mediaAudioInputRef.current?.click();
               }}
               className="flex h-8 items-center gap-1.5 border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-3 text-xs font-semibold text-[var(--wiki-text)] hover:border-[#3366cc]"
@@ -2839,7 +2828,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
                   window.LikkhoCanvasBridge.pickCanvasBgImage();
                   return;
                 }
-                triggerAndroidMediaPermission();
+                markExternalFilePickerPending();
                 bgFileInputRef.current?.click();
               }}
               className="flex h-8 shrink-0 items-center gap-1.5 border border-[var(--wiki-border)] bg-[var(--wiki-surface)] px-2.5 text-xs font-semibold text-[var(--wiki-text)] hover:border-[#3366cc]"
@@ -2953,7 +2942,6 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
           onMouseDown={preventFocusLoss}
           onClick={() => {
             saveCurrentSelection();
-            triggerAndroidMediaPermission();
             const next = !showMediaPickerMenu;
             closeAllPopovers();
             setShowMediaPickerMenu(next);
@@ -3174,7 +3162,6 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
           type="button"
           onMouseDown={preventFocusLoss}
           onClick={() => {
-            triggerAndroidMediaPermission();
             const next = !showBgControl;
             closeAllPopovers();
             setShowBgControl(next);
@@ -3325,7 +3312,7 @@ export const RichTextToolbar: React.FC<RichTextToolbarProps> = ({
           onMouseDown={preventFocusLoss}
           onClick={() => {
             saveCurrentSelection();
-            triggerAndroidMediaPermission();
+            markExternalFilePickerPending();
             importDocInputRef.current?.click();
           }}
           className={getBtnClass(false)}

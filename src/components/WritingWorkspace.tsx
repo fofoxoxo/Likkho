@@ -178,7 +178,10 @@ const CanvasDraggableImageCard: React.FC<CanvasDraggableImageCardProps> = ({
   const [isLoaded, setIsLoaded] = useState<boolean>(false);
   const [hasError, setHasError] = useState<boolean>(false);
 
-  // Viewport Virtualization: unload off-screen GPU textures (>360px away) and re-hydrate smoothly near viewport
+  const isLoadedRef = useRef<boolean>(false);
+  isLoadedRef.current = isLoaded;
+
+  // Viewport Virtualization: widen margin and keep loaded textures alive across keyboard resizes
   useEffect(() => {
     const el = cardRef.current;
     if (!el || typeof IntersectionObserver === 'undefined') {
@@ -190,12 +193,16 @@ const CanvasDraggableImageCard: React.FC<CanvasDraggableImageCardProps> = ({
       (entries) => {
         const entry = entries[0];
         if (entry) {
-          setIsNearViewport(entry.isIntersecting);
+          if (entry.isIntersecting || isLoadedRef.current) {
+            setIsNearViewport(true);
+          } else {
+            setIsNearViewport(false);
+          }
         }
       },
       {
         root: scrollRootRef.current || null,
-        rootMargin: '360px 0px',
+        rootMargin: '900px 0px',
         threshold: 0,
       }
     );
@@ -400,6 +407,24 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
       layer: a.layer ?? 'foreground',
     }))
   );
+
+  // Live synchronous refs so async native bridge callbacks & snapshot persistence never read stale React closures
+  const headingRef = useRef<string>(heading);
+  headingRef.current = heading;
+  const pfpDataUrlRef = useRef<string | null>(pfpDataUrl);
+  pfpDataUrlRef.current = pfpDataUrl;
+  const reminderAtRef = useRef<number | null>(reminderAt);
+  reminderAtRef.current = reminderAt;
+  const diaryLockPinRef = useRef<string | null>(diaryLockPin);
+  diaryLockPinRef.current = diaryLockPin;
+  const canvasBgDataUrlRef = useRef<string | null>(canvasBgDataUrl);
+  canvasBgDataUrlRef.current = canvasBgDataUrl;
+  const canvasBgOpacityRef = useRef<number>(canvasBgOpacity);
+  canvasBgOpacityRef.current = canvasBgOpacity;
+  const canvasImagesRef = useRef<CanvasDraggableImage[]>(canvasImages);
+  canvasImagesRef.current = canvasImages;
+  const audioAttachmentsRef = useRef<CanvasAudioAttachment[]>(audioAttachments);
+  audioAttachmentsRef.current = audioAttachments;
 
   // Full-Canvas Undo & Redo History Stack
   const historyStackRef = useRef<CanvasHistorySnapshot[]>([]);
@@ -618,7 +643,9 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
 
     window.__onLikkhoNativePfpResult = (assetUrl: string) => {
       clearExternalFilePickerPending();
+      setPendingCanvasMediaSkeleton(null);
       const nextUrl = assetUrl && assetUrl.trim() ? assetUrl.trim() : null;
+      pfpDataUrlRef.current = nextUrl;
       setPfpDataUrl(nextUrl);
       setRawSelectedImage(null);
       setShowPfpStudioModal(false);
@@ -636,12 +663,15 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
       opacity: number
     ) => {
       clearExternalFilePickerPending();
+      setPendingCanvasMediaSkeleton(null);
       if (!assetUrl) return;
       const safeOpacity = opacity > 0 && opacity <= 1 ? opacity : 1;
 
       if (targetKind === 'canvas_bg') {
         const bgOpacity =
           opacity > 0 && opacity < 1 ? opacity : latestStateCallbackRef.current.canvasBgOpacity;
+        canvasBgDataUrlRef.current = assetUrl;
+        canvasBgOpacityRef.current = bgOpacity;
         setCanvasBgDataUrl(assetUrl);
         setCanvasBgOpacity(bgOpacity);
         latestStateCallbackRef.current.pushSnapshot({
@@ -671,91 +701,98 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
       }
 
       if (targetKind === 'canvas_edit' && targetItemId) {
-        setCanvasImages((prev) => {
-          const next = prev.map((item) => {
-            if (item.id !== targetItemId) return item;
-            const aspectH =
-              width > 0 && height > 0
-                ? Math.max(40, Math.round((item.width * height) / width))
-                : item.height;
-            return {
-              ...item,
-              dataUrl: assetUrl,
-              opacity: safeOpacity,
-              height: aspectH,
-              sizeBytes: sizeBytes > 0 ? sizeBytes : item.sizeBytes,
-              originalSizeBytes:
-                originalSizeBytes > 0 ? originalSizeBytes : item.originalSizeBytes,
-            };
-          });
-          latestStateCallbackRef.current.pushSnapshot({ canvasImages: next });
-          return next;
+        const prev = canvasImagesRef.current;
+        const next = prev.map((item) => {
+          if (item.id !== targetItemId) return item;
+          const aspectH =
+            width > 0 && height > 0
+              ? Math.max(40, Math.round((item.width * height) / width))
+              : item.height;
+          return {
+            ...item,
+            dataUrl: assetUrl,
+            opacity: safeOpacity,
+            height: aspectH,
+            sizeBytes: sizeBytes > 0 ? sizeBytes : item.sizeBytes,
+            originalSizeBytes:
+              originalSizeBytes > 0 ? originalSizeBytes : item.originalSizeBytes,
+          };
         });
+        canvasImagesRef.current = next;
+        setCanvasImages(next);
         setSelectedCanvasImgId(targetItemId);
+        latestStateCallbackRef.current.pushSnapshot({ canvasImages: next });
         return;
       }
 
       // Default: canvas_new
+      const prev = canvasImagesRef.current;
       const displayW = Math.min(260, Math.max(80, width || 220));
       const displayH =
         width > 0 && height > 0 ? Math.max(48, Math.round((displayW * height) / width)) : 165;
       const newId = `img_${Date.now()}`;
-      setCanvasImages((prev) => {
-        const next: CanvasDraggableImage[] = [
-          ...prev,
-          {
-            id: newId,
-            dataUrl: assetUrl,
-            x: 24 + (prev.length * 18) % 100,
-            y: 36 + (prev.length * 24) % 120,
-            width: displayW,
-            height: displayH,
-            opacity: safeOpacity,
-            rotation: 0,
-            layer: 'foreground',
-            sizeBytes: sizeBytes > 0 ? sizeBytes : undefined,
-            originalSizeBytes: originalSizeBytes > 0 ? originalSizeBytes : undefined,
-          },
-        ];
-        latestStateCallbackRef.current.pushSnapshot({ canvasImages: next });
-        return next;
-      });
+      const next: CanvasDraggableImage[] = [
+        ...prev,
+        {
+          id: newId,
+          dataUrl: assetUrl,
+          x: 24 + (prev.length * 18) % 100,
+          y: 36 + (prev.length * 24) % 120,
+          width: displayW,
+          height: displayH,
+          opacity: safeOpacity,
+          rotation: 0,
+          layer: 'foreground',
+          sizeBytes: sizeBytes > 0 ? sizeBytes : undefined,
+          originalSizeBytes: originalSizeBytes > 0 ? originalSizeBytes : undefined,
+        },
+      ];
+      canvasImagesRef.current = next;
+      setCanvasImages(next);
       setSelectedCanvasImgId(newId);
       setSelectedCanvasAudioId(null);
+      latestStateCallbackRef.current.pushSnapshot({ canvasImages: next });
     };
 
     window.__onLikkhoNativeAudioPicked = (audioJson: string) => {
       clearExternalFilePickerPending();
+      setPendingCanvasMediaSkeleton(null);
       try {
         const parsed = JSON.parse(audioJson) as CanvasAudioAttachment;
         if (!parsed || !parsed.id) return;
-        setAudioAttachments((prev) => {
-          const next: CanvasAudioAttachment[] = [
-            ...prev,
-            {
-              ...parsed,
-              x: parsed.x ?? 24 + (prev.length * 18) % 90,
-              y: parsed.y ?? 120 + (prev.length * 76) % 260,
-              width: parsed.width ?? 270,
-              height: parsed.height ?? 56,
-              rotation: parsed.rotation ?? 0,
-              playbackRate: parsed.playbackRate ?? 1,
-              layer: parsed.layer ?? 'foreground',
-            },
-          ];
-          latestStateCallbackRef.current.pushSnapshot({ audioAttachments: next });
-          return next;
-        });
+        const prev = audioAttachmentsRef.current;
+        const next: CanvasAudioAttachment[] = [
+          ...prev,
+          {
+            ...parsed,
+            x: parsed.x ?? 24 + (prev.length * 18) % 90,
+            y: parsed.y ?? 120 + (prev.length * 76) % 260,
+            width: parsed.width ?? 270,
+            height: parsed.height ?? 56,
+            rotation: parsed.rotation ?? 0,
+            playbackRate: parsed.playbackRate ?? 1,
+            layer: parsed.layer ?? 'foreground',
+          },
+        ];
+        audioAttachmentsRef.current = next;
+        setAudioAttachments(next);
         latestStateCallbackRef.current.selectAudioCard(parsed.id);
+        latestStateCallbackRef.current.pushSnapshot({ audioAttachments: next });
       } catch (err) {
         console.error('Failed to parse native picked audio:', err);
       }
+    };
+
+    window.__onLikkhoNativePickerCancelled = () => {
+      clearExternalFilePickerPending();
+      setPendingCanvasMediaSkeleton(null);
     };
 
     return () => {
       window.__onLikkhoNativePfpResult = undefined;
       window.__onLikkhoNativeImageResult = undefined;
       window.__onLikkhoNativeAudioPicked = undefined;
+      window.__onLikkhoNativePickerCancelled = undefined;
     };
   }, [canvasOnly]);
 
@@ -805,31 +842,36 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     lastValidHtmlWithSpoilersRef.current = currentHtml;
 
     const snap: CanvasHistorySnapshot = {
-      heading: overrides?.heading !== undefined ? overrides.heading : heading,
-      pfpDataUrl: overrides?.pfpDataUrl !== undefined ? overrides.pfpDataUrl : pfpDataUrl,
+      heading: overrides?.heading !== undefined ? overrides.heading : headingRef.current,
+      pfpDataUrl:
+        overrides?.pfpDataUrl !== undefined ? overrides.pfpDataUrl : pfpDataUrlRef.current,
       contentHtml: currentHtml,
       canvasBgDataUrl:
         overrides?.canvasBgDataUrl !== undefined
           ? overrides.canvasBgDataUrl
-          : canvasBgDataUrl,
+          : canvasBgDataUrlRef.current,
       canvasBgOpacity:
         overrides?.canvasBgOpacity !== undefined
           ? overrides.canvasBgOpacity
-          : canvasBgOpacity,
+          : canvasBgOpacityRef.current,
       canvasImages: JSON.parse(
         JSON.stringify(
-          overrides?.canvasImages !== undefined ? overrides.canvasImages : canvasImages
+          overrides?.canvasImages !== undefined
+            ? overrides.canvasImages
+            : canvasImagesRef.current
         )
       ),
       audioAttachments: JSON.parse(
         JSON.stringify(
           overrides?.audioAttachments !== undefined
             ? overrides.audioAttachments
-            : audioAttachments
+            : audioAttachmentsRef.current
         )
       ),
       diaryLockPin:
-        overrides?.diaryLockPin !== undefined ? overrides.diaryLockPin : diaryLockPin,
+        overrides?.diaryLockPin !== undefined
+          ? overrides.diaryLockPin
+          : diaryLockPinRef.current,
     };
 
     const currentTop = historyStackRef.current[historyIndexRef.current];
@@ -845,24 +887,11 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
     historyStackRef.current = nextStack;
     historyIndexRef.current = nextStack.length - 1;
 
-    // Auto-persist non-empty canvas drafts in the background so switching to an external app/file manager never loses work
+    // Auto-persist non-empty canvas drafts in the background using the live snapshot so first image/audio never evaluates as empty
     try {
-      const { log, hasAnyEntry } = buildCurrentLogObject(undefined, true);
+      const { log, hasAnyEntry } = buildCurrentLogObject(undefined, true, snap);
       if (hasAnyEntry) {
-        onSaveLog(
-          {
-            ...log,
-            heading: snap.heading.trim() || (log.plainPreview.slice(0, 40) || 'Untitled Entry'),
-            pfpDataUrl: snap.pfpDataUrl,
-            contentHtml: normalizeSpoilersAndSelectionForSave(snap.contentHtml),
-            canvasBgDataUrl: snap.canvasBgDataUrl,
-            canvasBgOpacity: snap.canvasBgOpacity,
-            canvasImages: snap.canvasImages,
-            audioAttachments: snap.audioAttachments,
-            diaryLockPin: snap.diaryLockPin,
-          },
-          false
-        );
+        onSaveLog(log, false);
       }
     } catch {
       // ignore background auto-save errors
@@ -1503,26 +1532,41 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
   // - Modification updatedDateStamp & updatedTimeStamp ONLY update when actual content is edited!
   const buildCurrentLogObject = (
     overrideReminderAt?: number | null,
-    didModifyContent: boolean = true
+    didModifyContent: boolean = true,
+    snapshotOverride?: CanvasHistorySnapshot
   ): {
     log: DiaryLog;
     hasAnyEntry: boolean;
   } => {
-    const rawHtml = editorRef.current
+    const rawHtml = snapshotOverride
+      ? normalizeSpoilersAndSelectionForSave(snapshotOverride.contentHtml)
+      : editorRef.current
       ? normalizeSpoilersAndSelectionForSave(editorRef.current.innerHTML)
       : '';
     const plainPreview = stripHtmlToSingleLine(rawHtml);
-    const trimmedHeading = heading.trim();
+    const trimmedHeading = (snapshotOverride ? snapshotOverride.heading : headingRef.current).trim();
+    const activePfp = snapshotOverride ? snapshotOverride.pfpDataUrl : pfpDataUrlRef.current;
+    const activeBg = snapshotOverride
+      ? snapshotOverride.canvasBgDataUrl
+      : canvasBgDataUrlRef.current;
+    const activeBgOpacity = snapshotOverride
+      ? snapshotOverride.canvasBgOpacity
+      : canvasBgOpacityRef.current;
+    const activeImgs = snapshotOverride ? snapshotOverride.canvasImages : canvasImagesRef.current;
+    const activeAudios = snapshotOverride
+      ? snapshotOverride.audioAttachments
+      : audioAttachmentsRef.current;
+    const activePin = snapshotOverride ? snapshotOverride.diaryLockPin : diaryLockPinRef.current;
     const effectiveReminder =
-      overrideReminderAt !== undefined ? overrideReminderAt : reminderAt;
+      overrideReminderAt !== undefined ? overrideReminderAt : reminderAtRef.current;
 
     const hasAnyEntry =
       trimmedHeading.length > 0 ||
       plainPreview.length > 0 ||
-      pfpDataUrl !== null ||
-      canvasBgDataUrl !== null ||
-      canvasImages.length > 0 ||
-      audioAttachments.length > 0 ||
+      activePfp !== null ||
+      activeBg !== null ||
+      activeImgs.length > 0 ||
+      activeAudios.length > 0 ||
       effectiveReminder !== null;
 
     const now = Date.now();
@@ -1548,7 +1592,7 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
       heading: trimmedHeading || (plainPreview.slice(0, 40) || 'Untitled Entry'),
       contentHtml: rawHtml,
       plainPreview,
-      pfpDataUrl,
+      pfpDataUrl: activePfp,
       createdAt: createdAtMs,
       updatedAt: updatedAtMs,
       dateStamp,
@@ -1561,11 +1605,11 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
           ? false
           : initialLog?.reminderFired,
       pinned: initialLog?.pinned || false,
-      diaryLockPin,
-      canvasBgDataUrl,
-      canvasBgOpacity,
-      canvasImages,
-      audioAttachments,
+      diaryLockPin: activePin,
+      canvasBgDataUrl: activeBg,
+      canvasBgOpacity: activeBgOpacity,
+      canvasImages: activeImgs,
+      audioAttachments: activeAudios,
     };
 
     return { log, hasAnyEntry };
@@ -1894,21 +1938,19 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
   const updateCanvasImagesWithHistory = (
     updater: (prev: CanvasDraggableImage[]) => CanvasDraggableImage[]
   ) => {
-    setCanvasImages((prev) => {
-      const next = updater(prev);
-      pushCanvasSnapshot({ canvasImages: next });
-      return next;
-    });
+    const next = updater(canvasImagesRef.current);
+    canvasImagesRef.current = next;
+    setCanvasImages(next);
+    pushCanvasSnapshot({ canvasImages: next });
   };
 
   const updateAudioAttachmentsWithHistory = (
     updater: (prev: CanvasAudioAttachment[]) => CanvasAudioAttachment[]
   ) => {
-    setAudioAttachments((prev) => {
-      const next = updater(prev);
-      pushCanvasSnapshot({ audioAttachments: next });
-      return next;
-    });
+    const next = updater(audioAttachmentsRef.current);
+    audioAttachmentsRef.current = next;
+    setAudioAttachments(next);
+    pushCanvasSnapshot({ audioAttachments: next });
   };
 
   const selectedCanvasImage =
@@ -2974,53 +3016,53 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
                   ? Math.round((displayW * tempImg.height) / tempImg.width)
                   : 180;
               const newId = `img_${Date.now()}`;
-              setCanvasImages((prev) => {
-                const next: CanvasDraggableImage[] = [
-                  ...prev,
-                  {
-                    id: newId,
-                    dataUrl: rawDataUrl,
-                    x: 24 + (prev.length * 18) % 100,
-                    y: 36 + (prev.length * 24) % 120,
-                    width: displayW,
-                    height: displayH,
-                    opacity: 1,
-                    rotation: 0,
-                    layer: 'foreground',
-                    sizeBytes,
-                    originalSizeBytes,
-                  },
-                ];
-                pushCanvasSnapshot({ canvasImages: next });
-                return next;
-              });
+              const prev = canvasImagesRef.current;
+              const next: CanvasDraggableImage[] = [
+                ...prev,
+                {
+                  id: newId,
+                  dataUrl: rawDataUrl,
+                  x: 24 + (prev.length * 18) % 100,
+                  y: 36 + (prev.length * 24) % 120,
+                  width: displayW,
+                  height: displayH,
+                  opacity: 1,
+                  rotation: 0,
+                  layer: 'foreground',
+                  sizeBytes,
+                  originalSizeBytes,
+                },
+              ];
+              canvasImagesRef.current = next;
+              setCanvasImages(next);
               setSelectedCanvasImgId(newId);
               setSelectedCanvasAudioId(null);
+              pushCanvasSnapshot({ canvasImages: next });
             };
             tempImg.onerror = () => {
               const newId = `img_${Date.now()}`;
-              setCanvasImages((prev) => {
-                const next: CanvasDraggableImage[] = [
-                  ...prev,
-                  {
-                    id: newId,
-                    dataUrl: rawDataUrl,
-                    x: 24 + (prev.length * 18) % 100,
-                    y: 36 + (prev.length * 24) % 120,
-                    width: 220,
-                    height: 165,
-                    opacity: 1,
-                    rotation: 0,
-                    layer: 'foreground',
-                    sizeBytes,
-                    originalSizeBytes,
-                  },
-                ];
-                pushCanvasSnapshot({ canvasImages: next });
-                return next;
-              });
+              const prev = canvasImagesRef.current;
+              const next: CanvasDraggableImage[] = [
+                ...prev,
+                {
+                  id: newId,
+                  dataUrl: rawDataUrl,
+                  x: 24 + (prev.length * 18) % 100,
+                  y: 36 + (prev.length * 24) % 120,
+                  width: 220,
+                  height: 165,
+                  opacity: 1,
+                  rotation: 0,
+                  layer: 'foreground',
+                  sizeBytes,
+                  originalSizeBytes,
+                },
+              ];
+              canvasImagesRef.current = next;
+              setCanvasImages(next);
               setSelectedCanvasImgId(newId);
               setSelectedCanvasAudioId(null);
+              pushCanvasSnapshot({ canvasImages: next });
             };
             tempImg.src = getCanvasPreviewUrl(rawDataUrl) || getImageObjectUrl(rawDataUrl) || rawDataUrl;
           }}
@@ -3053,24 +3095,24 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
                 targetAud.audioUri = persisted.audioUri;
                 targetAud.dataUrl = persisted.dataUrl;
               }
-              setAudioAttachments((prev) => {
-                const next: CanvasAudioAttachment[] = [
-                  ...prev,
-                  {
-                    ...targetAud,
-                    x: 24 + (prev.length * 18) % 90,
-                    y: 120 + (prev.length * 76) % 260,
-                    width: 270,
-                    height: 56,
-                    rotation: 0,
-                    playbackRate: 1,
-                    layer: 'foreground',
-                  },
-                ];
-                pushCanvasSnapshot({ audioAttachments: next });
-                return next;
-              });
+              const prev = audioAttachmentsRef.current;
+              const next: CanvasAudioAttachment[] = [
+                ...prev,
+                {
+                  ...targetAud,
+                  x: 24 + (prev.length * 18) % 90,
+                  y: 120 + (prev.length * 76) % 260,
+                  width: 270,
+                  height: 56,
+                  rotation: 0,
+                  playbackRate: 1,
+                  layer: 'foreground',
+                },
+              ];
+              audioAttachmentsRef.current = next;
+              setAudioAttachments(next);
               selectAudioCardSafely(aud.id);
+              pushCanvasSnapshot({ audioAttachments: next });
             } finally {
               setPendingCanvasMediaSkeleton(null);
             }
@@ -3400,51 +3442,50 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
             }
 
             if (editingCanvasImageId) {
-              setCanvasImages((prev) => {
-                const next = prev.map((item) =>
-                  item.id === editingCanvasImageId
-                    ? {
-                        ...item,
-                        dataUrl: processedDataUrl,
-                        opacity,
-                        width: width || item.width,
-                        height: height || item.height,
-                        sizeBytes: sizeBytes || item.sizeBytes,
-                      }
-                    : item
-                );
-                pushCanvasSnapshot({ canvasImages: next });
-                return next;
-              });
+              const next = canvasImagesRef.current.map((item) =>
+                item.id === editingCanvasImageId
+                  ? {
+                      ...item,
+                      dataUrl: processedDataUrl,
+                      opacity,
+                      width: width || item.width,
+                      height: height || item.height,
+                      sizeBytes: sizeBytes || item.sizeBytes,
+                    }
+                  : item
+              );
+              canvasImagesRef.current = next;
+              setCanvasImages(next);
               setSelectedCanvasImgId(editingCanvasImageId);
               setEditingCanvasImageId(null);
               setRawMediaStudioImage(null);
+              pushCanvasSnapshot({ canvasImages: next });
               return;
             }
 
             const newId = `img_${Date.now()}`;
-            setCanvasImages((prev) => {
-              const next: CanvasDraggableImage[] = [
-                ...prev,
-                {
-                  id: newId,
-                  dataUrl: processedDataUrl,
-                  x: 24 + (prev.length * 18) % 100,
-                  y: 36 + (prev.length * 24) % 120,
-                  width,
-                  height,
-                  opacity,
-                  rotation: 0,
-                  layer: 'foreground',
-                  sizeBytes,
-                },
-              ];
-              pushCanvasSnapshot({ canvasImages: next });
-              return next;
-            });
+            const prev = canvasImagesRef.current;
+            const next: CanvasDraggableImage[] = [
+              ...prev,
+              {
+                id: newId,
+                dataUrl: processedDataUrl,
+                x: 24 + (prev.length * 18) % 100,
+                y: 36 + (prev.length * 24) % 120,
+                width,
+                height,
+                opacity,
+                rotation: 0,
+                layer: 'foreground',
+                sizeBytes,
+              },
+            ];
+            canvasImagesRef.current = next;
+            setCanvasImages(next);
             setSelectedCanvasImgId(newId);
             setSelectedCanvasAudioId(null);
             setRawMediaStudioImage(null);
+            pushCanvasSnapshot({ canvasImages: next });
           }}
         />
       )}
@@ -3466,31 +3507,31 @@ export const WritingWorkspace: React.FC<WritingWorkspaceProps> = ({
               const persisted = await persistAudioAttachment(newId, attachmentIdOrDataUrl);
               audioDataUrl = persisted.dataUrl;
             }
-            setAudioAttachments((prev) => {
-              const next: CanvasAudioAttachment[] = [
-                ...prev,
-                {
-                  id: newId,
-                  name: finalFileName,
-                  format,
-                  audioUri: undefined,
-                  dataUrl: audioDataUrl,
-                  durationSec,
-                  createdAt: Date.now(),
-                  x: 24 + (prev.length * 18) % 90,
-                  y: 120 + (prev.length * 76) % 260,
-                  width: 270,
-                  height: 56,
-                  rotation: 0,
-                  playbackRate: 1,
-                  layer: 'foreground',
-                },
-              ];
-              pushCanvasSnapshot({ audioAttachments: next });
-              return next;
-            });
+            const prev = audioAttachmentsRef.current;
+            const next: CanvasAudioAttachment[] = [
+              ...prev,
+              {
+                id: newId,
+                name: finalFileName,
+                format,
+                audioUri: undefined,
+                dataUrl: audioDataUrl,
+                durationSec,
+                createdAt: Date.now(),
+                x: 24 + (prev.length * 18) % 90,
+                y: 120 + (prev.length * 76) % 260,
+                width: 270,
+                height: 56,
+                rotation: 0,
+                playbackRate: 1,
+                layer: 'foreground',
+              },
+            ];
+            audioAttachmentsRef.current = next;
+            setAudioAttachments(next);
             selectAudioCardSafely(newId);
             setRawMediaStudioAudio(null);
+            pushCanvasSnapshot({ audioAttachments: next });
           }}
         />
       )}

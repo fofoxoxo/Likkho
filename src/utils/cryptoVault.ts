@@ -211,6 +211,7 @@ declare global {
       opacity: number
     ) => void;
     __onLikkhoNativeAudioPicked?: (audioJson: string) => void;
+    __onLikkhoNativePickerCancelled?: () => void;
     __onLikkhoQuickNoteDone?: (noteId: string) => void;
     __onLikkhoOpenQuickNoteCreator?: () => string | void;
     __onLikkhoNewDiaryAction?: () => string | void;
