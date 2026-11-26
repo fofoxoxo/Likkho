@@ -1,15 +1,11 @@
 package com.likkho.diary.nativeapp.ui.components
 
-import android.graphics.Color as AndroidColor
-import android.graphics.drawable.ColorDrawable
-import android.os.Build
-import android.view.View
-import android.view.ViewParent
-import android.view.Window
-import android.view.WindowManager
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -37,7 +33,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -46,15 +41,13 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
-import androidx.compose.ui.window.DialogWindowProvider
+import androidx.compose.ui.zIndex
 import com.likkho.diary.nativeapp.ui.theme.LikkhoFontFamilies
 import com.likkho.diary.nativeapp.ui.theme.LikkhoTheme
 
@@ -65,9 +58,9 @@ val LikkhoHairlineBorder: Dp = 0.75.dp
 
 /**
  * Standard thin hairline dialog container for Likkho.
- * - Flat zero-radius Wikipedia editorial box with a crisp 0.75.dp hairline frame
- * - Full IME & system-bar padding so keyboards never clip inputs or footer buttons
- * - Uniform header bar, internal hairline dividers, and optional footer bar
+ * - Renders inside the Activity's root window so the active page (Settings, Home, etc.) stays live
+ *   and visibly dimmed behind the floating card instead of spawning a white Dialog window.
+ * - Preserves OS status bar and navigation bar colors, icons, and fullscreen behavior completely.
  */
 @Composable
 fun LikkhoHairlineDialog(
@@ -88,41 +81,57 @@ fun LikkhoHairlineDialog(
     content: @Composable ColumnScope.() -> Unit
 ) {
     val colors = LikkhoTheme.colors
-    val scrimInteraction = remember { MutableInteractionSource() }
     val cardInteraction = remember { MutableInteractionSource() }
 
-    Dialog(
-        onDismissRequest = { if (dismissEnabled) onDismissRequest() },
-        properties = DialogProperties(
-            usePlatformDefaultWidth = false,
-            decorFitsSystemWindows = false
-        )
-    ) {
-        val view = LocalView.current
-        SideEffect {
-            findDialogWindow(view)?.let { win ->
-                win.setBackgroundDrawable(ColorDrawable(AndroidColor.TRANSPARENT))
-                win.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-                win.setDimAmount(0f)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    win.isStatusBarContrastEnforced = false
-                    win.isNavigationBarContrastEnforced = false
-                }
-            }
+    BackHandler(enabled = true) {
+        if (dismissEnabled) {
+            onDismissRequest()
         }
+    }
 
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .zIndex(100f)
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .background(Color.Black.copy(alpha = 0.54f))
+    ) {
+        // Scrim touch/drag blocker over the dimmed underlying page
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.54f))
-                .clickable(
-                    interactionSource = scrimInteraction,
-                    indication = null
-                ) {
-                    if (dismissEnabled) onDismissRequest()
+                .pointerInput(dismissEnabled) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        down.consume()
+                        val startPos = down.position
+                        var movedTooMuch = false
+                        val slop = viewConfiguration.touchSlop
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            event.changes.forEach { it.consume() }
+                            val ch = event.changes.firstOrNull { it.id == down.id } ?: break
+                            if (!ch.pressed) {
+                                if (!movedTooMuch && dismissEnabled) {
+                                    onDismissRequest()
+                                }
+                                break
+                            }
+                            val dx = ch.position.x - startPos.x
+                            val dy = ch.position.y - startPos.y
+                            if (dx * dx + dy * dy > slop * slop) {
+                                movedTooMuch = true
+                            }
+                        }
+                    }
                 }
-                .statusBarsPadding()
-                .navigationBarsPadding()
+        )
+
+        // Centered floating dialog card container
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
                 .imePadding()
                 .padding(horizontal = 16.dp, vertical = 14.dp),
             contentAlignment = Alignment.Center
@@ -337,15 +346,4 @@ fun LikkhoDialogPrimaryButton(
             overflow = TextOverflow.Ellipsis
         )
     }
-}
-
-private fun findDialogWindow(view: View): Window? {
-    var parent: ViewParent? = view.parent
-    while (parent != null) {
-        if (parent is DialogWindowProvider) {
-            return parent.window
-        }
-        parent = parent.parent
-    }
-    return null
 }

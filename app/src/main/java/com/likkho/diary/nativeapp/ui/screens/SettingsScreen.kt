@@ -165,7 +165,7 @@ private data class SavedWordAnalysisRecord(
     val rawJson: JSONObject
 )
 
-private const val APP_CURRENT_VERSION = "2.1.4"
+private const val APP_CURRENT_VERSION = "2.1.5"
 private const val DEFAULT_GITHUB_REPO = "fofoxoxo/Likkho"
 private const val AUTHOR_NAME = "Sayan Saha"
 private const val AUTHOR_EMAIL = "sayan996969saha@gmail.com"
