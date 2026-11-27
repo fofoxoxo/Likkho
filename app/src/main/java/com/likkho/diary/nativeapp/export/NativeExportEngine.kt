@@ -26,7 +26,6 @@ import com.likkho.diary.nativeapp.data.NativeVaultRepository
 import com.likkho.diary.nativeapp.media.NativeMediaEngine
 import com.likkho.diary.nativeapp.model.CanvasAudioAttachment
 import com.likkho.diary.nativeapp.model.CanvasDraggableImage
-import com.likkho.diary.nativeapp.model.CustomFontItem
 import com.likkho.diary.nativeapp.model.DiaryLog
 import com.likkho.diary.nativeapp.model.VaultMode
 import org.json.JSONArray
@@ -1109,77 +1108,149 @@ class NativeExportEngine(
 
     fun writeFullVaultZipToStream(vaultMode: VaultMode, out: OutputStream) {
         val logs = repository.loadLogs(vaultMode)
-        val customFonts = repository.loadCustomFonts(vaultMode)
+        val quickNotes = repository.loadQuickNotes(vaultMode)
+        val trackers = repository.loadTrackers(vaultMode)
+        val reminders = repository.loadReminders(vaultMode)
+        val documents = repository.loadDocuments(vaultMode)
         val savedPasswords = repository.loadSavedPasswords(vaultMode)
-        val savedWordsRaw = repository.loadSavedWordAnalysesJson(vaultMode)
+        var exportedDocFiles = 0
 
         ZipOutputStream(BufferedOutputStream(out, IO_BUFFER_SIZE)).use { zos ->
-            // 1. Diaries + extracted images & audio
+            // 1. Entries (when present, e.g., Secret Writing vault)
             logs.forEachIndexed { idx, log ->
                 val numPrefix = (idx + 1).toString().padStart(2, '0')
-                val slug = "${numPrefix}_${sanitizeFileSlug(log.heading, "diary_${idx + 1}")}"
+                val slug = "${numPrefix}_${sanitizeFileSlug(log.heading, "entry_${idx + 1}")}"
                 writeDiaryMarkdownAndMediaToZip(zos, log, slug)
             }
 
-            // 2. Saved Word Analyses
-            var wordCount = 0
-            runCatching {
-                val wordsArr = JSONArray(savedWordsRaw)
-                wordCount = wordsArr.length()
-                if (wordsArr.length() > 0) {
-                    val sb = StringBuilder("# Saved Word Analysis (Alphabetical A–Z)\n\n")
-                    for (i in 0 until wordsArr.length()) {
-                        val w = wordsArr.optJSONObject(i) ?: continue
-                        val word = w.optString("word")
-                        val phonetics = w.optJSONObject("phonetics")?.optString("phoneticTranscription").orEmpty().ifEmpty { "N/A" }
-                        val morph = w.optJSONObject("morphology")
-                        val posArr = morph?.optJSONArray("partOfSpeech")
-                        val posList = buildList {
-                            if (posArr != null) {
-                                for (p in 0 until posArr.length()) add(posArr.optString(p))
-                            }
+            // 2. Quick Notes & Checklists
+            if (quickNotes.isNotEmpty()) {
+                val sb = StringBuilder("# Quick Notes & Checklists\n\n")
+                quickNotes.forEachIndexed { idx, note ->
+                    val stamp = SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.US)
+                        .format(Date(max(note.updatedAt, note.createdAt)))
+                    sb.append("## ").append(idx + 1).append(". ").append(note.title.ifBlank { "Untitled Note" })
+                    if (note.isDone) sb.append(" [Done]")
+                    sb.append("\n")
+                    sb.append("- **Updated:** ").append(stamp).append("\n")
+                    if (note.isChecklist && note.items.isNotEmpty()) {
+                        note.items.forEach { item ->
+                            val mark = if (item.checked) "x" else " "
+                            sb.append("  - [").append(mark).append("] ").append(item.text).append("\n")
                         }
-                        val lexical = w.optJSONObject("lexical")
-                        val def0 = lexical?.optJSONArray("definitions")?.optJSONObject(0)?.optString("definition").orEmpty()
-                        val synArr = lexical?.optJSONArray("synonyms")
-                        val synList = buildList {
-                            if (synArr != null) {
-                                for (s in 0 until synArr.length()) add(synArr.optString(s))
-                            }
-                        }
-                        val etymology = morph?.optString("etymologyAndOrigin").orEmpty()
-
-                        sb.append("## ").append(word).append(" (").append(phonetics).append(")\n")
-                        sb.append("- **Part of Speech:** ").append(posList.joinToString(", ")).append("\n")
-                        if (def0.isNotEmpty()) sb.append("- **Definition:** ").append(def0).append("\n")
-                        if (synList.isNotEmpty()) sb.append("- **Synonyms:** ").append(synList.joinToString(", ")).append("\n")
-                        if (etymology.isNotEmpty()) sb.append("- **Etymology:** ").append(etymology).append("\n")
-                        sb.append("\n")
+                    } else if (note.content.isNotBlank()) {
+                        sb.append("\n").append(note.content.trim()).append("\n")
                     }
-                    writeZipEntryBytes(
-                        zos,
-                        "word_analysis/saved_word_analysis.md",
-                        sb.toString().toByteArray(StandardCharsets.UTF_8)
-                    )
+                    sb.append("\n")
                 }
+                writeZipEntryBytes(zos, "notes/quick_notes.md", sb.toString().toByteArray(StandardCharsets.UTF_8))
             }
 
-            // 3. Custom Fonts (.ttf)
-            customFonts.forEachIndexed { idx, font ->
-                mediaEngine.parseDataUrl(font.dataUrl)?.let { parsed ->
-                    val fontSlug = sanitizeFileSlug(font.name, "custom_font_${idx + 1}")
-                    writeZipEntryBytes(zos, "fonts/$fontSlug.ttf", parsed.bytes)
+            // 3. Recurring Trackers (Calendar Hisaab)
+            if (trackers.isNotEmpty()) {
+                val sb = StringBuilder("# Recurring Trackers\n\n")
+                val jsonArr = JSONArray()
+                trackers.forEachIndexed { idx, tracker ->
+                    jsonArr.put(tracker.toJson())
+                    sb.append("## ").append(idx + 1).append(". ").append(tracker.name.ifBlank { "Tracker" })
+                    if (tracker.archived) sb.append(" (Archived)")
+                    sb.append("\n")
+                    if (tracker.unitLabel.isNotBlank()) {
+                        sb.append("- **Unit:** ").append(tracker.defaultQuantity).append(" ").append(tracker.unitLabel).append("\n")
+                    }
+                    if (tracker.ratePerUnit > 0.0) {
+                        sb.append("- **Rate:** ").append(tracker.currencySymbol).append(tracker.ratePerUnit).append("\n")
+                    }
+                    if (tracker.notes.isNotBlank()) {
+                        sb.append("- **Notes:** ").append(tracker.notes).append("\n")
+                    }
+                    if (tracker.entries.isNotEmpty()) {
+                        sb.append("- **Logged Days:** ").append(tracker.entries.size).append("\n")
+                        tracker.entries.entries.sortedBy { it.key }.forEach { (dateKey, entry) ->
+                            val qtyPart = entry.quantity?.let { " · qty $it" }.orEmpty()
+                            val notePart = if (entry.note.isNotBlank()) " · ${entry.note}" else ""
+                            sb.append("  - `").append(dateKey).append("`: ").append(entry.status.wireValue)
+                                .append(qtyPart).append(notePart).append("\n")
+                        }
+                    }
+                    sb.append("\n")
                 }
+                writeZipEntryBytes(zos, "trackers/trackers.md", sb.toString().toByteArray(StandardCharsets.UTF_8))
+                writeZipEntryBytes(zos, "trackers/trackers.json", jsonArr.toString(2).toByteArray(StandardCharsets.UTF_8))
             }
 
-            // 4. Saved Passwords
+            // 4. Reminders
+            if (reminders.isNotEmpty()) {
+                val sb = StringBuilder("# Reminders\n\n")
+                reminders.forEachIndexed { idx, rem ->
+                    val dueStr = SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.US).format(Date(rem.triggerAtMs))
+                    val statusTag = if (rem.isCompleted) "Completed" else "Upcoming"
+                    sb.append("## ").append(idx + 1).append(". ").append(rem.title.ifBlank { "Reminder" }).append("\n")
+                    sb.append("- **Status:** ").append(statusTag).append("\n")
+                    sb.append("- **Scheduled:** ").append(dueStr).append("\n")
+                    sb.append("- **Repeat:** ").append(rem.repeat.displayLabel).append("\n")
+                    if (rem.note.isNotBlank()) {
+                        sb.append("- **Note:** ").append(rem.note).append("\n")
+                    }
+                    sb.append("\n")
+                }
+                writeZipEntryBytes(zos, "reminders/reminders.md", sb.toString().toByteArray(StandardCharsets.UTF_8))
+            }
+
+            // 5. Personal Documents & Attached Files
+            if (documents.isNotEmpty()) {
+                val sb = StringBuilder("# Personal Documents\n\n")
+                val usedFileNames = HashSet<String>()
+                documents.forEachIndexed { idx, doc ->
+                    sb.append("## ").append(idx + 1).append(". ").append(doc.title.ifBlank { "Document" }).append("\n")
+                    sb.append("- **Category:** ").append(doc.category.displayLabel).append("\n")
+                    if (doc.idNumber.isNotBlank()) sb.append("- **ID / Number:** ").append(doc.idNumber).append("\n")
+                    if (doc.issuedDate.isNotBlank()) sb.append("- **Issued Date:** ").append(doc.issuedDate).append("\n")
+                    if (doc.expiryDate.isNotBlank()) sb.append("- **Expiry Date:** ").append(doc.expiryDate).append("\n")
+                    if (doc.notes.isNotBlank()) sb.append("- **Notes:** ").append(doc.notes).append("\n")
+
+                    val docFileId = doc.fileId
+                    val docFile = if (!docFileId.isNullOrBlank()) repository.resolveExistingDocumentFile(docFileId) else null
+                    if (docFile != null && docFile.exists() && docFile.length() > 0L) {
+                        val fallbackExt = when {
+                            doc.mimeType.contains("pdf", ignoreCase = true) -> "pdf"
+                            doc.mimeType.contains("png", ignoreCase = true) -> "png"
+                            doc.mimeType.contains("webp", ignoreCase = true) -> "webp"
+                            else -> "jpg"
+                        }
+                        val rawBase = doc.fileName.substringBeforeLast('.', doc.title.ifBlank { "document_${idx + 1}" })
+                        val rawExt = doc.fileName.substringAfterLast('.', fallbackExt).lowercase(Locale.US)
+                            .replace(Regex("[^a-z0-9]"), "").ifBlank { fallbackExt }
+                        var candidateName = "${idx + 1}_${sanitizeFileSlug(rawBase, "doc_${idx + 1}")}.$rawExt"
+                        while (!usedFileNames.add(candidateName)) {
+                            candidateName = "${idx + 1}_${System.nanoTime()}.$rawExt"
+                        }
+                        val archivePath = "documents/files/$candidateName"
+                        FileInputStream(docFile).use { inp ->
+                            zos.putNextEntry(ZipEntry(archivePath))
+                            copyStreamBuffered(inp, zos)
+                            zos.closeEntry()
+                        }
+                        exportedDocFiles++
+                        sb.append("- **File:** `").append(archivePath).append("`\n")
+                    }
+                    sb.append("\n")
+                }
+                writeZipEntryBytes(zos, "documents/documents_index.md", sb.toString().toByteArray(StandardCharsets.UTF_8))
+            }
+
+            // 6. Saved Passwords
             if (savedPasswords.isNotEmpty()) {
-                val sb = StringBuilder("# Saved Passwords (${vaultMode.wireValue.uppercase()} Vault)\n\n")
+                val sb = StringBuilder("# Saved Passwords\n\n")
                 savedPasswords.forEachIndexed { idx, p ->
-                    val stamp = SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.US).format(Date(p.createdAt))
+                    val stamp = SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.US)
+                        .format(Date(max(p.updatedAt, p.createdAt)))
                     sb.append("### ").append(idx + 1).append(". ").append(p.name.ifBlank { "Untitled" }).append("\n")
+                    if (p.username.isNotBlank()) sb.append("- **Username / Email:** ").append(p.username).append("\n")
                     sb.append("- **Password:** ").append(p.password).append("\n")
-                    sb.append("- **Saved At:** ").append(stamp).append("\n\n")
+                    if (p.url.isNotBlank()) sb.append("- **URL:** ").append(p.url).append("\n")
+                    if (p.notes.isNotBlank()) sb.append("- **Notes:** ").append(p.notes).append("\n")
+                    sb.append("- **Updated:** ").append(stamp).append("\n\n")
                 }
                 writeZipEntryBytes(
                     zos,
@@ -1188,17 +1259,31 @@ class NativeExportEngine(
                 )
             }
 
-            // 5. README.md
+            // 7. README.md
             val exportedDate = SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.US).format(Date())
-            val readme = "# Likkho Data Export Archive\n\n" +
-                "- **Exported At:** $exportedDate\n" +
-                "- **Total Diaries (.md):** ${logs.size}\n" +
-                "- **Saved Word Analyses:** $wordCount\n" +
-                "- **Custom Fonts (.ttf):** ${customFonts.size}\n\n" +
-                "## Folder Structure\n" +
-                "- `diaries/` — All diary entries in Markdown (`.md`) format.\n" +
-                "- `images/` — All profile pictures, canvas backgrounds, inline images, and floating canvas images in their original image formats.\n" +
-                "- `audio/` — All recorded and attached audio files in their original audio formats.\n"
+            val readme = buildString {
+                append("# Likkho Data Export Archive\n\n")
+                append("- **Exported At:** ").append(exportedDate).append("\n")
+                if (vaultMode == VaultMode.DECOY || logs.isNotEmpty()) {
+                    append("- **Journal Entries:** ").append(logs.size).append("\n")
+                }
+                if (quickNotes.isNotEmpty()) append("- **Notes & Checklists:** ").append(quickNotes.size).append("\n")
+                if (trackers.isNotEmpty()) append("- **Recurring Trackers:** ").append(trackers.size).append("\n")
+                if (reminders.isNotEmpty()) append("- **Reminders:** ").append(reminders.size).append("\n")
+                if (documents.isNotEmpty()) append("- **Documents:** ").append(documents.size).append(" (").append(exportedDocFiles).append(" files)\n")
+                if (savedPasswords.isNotEmpty()) append("- **Saved Passwords:** ").append(savedPasswords.size).append("\n")
+                append("\n## Folder Structure\n")
+                if (logs.isNotEmpty()) {
+                    append("- `diaries/` — Journal entries in Markdown (`.md`) format.\n")
+                    append("- `images/` — Attached photos & backgrounds.\n")
+                    append("- `audio/` — Attached voice notes.\n")
+                }
+                if (quickNotes.isNotEmpty()) append("- `notes/` — Quick Notes & Checklists.\n")
+                if (trackers.isNotEmpty()) append("- `trackers/` — Recurring Trackers & history.\n")
+                if (reminders.isNotEmpty()) append("- `reminders/` — Scheduled & completed reminders.\n")
+                if (documents.isNotEmpty()) append("- `documents/` — Document metadata & attached files.\n")
+                if (savedPasswords.isNotEmpty()) append("- `passwords/` — Saved credentials.\n")
+            }
             writeZipEntryBytes(zos, "README.md", readme.toByteArray(StandardCharsets.UTF_8))
             zos.flush()
         }

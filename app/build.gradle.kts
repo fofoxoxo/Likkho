@@ -14,8 +14,8 @@ android {
         applicationId = "com.likkho.diary"
         minSdk = 24
         targetSdk = 34
-        versionCode = 23
-        versionName = "2.1.6"
+        versionCode = 24
+        versionName = "3.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
             ignoreAssetsPattern = "!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~"
@@ -104,9 +104,8 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
 
-    // Native Security, Media, WebView AssetBridge & Storage
+    // Native Security, Media & Storage
     implementation("androidx.biometric:biometric:1.1.0")
-    implementation("androidx.webkit:webkit:1.12.1")
     implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("androidx.exifinterface:exifinterface:1.3.7")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")

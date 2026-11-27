@@ -105,8 +105,8 @@ private data class BackupStatusBanner(
 fun BackupRestoreScreen(
     vaultMode: VaultMode,
     logs: List<DiaryLog>,
-    customFonts: List<CustomFontItem>,
-    micSettings: MicRecordingSettings,
+    customFonts: List<CustomFontItem> = emptyList(),
+    micSettings: MicRecordingSettings = MicRecordingSettings(),
     repository: NativeVaultRepository,
     streamCryptoEngine: StreamCryptoEngine,
     onBundleRestored: (VaultBackupBundle) -> Unit,
@@ -267,16 +267,28 @@ fun BackupRestoreScreen(
                     return@launch
                 }
 
+                val trackers = withContext(Dispatchers.IO) { repository.loadTrackers(vaultMode) }
+                val reminders = withContext(Dispatchers.IO) { repository.loadReminders(vaultMode) }
+                val documents = withContext(Dispatchers.IO) { repository.loadDocuments(vaultMode) }
                 val savedPasswords = withContext(Dispatchers.IO) { repository.loadSavedPasswords(vaultMode) }
                 val quickNotes = withContext(Dispatchers.IO) { repository.loadQuickNotes(vaultMode) }
+                val effectiveFonts = withContext(Dispatchers.IO) {
+                    customFonts.ifEmpty { repository.loadCustomFonts(vaultMode) }
+                }
+                val effectiveMic = withContext(Dispatchers.IO) {
+                    repository.loadMicSettings(vaultMode)
+                }
                 withContext(Dispatchers.IO) { repository.resetPasscodeFailures() }
 
                 val bundle = VaultBackupBundle(
                     logs = logs,
-                    customFonts = customFonts,
-                    micSettings = micSettings,
+                    customFonts = effectiveFonts,
+                    micSettings = effectiveMic,
                     savedPasswords = savedPasswords,
-                    quickNotes = quickNotes
+                    quickNotes = quickNotes,
+                    trackers = trackers,
+                    reminders = reminders,
+                    documents = documents
                 )
 
                 val result = withContext(Dispatchers.IO) {
@@ -299,15 +311,16 @@ fun BackupRestoreScreen(
                 savedKeyHash = nextHash
                 backupMeta = withContext(Dispatchers.IO) { repository.loadBackupMetadata(vaultMode) }
 
+                val countNoun = if (vaultMode == VaultMode.PRIMARY) "items" else "entries"
                 statusBanner = if (result.failedMediaCount > 0) {
                     BackupStatusBanner(
                         BackupStatusType.ERROR,
-                        "Backup finished with warnings: ${result.failedMediaCount} media files could not be archived."
+                        "Backup finished with warnings: ${result.failedMediaCount} attached files could not be archived."
                     )
                 } else {
                     BackupStatusBanner(
                         BackupStatusType.SUCCESS,
-                        "Backup completed successfully (${result.entryCount} diaries · ${formatReadableSize(result.totalBytes)})."
+                        "Backup completed successfully (${result.entryCount} $countNoun · ${formatReadableSize(result.totalBytes)})."
                     )
                 }
             } catch (err: Throwable) {
@@ -367,29 +380,36 @@ fun BackupRestoreScreen(
                     repository.resetPasscodeFailures()
                     savedKeyHash = repository.setEncryptionKeyPassphrase(vaultMode, key)
                     repository.saveLogs(vaultMode, restoredBundle.logs)
-                    if (restoredBundle.customFonts.isNotEmpty()) {
-                        repository.saveCustomFonts(vaultMode, restoredBundle.customFonts)
-                    }
+                    repository.saveCustomFonts(vaultMode, restoredBundle.customFonts)
                     repository.saveMicSettings(vaultMode, restoredBundle.micSettings)
-                    if (restoredBundle.savedPasswords.isNotEmpty()) {
-                        repository.saveSavedPasswords(vaultMode, restoredBundle.savedPasswords)
-                    }
-                    if (restoredBundle.quickNotes.isNotEmpty()) {
-                        repository.saveQuickNotes(vaultMode, restoredBundle.quickNotes)
-                    }
+                    repository.saveSavedPasswords(vaultMode, restoredBundle.savedPasswords)
+                    repository.saveQuickNotes(vaultMode, restoredBundle.quickNotes)
+                    repository.saveTrackers(vaultMode, restoredBundle.trackers)
+                    repository.saveReminders(vaultMode, restoredBundle.reminders)
+                    repository.saveDocuments(vaultMode, restoredBundle.documents)
                 }
 
                 onBundleRestored(restoredBundle)
                 restorePassphrase = ""
+                val restoredCount = if (vaultMode == VaultMode.PRIMARY) {
+                    restoredBundle.quickNotes.size +
+                        restoredBundle.trackers.size +
+                        restoredBundle.reminders.size +
+                        restoredBundle.documents.size +
+                        restoredBundle.savedPasswords.size
+                } else {
+                    restoredBundle.logs.size
+                }
+                val countNoun = if (vaultMode == VaultMode.PRIMARY) "items" else "entries"
                 statusBanner = if (restoredBundle.skippedMediaCount > 0) {
                     BackupStatusBanner(
                         BackupStatusType.ERROR,
-                        "Data restored with warnings: ${restoredBundle.skippedMediaCount} incomplete media items were skipped."
+                        "Data restored with warnings: ${restoredBundle.skippedMediaCount} incomplete files were skipped."
                     )
                 } else {
                     BackupStatusBanner(
                         BackupStatusType.SUCCESS,
-                        "Data restored successfully (${restoredBundle.logs.size} diaries)."
+                        "Data restored successfully ($restoredCount $countNoun)."
                     )
                 }
             } catch (badKey: InvalidEncryptionKeyException) {
@@ -579,8 +599,9 @@ fun BackupRestoreScreen(
                 if (backupMeta.exists && backupMeta.lastBackupAt != null) {
                     val dateStr = SimpleDateFormat("dd MMM yyyy · hh:mm a", Locale.ENGLISH)
                         .format(Date(backupMeta.lastBackupAt!!))
+                    val unitLabel = if (vaultMode == VaultMode.PRIMARY) "items" else "entries"
                     Text(
-                        text = "Last Backup: $dateStr · ${backupMeta.entryCount} diaries · ${formatReadableSize(backupMeta.sizeBytes)}",
+                        text = "Last Backup: $dateStr · ${backupMeta.entryCount} $unitLabel · ${formatReadableSize(backupMeta.sizeBytes)}",
                         fontFamily = LikkhoFontFamilies.Mono,
                         fontSize = 10.sp,
                         color = colors.muted

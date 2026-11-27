@@ -29,16 +29,18 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.DriveFileMove
+import androidx.compose.material.icons.outlined.EditNote
 import androidx.compose.material.icons.outlined.FileDownload
+import androidx.compose.material.icons.outlined.GraphicEq
+import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.MoreVert
-import androidx.compose.material.icons.outlined.NotificationsActive
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Share
@@ -60,7 +62,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -79,6 +80,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.text.HtmlCompat
 import com.likkho.diary.nativeapp.data.NativeVaultRepository
 import com.likkho.diary.nativeapp.export.NativeExportFormat
 import com.likkho.diary.nativeapp.media.NativeMediaEngine
@@ -97,64 +99,64 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private enum class PendingDiaryUnlockAction {
+private enum class SecretEntryUnlockAction {
     OPEN,
     EXPORT,
     DELETE
 }
 
-private data class PendingDiaryUnlockRequest(
+private data class SecretEntryUnlockRequest(
     val log: DiaryLog,
-    val action: PendingDiaryUnlockAction
+    val action: SecretEntryUnlockAction
 )
 
-private data class ExportFormatMeta(
+private data class SecretExportFormatMeta(
     val format: NativeExportFormat,
     val label: String,
     val desc: String
 )
 
-private val NATIVE_EXPORT_FORMATS = listOf(
-    ExportFormatMeta(NativeExportFormat.TXT, ".txt", "Plain Text Document"),
-    ExportFormatMeta(NativeExportFormat.MD, ".md", "Markdown Document"),
-    ExportFormatMeta(NativeExportFormat.PDF, ".pdf", "PDF Printable Document (Full Canvas)"),
-    ExportFormatMeta(NativeExportFormat.RTF, ".rtf", "Rich Text Format"),
-    ExportFormatMeta(NativeExportFormat.HTML, ".html", "Web Page Archive"),
-    ExportFormatMeta(NativeExportFormat.JSON, ".json", "Structured JSON Data"),
-    ExportFormatMeta(NativeExportFormat.CSV, ".csv", "Comma-Separated Values"),
-    ExportFormatMeta(NativeExportFormat.TSV, ".tsv", "Tab-Separated Values"),
-    ExportFormatMeta(NativeExportFormat.XML, ".xml", "Extensible Markup Language")
+private val SECRET_EXPORT_FORMATS = listOf(
+    SecretExportFormatMeta(NativeExportFormat.TXT, ".txt", "Plain Text Document"),
+    SecretExportFormatMeta(NativeExportFormat.MD, ".md", "Markdown Document"),
+    SecretExportFormatMeta(NativeExportFormat.PDF, ".pdf", "PDF Printable Document"),
+    SecretExportFormatMeta(NativeExportFormat.RTF, ".rtf", "Rich Text Format"),
+    SecretExportFormatMeta(NativeExportFormat.HTML, ".html", "Web Page Archive"),
+    SecretExportFormatMeta(NativeExportFormat.JSON, ".json", "Structured JSON Data"),
+    SecretExportFormatMeta(NativeExportFormat.CSV, ".csv", "Comma-Separated Values"),
+    SecretExportFormatMeta(NativeExportFormat.TSV, ".tsv", "Tab-Separated Values"),
+    SecretExportFormatMeta(NativeExportFormat.XML, ".xml", "Extensible Markup Language")
 )
 
 /**
- * Homepage Diary List Screen.
+ * Pure Native Compose Secret Writing Journal Screen (`VaultMode.DECOY`).
  *
- * Parity with `src/App.tsx`:
- * - Top Wikipedia editorial header (`Likkho` / live Search bar, Instant Lock, Settings menu)
- * - Optional status & processing banners
- * - Pinned + chronologically sorted diary list with 1:1 PFP (cached thumbnail + Monograph fallback),
- *   pin/lock indicators, 1-line preview, Created/Modified/Reminder timestamps, and 3-dots action menu
- * - Individual Diary PIN unlock dialog with shared progressive brute-force cooldown
- * - Delete confirmation dialog & Multi-format Export picker dialog
- * - Floating rectangular `+ Create` button
+ * Distraction-free Wikipedia editorial journal list:
+ * - Searchable, pinned + chronological entries
+ * - Clean readable previews & attachment counters (legacy Decoy entries fully preserved)
+ * - Individual entry PIN unlock dialog with progressive brute-force cooldown
+ * - Multi-format Export & `.likkho` share archive
+ * - Optional safe migration banner if legacy diaries exist in `real_vault`
  */
 @Composable
-fun HomeScreen(
+fun SecretWritingScreen(
     logs: List<DiaryLog>,
+    legacyPrimaryLogsCount: Int = 0,
     repository: NativeVaultRepository,
     mediaEngine: NativeMediaEngine,
     isLoadingLogs: Boolean = false,
     statusBanner: String? = null,
     processingBanner: String? = null,
     onDismissStatusBanner: () -> Unit = {},
+    onMigrateLegacyPrimaryLogs: () -> Unit = {},
     onLockApp: () -> Unit,
     onOpenSettings: () -> Unit,
-    onCreateDiary: () -> Unit,
-    onOpenDiary: (DiaryLog) -> Unit,
+    onCreateEntry: () -> Unit,
+    onOpenEntry: (DiaryLog) -> Unit,
     onTogglePin: (DiaryLog) -> Unit,
     onShareLikkho: (DiaryLog) -> Unit,
-    onExportDiary: (DiaryLog, NativeExportFormat) -> Unit,
-    onDeleteDiary: (DiaryLog) -> Unit,
+    onExportEntry: (DiaryLog, NativeExportFormat) -> Unit,
+    onDeleteEntry: (DiaryLog) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val colors = LikkhoTheme.colors
@@ -164,15 +166,17 @@ fun HomeScreen(
     var searchQuery by remember { mutableStateOf("") }
     var openMenuLogId by remember { mutableStateOf<String?>(null) }
 
-    var pendingUnlockRequest by remember { mutableStateOf<PendingDiaryUnlockRequest?>(null) }
+    var pendingUnlockRequest by remember { mutableStateOf<SecretEntryUnlockRequest?>(null) }
     var pendingDeleteLog by remember { mutableStateOf<DiaryLog?>(null) }
     var exportingLog by remember { mutableStateOf<DiaryLog?>(null) }
+    var showMigrateLegacyDialog by remember { mutableStateOf(false) }
 
     BackHandler(
         enabled = openMenuLogId != null ||
             pendingUnlockRequest != null ||
             pendingDeleteLog != null ||
             exportingLog != null ||
+            showMigrateLegacyDialog ||
             isSearchOpen
     ) {
         when {
@@ -180,6 +184,7 @@ fun HomeScreen(
             pendingUnlockRequest != null -> pendingUnlockRequest = null
             pendingDeleteLog != null -> pendingDeleteLog = null
             exportingLog != null -> exportingLog = null
+            showMigrateLegacyDialog -> showMigrateLegacyDialog = false
             isSearchOpen -> {
                 isSearchOpen = false
                 searchQuery = ""
@@ -197,7 +202,7 @@ fun HomeScreen(
                     log.plainPreview.lowercase(Locale.getDefault()).contains(q) ||
                     log.dateStamp.lowercase(Locale.getDefault()).contains(q) ||
                     (log.updatedDateStamp ?: "").lowercase(Locale.getDefault()).contains(q) ||
-                    stripHtmlTags(log.contentHtml).lowercase(Locale.getDefault()).contains(q)
+                    extractReadablePreviewText(log).lowercase(Locale.getDefault()).contains(q)
             }
         }
         base.sortedWith(
@@ -214,8 +219,7 @@ fun HomeScreen(
             .navigationBarsPadding()
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            // Editorial Top Header
-            HomeHeaderBar(
+            SecretWritingHeaderBar(
                 isSearchOpen = isSearchOpen,
                 searchQuery = searchQuery,
                 onSearchQueryChange = { searchQuery = it },
@@ -228,13 +232,13 @@ fun HomeScreen(
                 onOpenSettings = onOpenSettings
             )
 
-            // Optional Processing / Status Banners
+            // Processing / Status Banners
             if (!processingBanner.isNullOrBlank()) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(colors.surface)
-                        .border(1.dp, colors.accent)
+                        .border(LikkhoHairlineBorder, colors.accent, RectangleShape)
                         .padding(horizontal = 14.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -258,7 +262,7 @@ fun HomeScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(colors.surface)
-                        .border(1.dp, colors.emerald)
+                        .border(LikkhoHairlineBorder, colors.emerald, RectangleShape)
                         .padding(horizontal = 14.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
@@ -283,7 +287,6 @@ fun HomeScreen(
                 }
             }
 
-            // Diary List / Empty State
             if (sortedAndFilteredLogs.isEmpty()) {
                 if (isLoadingLogs) {
                     Box(
@@ -299,10 +302,18 @@ fun HomeScreen(
                         )
                     }
                 } else {
-                    HomeEmptyState(
-                        hasSearchQuery = searchQuery.trim().isNotEmpty(),
-                        searchQuery = searchQuery
-                    )
+                    Column(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                        if (legacyPrimaryLogsCount > 0 && searchQuery.isBlank()) {
+                            LegacyDiariesMoveBanner(
+                                count = legacyPrimaryLogsCount,
+                                onMoveClick = { showMigrateLegacyDialog = true }
+                            )
+                        }
+                        SecretWritingEmptyState(
+                            hasSearchQuery = searchQuery.trim().isNotEmpty(),
+                            searchQuery = searchQuery
+                        )
+                    }
                 }
             } else {
                 LazyColumn(
@@ -311,23 +322,32 @@ fun HomeScreen(
                         .weight(1f),
                     contentPadding = PaddingValues(bottom = 96.dp)
                 ) {
+                    if (legacyPrimaryLogsCount > 0 && searchQuery.isBlank()) {
+                        item(key = "legacy_migration_banner") {
+                            LegacyDiariesMoveBanner(
+                                count = legacyPrimaryLogsCount,
+                                onMoveClick = { showMigrateLegacyDialog = true }
+                            )
+                        }
+                    }
+
                     items(
                         items = sortedAndFilteredLogs,
                         key = { it.id }
                     ) { log ->
-                        DiaryLogRow(
+                        SecretEntryRow(
                             log = log,
                             mediaEngine = mediaEngine,
                             isMenuOpen = openMenuLogId == log.id,
                             isBusy = isBusy,
                             onRowClick = {
                                 if (!log.diaryLockPin.isNullOrEmpty()) {
-                                    pendingUnlockRequest = PendingDiaryUnlockRequest(
+                                    pendingUnlockRequest = SecretEntryUnlockRequest(
                                         log = log,
-                                        action = PendingDiaryUnlockAction.OPEN
+                                        action = SecretEntryUnlockAction.OPEN
                                     )
                                 } else {
-                                    onOpenDiary(log)
+                                    onOpenEntry(log)
                                 }
                             },
                             onToggleMenu = {
@@ -347,9 +367,9 @@ fun HomeScreen(
                             onExport = {
                                 openMenuLogId = null
                                 if (!log.diaryLockPin.isNullOrEmpty()) {
-                                    pendingUnlockRequest = PendingDiaryUnlockRequest(
+                                    pendingUnlockRequest = SecretEntryUnlockRequest(
                                         log = log,
-                                        action = PendingDiaryUnlockAction.EXPORT
+                                        action = SecretEntryUnlockAction.EXPORT
                                     )
                                 } else {
                                     exportingLog = log
@@ -358,43 +378,43 @@ fun HomeScreen(
                             onDelete = {
                                 openMenuLogId = null
                                 if (!log.diaryLockPin.isNullOrEmpty()) {
-                                    pendingUnlockRequest = PendingDiaryUnlockRequest(
+                                    pendingUnlockRequest = SecretEntryUnlockRequest(
                                         log = log,
-                                        action = PendingDiaryUnlockAction.DELETE
+                                        action = SecretEntryUnlockAction.DELETE
                                     )
                                 } else {
                                     pendingDeleteLog = log
                                 }
                             }
                         )
-                        HorizontalDivider(thickness = 1.dp, color = colors.hairline)
+                        HorizontalDivider(thickness = LikkhoHairlineBorder, color = colors.hairline)
                     }
                 }
             }
         }
 
-        // Floating Rectangular "+ Create" Button
+        // Floating Rectangular "+ Write" Button
         Row(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .padding(end = 20.dp, bottom = 24.dp)
-                .height(54.dp)
-                .shadow(6.dp)
+                .height(50.dp)
+                .shadow(6.dp, RectangleShape)
                 .background(colors.accent)
-                .border(1.dp, colors.accentHover)
-                .clickable { onCreateDiary() }
-                .padding(horizontal = 20.dp),
+                .border(LikkhoHairlineBorder, colors.accentHover, RectangleShape)
+                .clickable { onCreateEntry() }
+                .padding(horizontal = 18.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Icon(
-                imageVector = Icons.Outlined.Add,
-                contentDescription = "Create new diary log",
+                imageVector = Icons.Outlined.EditNote,
+                contentDescription = "Write new thought",
                 tint = Color.White,
                 modifier = Modifier.size(20.dp)
             )
             Text(
-                text = "Create",
+                text = "Write",
                 fontFamily = LikkhoFontFamilies.Serif,
                 fontWeight = FontWeight.Bold,
                 fontSize = 18.sp,
@@ -403,50 +423,148 @@ fun HomeScreen(
         }
     }
 
-    // Individual Diary PIN Unlock Dialog
     pendingUnlockRequest?.let { req ->
-        DiaryPinUnlockDialog(
+        SecretEntryPinUnlockDialog(
             log = req.log,
             repository = repository,
             onDismiss = { pendingUnlockRequest = null },
             onUnlocked = {
                 pendingUnlockRequest = null
                 when (req.action) {
-                    PendingDiaryUnlockAction.OPEN -> onOpenDiary(req.log)
-                    PendingDiaryUnlockAction.EXPORT -> exportingLog = req.log
-                    PendingDiaryUnlockAction.DELETE -> pendingDeleteLog = req.log
+                    SecretEntryUnlockAction.OPEN -> onOpenEntry(req.log)
+                    SecretEntryUnlockAction.EXPORT -> exportingLog = req.log
+                    SecretEntryUnlockAction.DELETE -> pendingDeleteLog = req.log
                 }
             }
         )
     }
 
-    // Delete Confirmation Dialog
     pendingDeleteLog?.let { targetLog ->
-        DeleteDiaryConfirmDialog(
+        SecretDeleteConfirmDialog(
             log = targetLog,
             onDismiss = { pendingDeleteLog = null },
             onConfirmDelete = {
                 pendingDeleteLog = null
-                onDeleteDiary(targetLog)
+                onDeleteEntry(targetLog)
             }
         )
     }
 
-    // Multi-Format Export Picker Dialog
     exportingLog?.let { targetLog ->
-        ExportDiaryFormatDialog(
+        SecretExportFormatDialog(
             log = targetLog,
             onDismiss = { exportingLog = null },
             onSelectFormat = { fmt ->
                 exportingLog = null
-                onExportDiary(targetLog, fmt)
+                onExportEntry(targetLog, fmt)
             }
         )
+    }
+
+    if (showMigrateLegacyDialog) {
+        LikkhoHairlineDialog(
+            onDismissRequest = { showMigrateLegacyDialog = false },
+            title = "Move Legacy Diaries?",
+            subtitle = "ONE-TIME SECURE MIGRATION",
+            leadingIcon = Icons.Outlined.DriveFileMove,
+            maxWidth = 410.dp,
+            footer = {
+                LikkhoDialogOutlineButton(
+                    text = "Later",
+                    onClick = { showMigrateLegacyDialog = false }
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                LikkhoDialogPrimaryButton(
+                    text = "Move $legacyPrimaryLogsCount Entries",
+                    onClick = {
+                        showMigrateLegacyDialog = false
+                        onMigrateLegacyPrimaryLogs()
+                    }
+                )
+            }
+        ) {
+            Text(
+                text = "$legacyPrimaryLogsCount older diary ${if (legacyPrimaryLogsCount == 1) "entry was" else "entries were"} found in standard storage from an earlier version.",
+                fontFamily = LikkhoFontFamilies.Sans,
+                fontSize = 12.sp,
+                lineHeight = 18.sp,
+                color = colors.text
+            )
+            Text(
+                text = "Moving them here places all your private diaries strictly inside Secret Writing with their original formatting, photos, audio recordings, and locks intact, while removing them from Everyday storage.",
+                fontFamily = LikkhoFontFamilies.Sans,
+                fontSize = 12.sp,
+                lineHeight = 18.sp,
+                color = colors.muted
+            )
+        }
     }
 }
 
 @Composable
-private fun HomeHeaderBar(
+private fun LegacyDiariesMoveBanner(
+    count: Int,
+    onMoveClick: () -> Unit
+) {
+    val colors = LikkhoTheme.colors
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 10.dp)
+            .background(colors.surface)
+            .border(LikkhoHairlineBorder, colors.accent.copy(alpha = 0.65f), RectangleShape)
+            .clickable { onMoveClick() }
+            .padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(34.dp)
+                .background(colors.accent.copy(alpha = 0.1f))
+                .border(LikkhoHairlineBorder, colors.accent.copy(alpha = 0.4f), RectangleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.DriveFileMove,
+                contentDescription = null,
+                tint = colors.accent,
+                modifier = Modifier.size(18.dp)
+            )
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "Found $count Legacy ${if (count == 1) "Diary" else "Diaries"}",
+                fontFamily = LikkhoFontFamilies.Serif,
+                fontWeight = FontWeight.Bold,
+                fontSize = 15.sp,
+                color = colors.text
+            )
+            Text(
+                text = "Tap to safely import them into Secret Writing",
+                fontFamily = LikkhoFontFamilies.Sans,
+                fontSize = 11.sp,
+                color = colors.muted
+            )
+        }
+        Box(
+            modifier = Modifier
+                .background(colors.accent)
+                .padding(horizontal = 10.dp, vertical = 6.dp)
+        ) {
+            Text(
+                text = "Move",
+                fontFamily = LikkhoFontFamilies.Sans,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 11.sp,
+                color = Color.White
+            )
+        }
+    }
+}
+
+@Composable
+private fun SecretWritingHeaderBar(
     isSearchOpen: Boolean,
     searchQuery: String,
     onSearchQueryChange: (String) -> Unit,
@@ -493,13 +611,13 @@ private fun HomeHeaderBar(
                             .weight(1f)
                             .height(36.dp)
                             .background(colors.bg)
-                            .border(1.dp, colors.accent)
+                            .border(LikkhoHairlineBorder, colors.accent, RectangleShape)
                             .padding(horizontal = 10.dp),
                         contentAlignment = Alignment.CenterStart
                     ) {
                         if (searchQuery.isEmpty()) {
                             Text(
-                                text = "Search diaries...",
+                                text = "Search reflections...",
                                 fontFamily = LikkhoFontFamilies.Sans,
                                 fontSize = 12.sp,
                                 color = colors.muted
@@ -525,7 +643,7 @@ private fun HomeHeaderBar(
                         modifier = Modifier
                             .size(36.dp)
                             .background(colors.bg)
-                            .border(1.dp, colors.border)
+                            .border(LikkhoHairlineBorder, colors.border, RectangleShape)
                             .clickable { onCloseSearch() },
                         contentAlignment = Alignment.Center
                     ) {
@@ -538,13 +656,17 @@ private fun HomeHeaderBar(
                     }
                 }
             } else {
-                Text(
-                    text = "Likkho",
-                    fontFamily = LikkhoFontFamilies.Serif,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 26.sp,
-                    color = colors.text
-                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Secret Writing",
+                        fontFamily = LikkhoFontFamilies.Serif,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 23.sp,
+                        color = colors.text,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
 
             Row(
@@ -554,15 +676,15 @@ private fun HomeHeaderBar(
                 if (!isSearchOpen) {
                     Box(
                         modifier = Modifier
-                            .size(40.dp)
+                            .size(38.dp)
                             .background(colors.bg)
-                            .border(1.dp, colors.border)
+                            .border(LikkhoHairlineBorder, colors.border, RectangleShape)
                             .clickable { onOpenSearch() },
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = Icons.Outlined.Search,
-                            contentDescription = "Search diaries",
+                            contentDescription = "Search entries",
                             tint = colors.text,
                             modifier = Modifier.size(18.dp)
                         )
@@ -571,19 +693,19 @@ private fun HomeHeaderBar(
 
                 Row(
                     modifier = Modifier
-                        .height(40.dp)
+                        .height(38.dp)
                         .background(colors.bg)
-                        .border(1.dp, colors.border)
+                        .border(LikkhoHairlineBorder, colors.border, RectangleShape)
                         .clickable { onLockApp() }
-                        .padding(horizontal = 12.dp),
+                        .padding(horizontal = 11.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Outlined.Lock,
-                        contentDescription = "Instant Lock",
+                        contentDescription = "Lock Vault",
                         tint = colors.accent,
-                        modifier = Modifier.size(16.dp)
+                        modifier = Modifier.size(15.dp)
                     )
                     Text(
                         text = "Lock",
@@ -596,27 +718,27 @@ private fun HomeHeaderBar(
 
                 Box(
                     modifier = Modifier
-                        .size(40.dp)
+                        .size(38.dp)
                         .background(colors.bg)
-                        .border(1.dp, colors.border)
+                        .border(LikkhoHairlineBorder, colors.border, RectangleShape)
                         .clickable { onOpenSettings() },
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = Icons.Outlined.Menu,
-                        contentDescription = "Open Settings",
+                        contentDescription = "Settings",
                         tint = colors.text,
-                        modifier = Modifier.size(20.dp)
+                        modifier = Modifier.size(19.dp)
                     )
                 }
             }
         }
-        HorizontalDivider(thickness = 1.dp, color = colors.border)
+        HorizontalDivider(thickness = LikkhoHairlineBorder, color = colors.border)
     }
 }
 
 @Composable
-private fun HomeEmptyState(
+private fun SecretWritingEmptyState(
     hasSearchQuery: Boolean,
     searchQuery: String
 ) {
@@ -624,14 +746,14 @@ private fun HomeEmptyState(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 24.dp, vertical = 72.dp),
+            .padding(horizontal = 24.dp, vertical = 64.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Box(
             modifier = Modifier
                 .size(48.dp)
                 .background(colors.surface)
-                .border(1.dp, colors.border),
+                .border(LikkhoHairlineBorder, colors.border, RectangleShape),
             contentAlignment = Alignment.Center
         ) {
             Icon(
@@ -643,7 +765,7 @@ private fun HomeEmptyState(
         }
         Spacer(modifier = Modifier.height(16.dp))
         Text(
-            text = if (hasSearchQuery) "No Matching Diaries Found" else "No Logs Yet",
+            text = if (hasSearchQuery) "No Matching Entries" else "Quiet Pages",
             fontFamily = LikkhoFontFamilies.Serif,
             fontWeight = FontWeight.Bold,
             fontSize = 22.sp,
@@ -653,9 +775,9 @@ private fun HomeEmptyState(
         Spacer(modifier = Modifier.height(6.dp))
         Text(
             text = if (hasSearchQuery) {
-                "No diary entry contains \"$searchQuery\"."
+                "No entry contains \"$searchQuery\"."
             } else {
-                "Tap the create button below to start writing."
+                "Tap Write below for distraction-free private reflections."
             },
             fontFamily = LikkhoFontFamilies.Sans,
             fontSize = 12.sp,
@@ -666,7 +788,7 @@ private fun HomeEmptyState(
 }
 
 @Composable
-private fun DiaryLogRow(
+private fun SecretEntryRow(
     log: DiaryLog,
     mediaEngine: NativeMediaEngine,
     isMenuOpen: Boolean,
@@ -680,14 +802,20 @@ private fun DiaryLogRow(
     onDelete: () -> Unit
 ) {
     val colors = LikkhoTheme.colors
-    val isLockedDiary = !log.diaryLockPin.isNullOrEmpty()
-    val nowMs = System.currentTimeMillis()
-    val hasUpcomingReminder = log.reminderAt != null && log.reminderAt > nowMs
+    val isLockedEntry = !log.diaryLockPin.isNullOrEmpty()
+    val thumbRef = remember(log.pfpDataUrl, log.canvasImages) {
+        log.pfpDataUrl?.takeIf { it.isNotBlank() }
+            ?: log.canvasImages.firstOrNull { it.dataUrl.isNotBlank() }?.dataUrl
+    }
 
-    val pfpBitmap by produceState<ImageBitmap?>(initialValue = null, key1 = log.pfpDataUrl) {
+    val thumbBitmap by produceState<ImageBitmap?>(initialValue = null, key1 = thumbRef) {
         value = withContext(Dispatchers.IO) {
-            decodePfpThumbnailBitmap(mediaEngine, log.pfpDataUrl)
+            decodeSecretThumbnailBitmap(mediaEngine, thumbRef)
         }
+    }
+
+    val previewText = remember(log.id, isLockedEntry, log.plainPreview, log.contentHtml) {
+        if (isLockedEntry) "" else extractReadablePreviewText(log)
     }
 
     Row(
@@ -698,34 +826,33 @@ private fun DiaryLogRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // 1:1 Square PFP or Fallback "Likkho" Monograph
+        // 1:1 Editorial Thumbnail / Monograph Fallback
         Box(
             modifier = Modifier
-                .size(52.dp)
-                .background(Color.White)
-                .border(1.dp, colors.border),
+                .size(50.dp)
+                .background(if (thumbBitmap != null) colors.surface else colors.bg)
+                .border(LikkhoHairlineBorder, colors.border, RectangleShape),
             contentAlignment = Alignment.Center
         ) {
-            if (pfpBitmap != null) {
+            if (thumbBitmap != null) {
                 Image(
-                    bitmap = pfpBitmap!!,
+                    bitmap = thumbBitmap!!,
                     contentDescription = log.heading,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize()
                 )
             } else {
                 Text(
-                    text = "Likkho",
+                    text = log.heading.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "L",
                     fontFamily = LikkhoFontFamilies.Serif,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 13.sp,
-                    color = Color(0xFF202122),
+                    fontSize = 20.sp,
+                    color = colors.muted,
                     textAlign = TextAlign.Center
                 )
             }
         }
 
-        // Heading, 1-line preview, Created / Modified / Reminder timestamps
         Column(modifier = Modifier.weight(1f)) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -739,61 +866,60 @@ private fun DiaryLogRow(
                         modifier = Modifier.size(14.dp)
                     )
                 }
-                if (isLockedDiary) {
+                if (isLockedEntry) {
                     Icon(
                         imageVector = Icons.Outlined.Lock,
-                        contentDescription = "Locked Diary",
+                        contentDescription = "Locked",
                         tint = colors.crimson,
                         modifier = Modifier.size(14.dp)
                     )
                 }
                 Text(
-                    text = log.heading.ifBlank { "Untitled" },
+                    text = log.heading.ifBlank { "Untitled Reflection" },
                     fontFamily = LikkhoFontFamilies.Serif,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 20.sp,
+                    fontSize = 19.sp,
                     color = colors.text,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
             }
 
-            val previewText = when {
-                isLockedDiary -> ""
-                log.plainPreview == "Reminder scheduled." -> ""
-                else -> log.plainPreview
+            if (isLockedEntry) {
+                Text(
+                    text = "Locked with entry PIN",
+                    fontFamily = LikkhoFontFamilies.Mono,
+                    fontSize = 11.sp,
+                    color = colors.crimson.copy(alpha = 0.85f),
+                    modifier = Modifier.padding(top = 2.dp)
+                )
+            } else if (previewText.isNotEmpty()) {
+                Text(
+                    text = previewText,
+                    fontFamily = LikkhoFontFamilies.Prose,
+                    fontSize = 13.sp,
+                    color = colors.muted,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 2.dp)
+                )
             }
-            Text(
-                text = previewText,
-                fontFamily = LikkhoFontFamilies.Prose,
-                fontSize = 13.sp,
-                color = colors.muted,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(top = 2.dp)
-            )
 
             Spacer(modifier = Modifier.height(6.dp))
 
-            val createdDate = log.dateStamp.ifBlank { formatShortDate(log.createdAt) }
-            val createdTime = log.timeStamp.ifBlank { formatShortTime(log.createdAt) }
+            val createdDate = log.dateStamp.ifBlank { formatSecretShortDate(log.createdAt) }
+            val createdTime = log.timeStamp.ifBlank { formatSecretShortTime(log.createdAt) }
             val modifiedEpoch = if (log.updatedAt > 0L) log.updatedAt else log.createdAt
-            val modifiedDate = log.updatedDateStamp?.takeIf { it.isNotBlank() } ?: formatShortDate(modifiedEpoch)
-            val modifiedTime = log.updatedTimeStamp?.takeIf { it.isNotBlank() } ?: formatShortTime(modifiedEpoch)
+            val modifiedDate = log.updatedDateStamp?.takeIf { it.isNotBlank() } ?: formatSecretShortDate(modifiedEpoch)
+            val modifiedTime = log.updatedTimeStamp?.takeIf { it.isNotBlank() } ?: formatSecretShortTime(modifiedEpoch)
+            val showModified = log.updatedAt > log.createdAt + 60_000L
 
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 Text(
-                    text = "Created:",
-                    fontFamily = LikkhoFontFamilies.Mono,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 10.sp,
-                    color = colors.text.copy(alpha = 0.8f)
-                )
-                Text(
-                    text = "$createdDate · $createdTime",
+                    text = if (showModified) "$modifiedDate · $modifiedTime" else "$createdDate · $createdTime",
                     style = TextStyle(
                         fontFamily = LikkhoFontFamilies.Mono,
                         fontSize = 10.sp,
@@ -803,55 +929,45 @@ private fun DiaryLogRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-            }
 
-            Spacer(modifier = Modifier.height(2.dp))
-
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                Text(
-                    text = "Modified:",
-                    fontFamily = LikkhoFontFamilies.Mono,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 10.sp,
-                    color = colors.text.copy(alpha = 0.8f)
-                )
-                Text(
-                    text = "$modifiedDate · $modifiedTime",
-                    style = TextStyle(
-                        fontFamily = LikkhoFontFamilies.Mono,
-                        fontSize = 10.sp,
-                        color = colors.muted,
-                        fontFeatureSettings = "tnum"
-                    ),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                if (hasUpcomingReminder) {
-                    Text(
-                        text = "·",
-                        fontFamily = LikkhoFontFamilies.Mono,
-                        fontSize = 10.sp,
-                        color = colors.muted
-                    )
-                    Icon(
-                        imageVector = Icons.Outlined.NotificationsActive,
-                        contentDescription = "Reminder",
-                        tint = colors.accent,
-                        modifier = Modifier.size(11.dp)
-                    )
-                    Text(
-                        text = formatShortTime(log.reminderAt!!),
-                        style = TextStyle(
+                if (!isLockedEntry && log.canvasImages.isNotEmpty()) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Image,
+                            contentDescription = null,
+                            tint = colors.accent,
+                            modifier = Modifier.size(11.dp)
+                        )
+                        Text(
+                            text = "${log.canvasImages.size}",
                             fontFamily = LikkhoFontFamilies.Mono,
                             fontSize = 10.sp,
-                            color = colors.accent,
-                            fontFeatureSettings = "tnum"
-                        ),
-                        maxLines = 1
-                    )
+                            color = colors.accent
+                        )
+                    }
+                }
+
+                if (!isLockedEntry && log.audioAttachments.isNotEmpty()) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.GraphicEq,
+                            contentDescription = null,
+                            tint = colors.accent,
+                            modifier = Modifier.size(11.dp)
+                        )
+                        Text(
+                            text = "${log.audioAttachments.size}",
+                            fontFamily = LikkhoFontFamilies.Mono,
+                            fontSize = 10.sp,
+                            color = colors.accent
+                        )
+                    }
                 }
             }
         }
@@ -860,13 +976,13 @@ private fun DiaryLogRow(
         Box {
             Box(
                 modifier = Modifier
-                    .size(40.dp)
+                    .size(38.dp)
                     .clickable { onToggleMenu() },
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = Icons.Outlined.MoreVert,
-                    contentDescription = "Log options",
+                    contentDescription = "Entry options",
                     tint = colors.muted,
                     modifier = Modifier.size(20.dp)
                 )
@@ -981,7 +1097,7 @@ private fun DiaryLogRow(
 }
 
 @Composable
-private fun DiaryPinUnlockDialog(
+private fun SecretEntryPinUnlockDialog(
     log: DiaryLog,
     repository: NativeVaultRepository,
     onDismiss: () -> Unit,
@@ -1034,7 +1150,7 @@ private fun DiaryPinUnlockDialog(
                     cooldownSec = fail.cooldownSeconds
                     errorMsg = "Incorrect passcode. Locked for ${fail.cooldownSeconds}s."
                 } else {
-                    errorMsg = "Incorrect diary passcode."
+                    errorMsg = "Incorrect entry passcode."
                 }
             }
         }
@@ -1042,7 +1158,7 @@ private fun DiaryPinUnlockDialog(
 
     LikkhoHairlineDialog(
         onDismissRequest = onDismiss,
-        title = "Unlock \"${log.heading.ifBlank { "Diary" }}\"",
+        title = "Unlock \"${log.heading.ifBlank { "Entry" }}\"",
         leadingIcon = Icons.Outlined.Lock,
         leadingIconTint = colors.crimson,
         maxWidth = 360.dp,
@@ -1089,7 +1205,7 @@ private fun DiaryPinUnlockDialog(
 
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(
-                text = "Enter Diary Passcode",
+                text = "Enter Entry PIN",
                 fontFamily = LikkhoFontFamilies.Sans,
                 fontWeight = FontWeight.Medium,
                 fontSize = 12.sp,
@@ -1099,7 +1215,6 @@ private fun DiaryPinUnlockDialog(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(40.dp)
-                    .alpha(if (cooldownSec > 0) 0.5f else 1f)
                     .background(colors.surface)
                     .border(LikkhoHairlineBorder, colors.border, RectangleShape)
                     .padding(horizontal = 12.dp),
@@ -1145,7 +1260,7 @@ private fun DiaryPinUnlockDialog(
 }
 
 @Composable
-private fun DeleteDiaryConfirmDialog(
+private fun SecretDeleteConfirmDialog(
     log: DiaryLog,
     onDismiss: () -> Unit,
     onConfirmDelete: () -> Unit
@@ -1184,7 +1299,7 @@ private fun DeleteDiaryConfirmDialog(
 }
 
 @Composable
-private fun ExportDiaryFormatDialog(
+internal fun SecretExportFormatDialog(
     log: DiaryLog,
     onDismiss: () -> Unit,
     onSelectFormat: (NativeExportFormat) -> Unit
@@ -1192,7 +1307,7 @@ private fun ExportDiaryFormatDialog(
     val colors = LikkhoTheme.colors
     LikkhoHairlineDialog(
         onDismissRequest = onDismiss,
-        title = "Export \"${log.heading.ifBlank { "Diary" }}\"",
+        title = "Export \"${log.heading.ifBlank { "Entry" }}\"",
         leadingIcon = Icons.Outlined.FileDownload,
         leadingIconTint = colors.accent,
         maxWidth = 420.dp,
@@ -1210,8 +1325,7 @@ private fun ExportDiaryFormatDialog(
             color = colors.muted
         )
 
-        val chunked = NATIVE_EXPORT_FORMATS.chunked(2)
-        chunked.forEach { pair ->
+        SECRET_EXPORT_FORMATS.chunked(2).forEach { pair ->
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1251,33 +1365,32 @@ private fun ExportDiaryFormatDialog(
     }
 }
 
-private fun decodePfpThumbnailBitmap(
+private fun decodeSecretThumbnailBitmap(
     mediaEngine: NativeMediaEngine,
-    pfpRef: String?
+    ref: String?
 ): ImageBitmap? {
-    if (pfpRef.isNullOrBlank()) return null
+    if (ref.isNullOrBlank()) return null
     return try {
-        if (pfpRef.startsWith("data:image/")) {
-            val comma = pfpRef.indexOf(',')
+        if (ref.startsWith("data:image/")) {
+            val comma = ref.indexOf(',')
             if (comma < 0) return null
-            val bytes = Base64.decode(pfpRef.substring(comma + 1), Base64.DEFAULT)
+            val bytes = Base64.decode(ref.substring(comma + 1), Base64.DEFAULT)
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-            val sample = calculateSimpleSampleSize(
+            val sample = calculateSecretSampleSize(
                 bounds.outWidth,
                 bounds.outHeight,
                 NativeMediaEngine.DEFAULT_PFP_PREVIEW_PX
             )
-            val bmp = BitmapFactory.decodeByteArray(
+            BitmapFactory.decodeByteArray(
                 bytes,
                 0,
                 bytes.size,
                 BitmapFactory.Options().apply { inSampleSize = sample }
-            )
-            bmp?.asImageBitmap()
+            )?.asImageBitmap()
         } else {
             val previewFile = mediaEngine.getOrGeneratePreviewFile(
-                mediaIdOrRef = pfpRef,
+                mediaIdOrRef = ref,
                 maxPreviewPx = NativeMediaEngine.DEFAULT_PFP_PREVIEW_PX,
                 isPfp = true
             ) ?: return null
@@ -1288,7 +1401,7 @@ private fun decodePfpThumbnailBitmap(
     }
 }
 
-private fun calculateSimpleSampleSize(width: Int, height: Int, maxDim: Int): Int {
+private fun calculateSecretSampleSize(width: Int, height: Int, maxDim: Int): Int {
     if (width <= 0 || height <= 0) return 1
     var sample = 1
     var curW = width
@@ -1301,19 +1414,26 @@ private fun calculateSimpleSampleSize(width: Int, height: Int, maxDim: Int): Int
     return sample
 }
 
-private val HTML_TAG_REGEX = Regex("<[^>]*>")
-
-private fun stripHtmlTags(html: String): String {
-    if (html.isBlank()) return ""
-    return html.replace(HTML_TAG_REGEX, " ")
+private fun extractReadablePreviewText(log: DiaryLog): String {
+    val cleanPlain = log.plainPreview.trim()
+    if (cleanPlain.isNotEmpty() && cleanPlain != "Reminder scheduled.") {
+        return cleanPlain
+    }
+    if (log.contentHtml.isBlank()) return ""
+    return HtmlCompat.fromHtml(log.contentHtml, HtmlCompat.FROM_HTML_MODE_LEGACY)
+        .toString()
+        .replace('\u00A0', ' ')
+        .replace(Regex("\\s+"), " ")
+        .trim()
+        .take(180)
 }
 
-private fun formatShortDate(epochMs: Long): String {
+private fun formatSecretShortDate(epochMs: Long): String {
     if (epochMs <= 0L) return ""
     return SimpleDateFormat("dd MMM yyyy", Locale.ENGLISH).format(Date(epochMs))
 }
 
-private fun formatShortTime(epochMs: Long): String {
+private fun formatSecretShortTime(epochMs: Long): String {
     if (epochMs <= 0L) return ""
     return SimpleDateFormat("hh:mm a", Locale.ENGLISH).format(Date(epochMs))
 }

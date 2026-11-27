@@ -19,14 +19,11 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
@@ -34,29 +31,18 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
-import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.Book
-import androidx.compose.material.icons.outlined.Check
-import androidx.compose.material.icons.outlined.CheckBox
-import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.DarkMode
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.DriveFileMove
 import androidx.compose.material.icons.outlined.Fingerprint
 import androidx.compose.material.icons.outlined.Fullscreen
 import androidx.compose.material.icons.outlined.Info
-import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Lock
-import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.Restore
-import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material.icons.outlined.Spellcheck
 import androidx.compose.material.icons.outlined.SystemUpdate
-import androidx.compose.material.icons.outlined.Visibility
-import androidx.compose.material.icons.outlined.VisibilityOff
-import androidx.compose.material.icons.outlined.VpnKey
 import androidx.compose.material.icons.outlined.WarningAmber
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -81,17 +67,13 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalUriHandler
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -102,18 +84,13 @@ import com.likkho.diary.nativeapp.crypto.StreamCryptoEngine
 import com.likkho.diary.nativeapp.data.NativeVaultRepository
 import com.likkho.diary.nativeapp.export.NativeExportEngine
 import com.likkho.diary.nativeapp.media.NativeMediaEngine
-import com.likkho.diary.nativeapp.model.AudioFormatOption
-import com.likkho.diary.nativeapp.model.CustomFontItem
 import com.likkho.diary.nativeapp.model.DiaryLog
-import com.likkho.diary.nativeapp.model.MicRecordingSettings
+import com.likkho.diary.nativeapp.model.VaultBackupBundle
+import com.likkho.diary.nativeapp.model.VaultMode
 import com.likkho.diary.nativeapp.ui.components.LikkhoDialogOutlineButton
 import com.likkho.diary.nativeapp.ui.components.LikkhoDialogPrimaryButton
 import com.likkho.diary.nativeapp.ui.components.LikkhoHairlineBorder
 import com.likkho.diary.nativeapp.ui.components.LikkhoHairlineDialog
-import com.likkho.diary.nativeapp.model.QuickNote
-import com.likkho.diary.nativeapp.model.SavedPasswordItem
-import com.likkho.diary.nativeapp.model.VaultBackupBundle
-import com.likkho.diary.nativeapp.model.VaultMode
 import com.likkho.diary.nativeapp.ui.theme.LikkhoFontFamilies
 import com.likkho.diary.nativeapp.ui.theme.LikkhoTheme
 import kotlinx.coroutines.Dispatchers
@@ -125,16 +102,12 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Locale
-import java.util.UUID
 import kotlin.math.hypot
 
 enum class SettingsSubPage {
     MAIN,
-    PASSWORDS,
-    QUICK_NOTES,
     BACKUP_RESTORE,
     BACKED_UP_DIARIES,
-    WORD_ANALYSIS,
     LEGAL_ABOUT
 }
 
@@ -148,24 +121,7 @@ private data class GithubUpdateCheckResult(
     val error: String? = null
 )
 
-private data class SavedWordAnalysisRecord(
-    val id: String,
-    val word: String,
-    val sourceTitle: String,
-    val analyzedAt: Long,
-    val phonetic: String,
-    val syllables: String,
-    val partOfSpeech: String,
-    val meanings: List<String>,
-    val synonyms: List<String>,
-    val antonyms: List<String>,
-    val usageExamples: List<String>,
-    val etymology: String,
-    val mnemonic: String,
-    val rawJson: JSONObject
-)
-
-private const val APP_CURRENT_VERSION = "2.1.6"
+private const val APP_CURRENT_VERSION = "3.0.0"
 private const val DEFAULT_GITHUB_REPO = "fofoxoxo/Likkho"
 private const val AUTHOR_NAME = "Sayan Saha"
 private const val AUTHOR_EMAIL = "sayan996969saha@gmail.com"
@@ -180,19 +136,16 @@ fun SettingsScreen(
     isDarkTheme: Boolean,
     isFullScreen: Boolean,
     logs: List<DiaryLog>,
-    customFonts: List<CustomFontItem>,
-    micSettings: MicRecordingSettings,
-    quickNotes: List<QuickNote>,
+    legacyPrimaryLogsCount: Int = 0,
     repository: NativeVaultRepository,
     streamCryptoEngine: StreamCryptoEngine,
     mediaEngine: NativeMediaEngine,
     exportEngine: NativeExportEngine,
     onToggleDarkTheme: (Boolean) -> Unit,
     onToggleFullScreen: (Boolean) -> Unit,
-    onMicSettingsChanged: (MicRecordingSettings) -> Unit,
-    onQuickNotesUpdated: (List<QuickNote>) -> Unit,
     onBundleRestored: (VaultBackupBundle) -> Unit,
     onRestoreSingleDiary: (DiaryLog) -> Unit,
+    onLegacyPrimaryLogsMigrated: (List<DiaryLog>) -> Unit = {},
     onSwitchedToPrimaryVault: () -> Unit,
     onClearAllDataCompleted: () -> Unit,
     onBack: () -> Unit,
@@ -211,12 +164,13 @@ fun SettingsScreen(
     var hasDecoyPasscode by remember(vaultMode) { mutableStateOf(repository.hasDecoyPasscode()) }
     var isBiometricEnabled by remember(vaultMode) { mutableStateOf(repository.isBiometricEnabled()) }
 
-    // Passcode setup dialog state (supports both standard vault PIN and 10s-hold covert Decoy PIN)
+    // Passcode setup dialog state (supports both Everyday vault PIN and Secret Writing PIN / 10s-hold covert gesture)
     var showPasscodeDialog by remember { mutableStateOf(false) }
     var isDecoyPinTarget by remember { mutableStateOf(false) }
 
-    // Mic Settings dialog state
-    var showMicDialog by remember { mutableStateOf(false) }
+    // Legacy Diaries migration confirmation (Secret Writing Mode only)
+    var showLegacyMigrateDialog by remember { mutableStateOf(false) }
+    var isMigratingLegacy by remember { mutableStateOf(false) }
 
     // Update checker state
     var isCheckingUpdate by remember { mutableStateOf(false) }
@@ -310,8 +264,6 @@ fun SettingsScreen(
             BackupRestoreScreen(
                 vaultMode = vaultMode,
                 logs = logs,
-                customFonts = customFonts,
-                micSettings = micSettings,
                 repository = repository,
                 streamCryptoEngine = streamCryptoEngine,
                 onBundleRestored = onBundleRestored,
@@ -322,48 +274,20 @@ fun SettingsScreen(
         }
 
         SettingsSubPage.BACKED_UP_DIARIES -> {
-            BackedUpDiariesScreen(
-                vaultMode = vaultMode,
-                repository = repository,
-                streamCryptoEngine = streamCryptoEngine,
-                mediaEngine = mediaEngine,
-                onRestoreSingleDiary = onRestoreSingleDiary,
-                onBack = { currentSubPage = SettingsSubPage.MAIN },
-                modifier = modifier
-            )
-            return
-        }
-
-        SettingsSubPage.QUICK_NOTES -> {
-            QuickNotesManagerScreen(
-                notes = quickNotes,
-                vaultMode = vaultMode,
-                repository = repository,
-                onNotesUpdated = onQuickNotesUpdated,
-                onBack = { currentSubPage = SettingsSubPage.MAIN },
-                modifier = modifier
-            )
-            return
-        }
-
-        SettingsSubPage.PASSWORDS -> {
-            SavedPasswordsSubScreen(
-                vaultMode = vaultMode,
-                repository = repository,
-                onBack = { currentSubPage = SettingsSubPage.MAIN },
-                modifier = modifier
-            )
-            return
-        }
-
-        SettingsSubPage.WORD_ANALYSIS -> {
-            SavedWordAnalysisSubScreen(
-                vaultMode = vaultMode,
-                repository = repository,
-                onBack = { currentSubPage = SettingsSubPage.MAIN },
-                modifier = modifier
-            )
-            return
+            if (vaultMode == VaultMode.DECOY) {
+                BackedUpDiariesScreen(
+                    vaultMode = vaultMode,
+                    repository = repository,
+                    streamCryptoEngine = streamCryptoEngine,
+                    mediaEngine = mediaEngine,
+                    onRestoreSingleDiary = onRestoreSingleDiary,
+                    onBack = { currentSubPage = SettingsSubPage.MAIN },
+                    modifier = modifier
+                )
+                return
+            } else {
+                currentSubPage = SettingsSubPage.MAIN
+            }
         }
 
         SettingsSubPage.LEGAL_ABOUT -> {
@@ -384,7 +308,7 @@ fun SettingsScreen(
     BackHandler {
         when {
             showPasscodeDialog -> showPasscodeDialog = false
-            showMicDialog -> showMicDialog = false
+            showLegacyMigrateDialog -> if (!isMigratingLegacy) showLegacyMigrateDialog = false
             updateModalResult != null -> updateModalResult = null
             else -> onBack()
         }
@@ -482,7 +406,7 @@ fun SettingsScreen(
             // Group 2: Security & Privacy
             SettingsGroup(title = "SECURITY & PRIVACY") {
                 val activePasscodeEnabled = if (vaultMode == VaultMode.DECOY) hasDecoyPasscode else hasPrimaryPasscode
-                // Set Passcode row with covert 10-second continuous hold gesture when in Primary vault with PIN enabled
+                // Everyday PIN row preserves covert 10-second continuous hold gesture in Primary vault with zero UI hints
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -540,17 +464,22 @@ fun SettingsScreen(
                     )
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Set Passcode",
+                            text = if (vaultMode == VaultMode.DECOY) "Secret Writing Passcode" else "Set Passcode",
                             fontFamily = LikkhoFontFamilies.Serif,
                             fontWeight = FontWeight.Bold,
                             fontSize = 17.sp,
                             color = colors.text
                         )
                         Text(
-                            text = if (activePasscodeEnabled) {
-                                "Enabled (Tap to Change or Remove)"
-                            } else {
-                                "Off (Protect app with a 4–6 digit PIN)"
+                            text = when {
+                                vaultMode == VaultMode.DECOY && activePasscodeEnabled ->
+                                    "Enabled (Manual PIN only · Biometrics disabled)"
+                                vaultMode == VaultMode.DECOY ->
+                                    "Off (Protect Secret Writing with a manual 4–6 digit PIN)"
+                                activePasscodeEnabled ->
+                                    "Enabled (Tap to Change or Remove)"
+                                else ->
+                                    "Off (Protect Everyday vault with a 4–6 digit PIN)"
                             },
                             fontFamily = LikkhoFontFamilies.Sans,
                             fontSize = 12.sp,
@@ -571,67 +500,58 @@ fun SettingsScreen(
                         icon = Icons.Outlined.Fingerprint,
                         title = "Biometric Unlock",
                         subtitle = if (hasPrimaryPasscode) {
-                            "Unlock vault with fingerprint or face"
+                            "Unlock Everyday vault with fingerprint or face"
                         } else {
-                            "Set an App Passcode first to enable"
+                            "Set an Everyday passcode first to enable"
                         },
                         checked = isBiometricEnabled,
                         enabled = hasPrimaryPasscode,
                         onCheckedChange = { handleBiometricToggle(it) }
                     )
                 }
-
-                HorizontalDivider(thickness = 1.dp, color = colors.hairline)
-                SettingsNavRow(
-                    icon = Icons.Outlined.VpnKey,
-                    title = "Passwords",
-                    subtitle = "Save and manage encrypted login passwords",
-                    onClick = { currentSubPage = SettingsSubPage.PASSWORDS }
-                )
             }
 
-            // Group 3: Notes & Backup
-            SettingsGroup(title = "NOTES & BACKUP") {
-                SettingsNavRow(
-                    icon = Icons.Outlined.CheckBox,
-                    title = "Quick Notes",
-                    subtitle = "Pinned checklists & notification shade quick notes",
-                    onClick = { currentSubPage = SettingsSubPage.QUICK_NOTES }
-                )
-                HorizontalDivider(thickness = 1.dp, color = colors.hairline)
-                SettingsNavRow(
-                    icon = Icons.Outlined.Restore,
-                    title = "Backup & Restore",
-                    subtitle = "Encrypted LKSTRM02 streaming backup to device folder",
-                    onClick = { currentSubPage = SettingsSubPage.BACKUP_RESTORE }
-                )
-                HorizontalDivider(thickness = 1.dp, color = colors.hairline)
-                SettingsNavRow(
-                    icon = Icons.Outlined.Book,
-                    title = "Backed-up Diaries",
-                    subtitle = "Read or restore entries directly from your vault backup",
-                    onClick = { currentSubPage = SettingsSubPage.BACKED_UP_DIARIES }
-                )
+            // Legacy Data Migration (Secret Writing Mode ONLY when older Primary diaries exist)
+            if (vaultMode == VaultMode.DECOY && legacyPrimaryLogsCount > 0) {
+                SettingsGroup(title = "LEGACY DATA MIGRATION") {
+                    SettingsNavRow(
+                        icon = Icons.Outlined.DriveFileMove,
+                        title = "Move Legacy Diaries Here",
+                        subtitle = "Import $legacyPrimaryLogsCount older ${if (legacyPrimaryLogsCount == 1) "diary" else "diaries"} safely into Secret Writing",
+                        onClick = { showLegacyMigrateDialog = true }
+                    )
+                }
             }
 
-            // Group 4: Tools & Audio
-            SettingsGroup(title = "TOOLS & AUDIO") {
-                SettingsNavRow(
-                    icon = Icons.Outlined.Spellcheck,
-                    title = "Saved Word Analysis",
-                    subtitle = "A–Z dictionary archive of analyzed diary vocabulary",
-                    onClick = { currentSubPage = SettingsSubPage.WORD_ANALYSIS }
-                )
-                HorizontalDivider(thickness = 1.dp, color = colors.hairline)
-                SettingsNavRow(
-                    icon = Icons.Outlined.Mic,
-                    title = "Audio Recording Settings",
-                    subtitle = ".${micSettings.format.wireValue.uppercase(Locale.US)} · ${formatSampleRateLabel(micSettings.sampleRate)} · ${micSettings.bitRate / 1000} kbps",
-                    onClick = { showMicDialog = true }
-                )
+            // Group 3: Backup (Strictly isolated by vault mode)
+            if (vaultMode == VaultMode.PRIMARY) {
+                SettingsGroup(title = "BACKUP") {
+                    SettingsNavRow(
+                        icon = Icons.Outlined.Restore,
+                        title = "Backup & Restore",
+                        subtitle = "Encrypted LKSTRM02 backup of notes, trackers, reminders, documents & passwords",
+                        onClick = { currentSubPage = SettingsSubPage.BACKUP_RESTORE }
+                    )
+                }
+            } else {
+                SettingsGroup(title = "VAULT & BACKUP") {
+                    SettingsNavRow(
+                        icon = Icons.Outlined.Restore,
+                        title = "Backup & Restore",
+                        subtitle = "Encrypted LKSTRM02 streaming backup to device folder",
+                        onClick = { currentSubPage = SettingsSubPage.BACKUP_RESTORE }
+                    )
+                    HorizontalDivider(thickness = 1.dp, color = colors.hairline)
+                    SettingsNavRow(
+                        icon = Icons.Outlined.Book,
+                        title = "Backed-up Diaries",
+                        subtitle = "Read or restore entries directly from your vault backup",
+                        onClick = { currentSubPage = SettingsSubPage.BACKED_UP_DIARIES }
+                    )
+                }
             }
 
-            // Group 5: About & Updates
+            // Group 4: About & Updates
             SettingsGroup(title = "ABOUT & UPDATES") {
                 SettingsNavRow(
                     icon = Icons.Outlined.Info,
@@ -688,7 +608,7 @@ fun SettingsScreen(
         }
     }
 
-    // ==================== Passcode Dialog (Primary or Covert Decoy) ====================
+    // ==================== Passcode Dialog (Everyday or Secret) ====================
     if (showPasscodeDialog) {
         PasscodeSetupDialog(
             isDecoyTarget = isDecoyPinTarget,
@@ -714,22 +634,60 @@ fun SettingsScreen(
         )
     }
 
-    // ==================== Audio Recording Settings Dialog ====================
-    if (showMicDialog) {
-        AudioSettingsDialog(
-            initialSettings = micSettings,
-            onSave = { next ->
-                scope.launch {
-                    withContext(Dispatchers.IO) {
-                        repository.saveMicSettings(vaultMode, next)
+    // ==================== Legacy Diaries Migration Confirm Dialog ====================
+    if (showLegacyMigrateDialog) {
+        LikkhoHairlineDialog(
+            onDismissRequest = { if (!isMigratingLegacy) showLegacyMigrateDialog = false },
+            title = "Move Legacy Diaries?",
+            subtitle = "IMPORT TO SECRET WRITING",
+            leadingIcon = Icons.Outlined.DriveFileMove,
+            dismissEnabled = !isMigratingLegacy,
+            maxWidth = 410.dp,
+            footer = {
+                LikkhoDialogOutlineButton(
+                    text = "Cancel",
+                    enabled = !isMigratingLegacy,
+                    onClick = { showLegacyMigrateDialog = false }
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                LikkhoDialogPrimaryButton(
+                    text = if (isMigratingLegacy) "Moving..." else "Move Here",
+                    enabled = !isMigratingLegacy,
+                    onClick = {
+                        isMigratingLegacy = true
+                        scope.launch {
+                            val (addedCount, updatedLogs) = withContext(Dispatchers.IO) {
+                                val added = repository.migrateLegacyPrimaryLogsToSecretVault(removeFromPrimary = true)
+                                added to repository.loadLogs(VaultMode.DECOY)
+                            }
+                            isMigratingLegacy = false
+                            showLegacyMigrateDialog = false
+                            onLegacyPrimaryLogsMigrated(updatedLogs)
+                            statusToast = if (addedCount > 0) {
+                                "Moved $addedCount legacy ${if (addedCount == 1) "diary" else "diaries"} into Secret Writing."
+                            } else {
+                                "Legacy diaries synced into Secret Writing."
+                            }
+                        }
                     }
-                    onMicSettingsChanged(next)
-                    showMicDialog = false
-                    statusToast = "Audio settings updated."
-                }
-            },
-            onDismiss = { showMicDialog = false }
-        )
+                )
+            }
+        ) {
+            Text(
+                text = "$legacyPrimaryLogsCount older ${if (legacyPrimaryLogsCount == 1) "diary was" else "diaries were"} found in standard storage from an earlier app version.",
+                fontFamily = LikkhoFontFamilies.Sans,
+                fontSize = 12.sp,
+                lineHeight = 18.sp,
+                color = colors.text
+            )
+            Text(
+                text = "Moving them transfers all entries cleanly into Secret Writing while removing them from Everyday storage.",
+                fontFamily = LikkhoFontFamilies.Sans,
+                fontSize = 12.sp,
+                lineHeight = 18.sp,
+                color = colors.muted
+            )
+        }
     }
 
     // ==================== App Update Dialog ====================
@@ -926,7 +884,7 @@ private fun PasscodeSetupDialog(
 
     LikkhoHairlineDialog(
         onDismissRequest = onDismiss,
-        title = if (isDecoyTarget) "Set Covert Decoy PIN" else "Set Passcode",
+        title = if (isDecoyTarget) "Set Secret Passcode" else "Set Passcode",
         leadingIcon = Icons.Outlined.Lock,
         maxWidth = 400.dp,
         footer = {
@@ -1053,982 +1011,6 @@ private fun PinDigitsInputField(
     }
 }
 
-// ==================== Audio Recording Settings Dialog ====================
-
-@Composable
-private fun AudioSettingsDialog(
-    initialSettings: MicRecordingSettings,
-    onSave: (MicRecordingSettings) -> Unit,
-    onDismiss: () -> Unit
-) {
-    val colors = LikkhoTheme.colors
-    var selectedFormat by remember(initialSettings) { mutableStateOf(initialSettings.format) }
-    var selectedSampleRate by remember(initialSettings) { mutableStateOf(initialSettings.sampleRate) }
-    var selectedBitRate by remember(initialSettings) { mutableStateOf(initialSettings.bitRate) }
-
-    val sampleRates = listOf(8000, 16000, 22050, 44100, 48000)
-    val bitRates = listOf(64000, 128000, 192000, 256000, 320000)
-
-    LikkhoHairlineDialog(
-        onDismissRequest = onDismiss,
-        title = "Audio Recording Settings",
-        leadingIcon = Icons.Outlined.Mic,
-        maxWidth = 440.dp,
-        maxHeight = 620.dp,
-        bodyPadding = 16.dp,
-        footer = {
-            LikkhoDialogOutlineButton(
-                text = "Cancel",
-                onClick = onDismiss
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            LikkhoDialogPrimaryButton(
-                text = "Save",
-                onClick = {
-                    onSave(
-                        MicRecordingSettings(
-                            format = selectedFormat,
-                            sampleRate = selectedSampleRate,
-                            bitRate = selectedBitRate
-                        )
-                    )
-                }
-            )
-        }
-    ) {
-        // Format Grid (4 columns)
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(
-                text = "RECORDING FORMAT",
-                fontFamily = LikkhoFontFamilies.Sans,
-                fontWeight = FontWeight.Bold,
-                fontSize = 11.sp,
-                color = colors.muted
-            )
-            AudioFormatOption.entries.chunked(4).forEach { rowFormats ->
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    rowFormats.forEach { fmt ->
-                        val active = selectedFormat == fmt
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(36.dp)
-                                .background(if (active) colors.accent else colors.surface)
-                                .border(LikkhoHairlineBorder, if (active) colors.accent else colors.border, RectangleShape)
-                                .clickable { selectedFormat = fmt },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = ".${fmt.wireValue.uppercase(Locale.US)}",
-                                fontFamily = LikkhoFontFamilies.Mono,
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 11.sp,
-                                color = if (active) Color.White else colors.text
-                            )
-                        }
-                    }
-                    repeat(4 - rowFormats.size) {
-                        Spacer(modifier = Modifier.weight(1f))
-                    }
-                }
-            }
-        }
-
-        // Sample Rate
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(
-                text = "SAMPLE RATE",
-                fontFamily = LikkhoFontFamilies.Sans,
-                fontWeight = FontWeight.Bold,
-                fontSize = 11.sp,
-                color = colors.muted
-            )
-            sampleRates.chunked(3).forEach { rowRates ->
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    rowRates.forEach { rate ->
-                        val active = selectedSampleRate == rate
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(36.dp)
-                                .background(if (active) colors.accent else colors.surface)
-                                .border(LikkhoHairlineBorder, if (active) colors.accent else colors.border, RectangleShape)
-                                .clickable { selectedSampleRate = rate },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = formatSampleRateLabel(rate),
-                                fontFamily = LikkhoFontFamilies.Mono,
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 11.sp,
-                                color = if (active) Color.White else colors.text
-                            )
-                        }
-                    }
-                    repeat(3 - rowRates.size) {
-                        Spacer(modifier = Modifier.weight(1f))
-                    }
-                }
-            }
-        }
-
-        // Bitrate
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(
-                text = "BITRATE",
-                fontFamily = LikkhoFontFamilies.Sans,
-                fontWeight = FontWeight.Bold,
-                fontSize = 11.sp,
-                color = colors.muted
-            )
-            bitRates.chunked(3).forEach { rowBits ->
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    rowBits.forEach { bps ->
-                        val active = selectedBitRate == bps
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(36.dp)
-                                .background(if (active) colors.accent else colors.surface)
-                                .border(LikkhoHairlineBorder, if (active) colors.accent else colors.border, RectangleShape)
-                                .clickable { selectedBitRate = bps },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = "${bps / 1000} kbps",
-                                fontFamily = LikkhoFontFamilies.Mono,
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 11.sp,
-                                color = if (active) Color.White else colors.text
-                            )
-                        }
-                    }
-                    repeat(3 - rowBits.size) {
-                        Spacer(modifier = Modifier.weight(1f))
-                    }
-                }
-            }
-        }
-    }
-}
-
-// ==================== Saved Passwords Sub-Screen (3-Column Chips Grid) ====================
-
-@Composable
-private fun SavedPasswordsSubScreen(
-    vaultMode: VaultMode,
-    repository: NativeVaultRepository,
-    onBack: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val colors = LikkhoTheme.colors
-    val clipboardManager = LocalClipboardManager.current
-    val haptic = LocalHapticFeedback.current
-    val scope = rememberCoroutineScope()
-
-    var itemsList by remember(vaultMode) { mutableStateOf(repository.loadSavedPasswords(vaultMode)) }
-    var showAddDialog by remember { mutableStateOf(false) }
-    var viewingItem by remember { mutableStateOf<SavedPasswordItem?>(null) }
-    var feedbackBanner by remember { mutableStateOf<String?>(null) }
-
-    BackHandler {
-        when {
-            viewingItem != null -> viewingItem = null
-            showAddDialog -> showAddDialog = false
-            else -> onBack()
-        }
-    }
-
-    LaunchedEffect(feedbackBanner) {
-        if (feedbackBanner != null) {
-            delay(2500L)
-            feedbackBanner = null
-        }
-    }
-
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .background(colors.bg)
-            .statusBarsPadding()
-            .navigationBarsPadding()
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(56.dp)
-                .background(colors.surface)
-                .padding(horizontal = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.weight(1f)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clickable { onBack() },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
-                        contentDescription = "Back",
-                        tint = colors.text,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-                Icon(
-                    imageVector = Icons.Outlined.VpnKey,
-                    contentDescription = null,
-                    tint = colors.accent,
-                    modifier = Modifier.size(18.dp)
-                )
-                Text(
-                    text = "Passwords",
-                    fontFamily = LikkhoFontFamilies.Serif,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 22.sp,
-                    color = colors.text
-                )
-            }
-
-            Row(
-                modifier = Modifier
-                    .height(36.dp)
-                    .background(colors.accent)
-                    .clickable { showAddDialog = true }
-                    .padding(horizontal = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.Add,
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(16.dp)
-                )
-                Text(
-                    text = "Add",
-                    fontFamily = LikkhoFontFamilies.Sans,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 12.sp,
-                    color = Color.White
-                )
-            }
-        }
-        HorizontalDivider(thickness = 1.dp, color = colors.border)
-
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            if (!feedbackBanner.isNullOrBlank()) {
-                item(key = "pw_toast") {
-                    Text(
-                        text = feedbackBanner!!,
-                        fontFamily = LikkhoFontFamilies.Sans,
-                        fontSize = 12.sp,
-                        color = colors.emerald,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(colors.emerald.copy(alpha = 0.10f))
-                            .border(1.dp, colors.emerald)
-                            .padding(10.dp)
-                    )
-                }
-            }
-
-            if (itemsList.isEmpty()) {
-                item(key = "pw_empty") {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(colors.surface)
-                            .border(1.dp, colors.border)
-                            .padding(24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.Key,
-                            contentDescription = null,
-                            tint = colors.muted,
-                            modifier = Modifier.size(30.dp)
-                        )
-                        Text(
-                            text = "No Saved Passwords",
-                            fontFamily = LikkhoFontFamilies.Serif,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 16.sp,
-                            color = colors.text
-                        )
-                        Text(
-                            text = "Tap + Add to store encrypted labels & passwords locally inside this vault.",
-                            fontFamily = LikkhoFontFamilies.Sans,
-                            fontSize = 12.sp,
-                            color = colors.muted
-                        )
-                    }
-                }
-            } else {
-                // 3-Column Rectangular Chips Grid matching SettingsPage.tsx
-                items(itemsList.chunked(3)) { rowItems ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        rowItems.forEach { pw ->
-                            Row(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(44.dp)
-                                    .background(colors.surface)
-                                    .border(1.dp, colors.border)
-                                    .clickable { viewingItem = pw }
-                                    .padding(horizontal = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Outlined.Key,
-                                    contentDescription = null,
-                                    tint = colors.accent,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Text(
-                                    text = pw.name.ifBlank { "Untitled" },
-                                    fontFamily = LikkhoFontFamilies.Serif,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 15.sp,
-                                    color = colors.text,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        }
-                        repeat(3 - rowItems.size) {
-                            Spacer(modifier = Modifier.weight(1f))
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    if (showAddDialog) {
-        AddPasswordDialog(
-            onDismiss = { showAddDialog = false },
-            onSave = { name, password ->
-                val newItem = SavedPasswordItem(
-                    id = "pw_${System.currentTimeMillis()}_${UUID.randomUUID().toString().take(4)}",
-                    name = name.trim(),
-                    password = password,
-                    createdAt = System.currentTimeMillis()
-                )
-                val next = listOf(newItem) + itemsList
-                itemsList = next
-                scope.launch(Dispatchers.IO) { repository.saveSavedPasswords(vaultMode, next) }
-                showAddDialog = false
-                feedbackBanner = "Saved password for \"${newItem.name}\"."
-            }
-        )
-    }
-
-    val selected = viewingItem
-    if (selected != null) {
-        var revealSecret by remember(selected.id) { mutableStateOf(false) }
-        LikkhoHairlineDialog(
-            onDismissRequest = { viewingItem = null },
-            title = selected.name.ifBlank { "Saved Password" },
-            leadingIcon = Icons.Outlined.VpnKey,
-            maxWidth = 400.dp,
-            footer = {
-                LikkhoDialogOutlineButton(
-                    text = "Delete",
-                    textColor = colors.crimson,
-                    borderColor = colors.crimson.copy(alpha = 0.6f),
-                    bgColor = colors.crimson.copy(alpha = 0.08f),
-                    onClick = {
-                        val next = itemsList.filterNot { it.id == selected.id }
-                        itemsList = next
-                        scope.launch(Dispatchers.IO) { repository.saveSavedPasswords(vaultMode, next) }
-                        viewingItem = null
-                        feedbackBanner = "Password deleted."
-                    }
-                )
-                Spacer(modifier = Modifier.weight(1f))
-                LikkhoDialogOutlineButton(
-                    text = "Close",
-                    onClick = { viewingItem = null }
-                )
-            }
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(colors.surface)
-                    .border(LikkhoHairlineBorder, colors.border, RectangleShape)
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(
-                    text = if (revealSecret) selected.password else "•".repeat(selected.password.length.coerceIn(6, 18)),
-                    fontFamily = LikkhoFontFamilies.Mono,
-                    fontSize = 13.sp,
-                    color = colors.text,
-                    modifier = Modifier.weight(1f)
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Box(
-                        modifier = Modifier
-                            .size(30.dp)
-                            .clickable { revealSecret = !revealSecret },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = if (revealSecret) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
-                            contentDescription = "Toggle password",
-                            tint = colors.muted,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-                    Box(
-                        modifier = Modifier
-                            .size(30.dp)
-                            .clickable {
-                                clipboardManager.setText(AnnotatedString(selected.password))
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                feedbackBanner = "Password copied to clipboard."
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.ContentCopy,
-                            contentDescription = "Copy password",
-                            tint = colors.accent,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun AddPasswordDialog(
-    onDismiss: () -> Unit,
-    onSave: (name: String, password: String) -> Unit
-) {
-    val colors = LikkhoTheme.colors
-    var name by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
-    var showSecret by remember { mutableStateOf(false) }
-    var errorMsg by remember { mutableStateOf<String?>(null) }
-
-    LikkhoHairlineDialog(
-        onDismissRequest = onDismiss,
-        title = "Add Saved Password",
-        leadingIcon = Icons.Outlined.VpnKey,
-        maxWidth = 420.dp,
-        footer = {
-            LikkhoDialogOutlineButton(
-                text = "Cancel",
-                onClick = onDismiss
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            LikkhoDialogPrimaryButton(
-                text = "Save",
-                onClick = {
-                    if (name.trim().isEmpty() || password.isEmpty()) {
-                        errorMsg = "Both label and password are required."
-                    } else {
-                        onSave(name, password)
-                    }
-                }
-            )
-        }
-    ) {
-        if (!errorMsg.isNullOrBlank()) {
-            Text(
-                text = errorMsg!!,
-                fontFamily = LikkhoFontFamilies.Sans,
-                fontSize = 12.sp,
-                color = colors.crimson,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(colors.crimson.copy(alpha = 0.08f))
-                    .border(LikkhoHairlineBorder, colors.crimson, RectangleShape)
-                    .padding(8.dp)
-            )
-        }
-
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(
-                text = "LABEL / SERVICE",
-                fontFamily = LikkhoFontFamilies.Sans,
-                fontWeight = FontWeight.Bold,
-                fontSize = 11.sp,
-                color = colors.muted
-            )
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(42.dp)
-                    .background(colors.surface)
-                    .border(LikkhoHairlineBorder, colors.border, RectangleShape)
-                    .padding(horizontal = 12.dp),
-                contentAlignment = Alignment.CenterStart
-            ) {
-                if (name.isEmpty()) {
-                    Text(
-                        text = "e.g. Gmail, Bank, Wi-Fi...",
-                        fontFamily = LikkhoFontFamilies.Sans,
-                        fontSize = 12.sp,
-                        color = colors.muted
-                    )
-                }
-                BasicTextField(
-                    value = name,
-                    onValueChange = {
-                        name = it
-                        errorMsg = null
-                    },
-                    singleLine = true,
-                    textStyle = TextStyle(
-                        fontFamily = LikkhoFontFamilies.Sans,
-                        fontSize = 13.sp,
-                        color = colors.text
-                    ),
-                    cursorBrush = SolidColor(colors.accent),
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-        }
-
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(
-                text = "PASSWORD",
-                fontFamily = LikkhoFontFamilies.Sans,
-                fontWeight = FontWeight.Bold,
-                fontSize = 11.sp,
-                color = colors.muted
-            )
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(42.dp)
-                    .background(colors.surface)
-                    .border(LikkhoHairlineBorder, colors.border, RectangleShape)
-                    .padding(horizontal = 12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(
-                    modifier = Modifier.weight(1f),
-                    contentAlignment = Alignment.CenterStart
-                ) {
-                    if (password.isEmpty()) {
-                        Text(
-                            text = "Enter password",
-                            fontFamily = LikkhoFontFamilies.Sans,
-                            fontSize = 12.sp,
-                            color = colors.muted
-                        )
-                    }
-                    BasicTextField(
-                        value = password,
-                        onValueChange = {
-                            password = it
-                            errorMsg = null
-                        },
-                        singleLine = true,
-                        visualTransformation = if (showSecret) VisualTransformation.None else PasswordVisualTransformation(),
-                        textStyle = TextStyle(
-                            fontFamily = LikkhoFontFamilies.Mono,
-                            fontSize = 13.sp,
-                            color = colors.text
-                        ),
-                        cursorBrush = SolidColor(colors.accent),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-                Box(
-                    modifier = Modifier
-                        .size(32.dp)
-                        .clickable { showSecret = !showSecret },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = if (showSecret) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
-                        contentDescription = "Toggle visibility",
-                        tint = colors.muted,
-                        modifier = Modifier.size(16.dp)
-                    )
-                }
-            }
-        }
-    }
-}
-
-// ==================== Saved Word Analysis A-Z Sub-Screen ====================
-
-@Composable
-private fun SavedWordAnalysisSubScreen(
-    vaultMode: VaultMode,
-    repository: NativeVaultRepository,
-    onBack: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val colors = LikkhoTheme.colors
-    val scope = rememberCoroutineScope()
-
-    var records by remember(vaultMode) {
-        mutableStateOf(parseWordAnalysisJsonArray(repository.loadSavedWordAnalysesJson(vaultMode)))
-    }
-    var searchQuery by remember { mutableStateOf("") }
-    var selectedRecord by remember { mutableStateOf<SavedWordAnalysisRecord?>(null) }
-
-    BackHandler {
-        when {
-            selectedRecord != null -> selectedRecord = null
-            searchQuery.isNotEmpty() -> searchQuery = ""
-            else -> onBack()
-        }
-    }
-
-    val sortedFiltered = remember(records, searchQuery) {
-        val q = searchQuery.trim().lowercase()
-        val sorted = records.sortedBy { it.word.lowercase(Locale.US) }
-        if (q.isEmpty()) sorted else sorted.filter {
-            it.word.lowercase(Locale.US).contains(q) ||
-                it.sourceTitle.lowercase(Locale.US).contains(q)
-        }
-    }
-
-    fun deleteRecord(target: SavedWordAnalysisRecord) {
-        val next = records.filterNot { it.id == target.id }
-        records = next
-        if (selectedRecord?.id == target.id) selectedRecord = null
-        val jsonArr = JSONArray().apply { next.forEach { put(it.rawJson) } }
-        scope.launch(Dispatchers.IO) {
-            repository.saveSavedWordAnalysesJson(vaultMode, jsonArr.toString())
-        }
-    }
-
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .background(colors.bg)
-            .statusBarsPadding()
-            .navigationBarsPadding()
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(56.dp)
-                .background(colors.surface)
-                .padding(horizontal = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .clickable { onBack() },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
-                    contentDescription = "Back",
-                    tint = colors.text,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-            Spacer(modifier = Modifier.width(6.dp))
-            Text(
-                text = "Saved Word Analysis (A–Z)",
-                fontFamily = LikkhoFontFamilies.Serif,
-                fontWeight = FontWeight.Bold,
-                fontSize = 20.sp,
-                color = colors.text,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-        HorizontalDivider(thickness = 1.dp, color = colors.border)
-
-        // Search input
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(colors.surface)
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Row(
-                modifier = Modifier
-                    .weight(1f)
-                    .height(38.dp)
-                    .background(colors.bg)
-                    .border(1.dp, colors.border)
-                    .padding(horizontal = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.Search,
-                    contentDescription = null,
-                    tint = colors.muted,
-                    modifier = Modifier.size(16.dp)
-                )
-                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
-                    if (searchQuery.isEmpty()) {
-                        Text(
-                            text = "Filter saved words A–Z...",
-                            fontFamily = LikkhoFontFamilies.Sans,
-                            fontSize = 12.sp,
-                            color = colors.muted
-                        )
-                    }
-                    BasicTextField(
-                        value = searchQuery,
-                        onValueChange = { searchQuery = it },
-                        singleLine = true,
-                        textStyle = TextStyle(
-                            fontFamily = LikkhoFontFamilies.Sans,
-                            fontSize = 12.sp,
-                            color = colors.text
-                        ),
-                        cursorBrush = SolidColor(colors.accent),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            }
-            Text(
-                text = "${sortedFiltered.size}",
-                fontFamily = LikkhoFontFamilies.Mono,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 12.sp,
-                color = colors.accent
-            )
-        }
-        HorizontalDivider(thickness = 1.dp, color = colors.hairline)
-
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            if (sortedFiltered.isEmpty()) {
-                item(key = "wa_empty") {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(colors.surface)
-                            .border(1.dp, colors.border)
-                            .padding(24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.Spellcheck,
-                            contentDescription = null,
-                            tint = colors.muted,
-                            modifier = Modifier.size(30.dp)
-                        )
-                        Text(
-                            text = "No Saved Word Analyses",
-                            fontFamily = LikkhoFontFamilies.Serif,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 16.sp,
-                            color = colors.text
-                        )
-                        Text(
-                            text = "Word analyses saved from the diary editor appear here alphabetically.",
-                            fontFamily = LikkhoFontFamilies.Sans,
-                            fontSize = 12.sp,
-                            color = colors.muted
-                        )
-                    }
-                }
-            } else {
-                items(sortedFiltered, key = { it.id }) { item ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(colors.bg)
-                            .border(1.dp, colors.border)
-                            .clickable { selectedRecord = item }
-                            .padding(horizontal = 14.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Text(
-                                    text = item.word,
-                                    fontFamily = LikkhoFontFamilies.Serif,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 16.sp,
-                                    color = colors.text
-                                )
-                                if (item.partOfSpeech.isNotBlank()) {
-                                    Text(
-                                        text = item.partOfSpeech,
-                                        fontFamily = LikkhoFontFamilies.Sans,
-                                        fontStyle = FontStyle.Italic,
-                                        fontSize = 11.sp,
-                                        color = colors.accent
-                                    )
-                                }
-                            }
-                            if (item.meanings.isNotEmpty()) {
-                                Text(
-                                    text = item.meanings.first(),
-                                    fontFamily = LikkhoFontFamilies.Sans,
-                                    fontSize = 12.sp,
-                                    color = colors.muted,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        }
-                        Box(
-                            modifier = Modifier
-                                .size(32.dp)
-                                .clickable { deleteRecord(item) },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Outlined.DeleteOutline,
-                                contentDescription = "Delete analysis",
-                                tint = colors.crimson,
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    val detail = selectedRecord
-    if (detail != null) {
-        WordAnalysisDetailDialog(
-            record = detail,
-            onDelete = { deleteRecord(detail) },
-            onDismiss = { selectedRecord = null }
-        )
-    }
-}
-
-@Composable
-private fun WordAnalysisDetailDialog(
-    record: SavedWordAnalysisRecord,
-    onDelete: () -> Unit,
-    onDismiss: () -> Unit
-) {
-    val colors = LikkhoTheme.colors
-    val metaParts = listOfNotNull(
-        record.phonetic.takeIf { it.isNotBlank() },
-        record.syllables.takeIf { it.isNotBlank() },
-        record.partOfSpeech.takeIf { it.isNotBlank() }
-    )
-    LikkhoHairlineDialog(
-        onDismissRequest = onDismiss,
-        title = record.word,
-        subtitle = metaParts.takeIf { it.isNotEmpty() }?.joinToString(" · "),
-        leadingIcon = Icons.Outlined.Spellcheck,
-        maxWidth = 480.dp,
-        maxHeight = 640.dp,
-        bodyPadding = 16.dp,
-        footer = {
-            LikkhoDialogOutlineButton(
-                text = "Delete",
-                textColor = colors.crimson,
-                borderColor = colors.crimson.copy(alpha = 0.6f),
-                bgColor = colors.crimson.copy(alpha = 0.08f),
-                onClick = onDelete
-            )
-            Spacer(modifier = Modifier.weight(1f))
-            LikkhoDialogOutlineButton(
-                text = "Close",
-                onClick = onDismiss
-            )
-        }
-    ) {
-        if (record.sourceTitle.isNotBlank()) {
-            Text(
-                text = "Source: ${record.sourceTitle}",
-                fontFamily = LikkhoFontFamilies.Mono,
-                fontSize = 11.sp,
-                color = colors.muted
-            )
-        }
-        AnalysisSection("1. MEANINGS & DEFINITIONS", record.meanings)
-        AnalysisSection("2. SYNONYMS", if (record.synonyms.isNotEmpty()) listOf(record.synonyms.joinToString(", ")) else emptyList())
-        AnalysisSection("3. ANTONYMS", if (record.antonyms.isNotEmpty()) listOf(record.antonyms.joinToString(", ")) else emptyList())
-        AnalysisSection("4. USAGE EXAMPLES", record.usageExamples)
-        if (record.etymology.isNotBlank()) {
-            AnalysisSection("5. ETYMOLOGY & ROOTS", listOf(record.etymology))
-        }
-        if (record.mnemonic.isNotBlank()) {
-            AnalysisSection("6. MEMORY TIP", listOf(record.mnemonic))
-        }
-    }
-}
-
-@Composable
-private fun AnalysisSection(title: String, lines: List<String>) {
-    if (lines.isEmpty()) return
-    val colors = LikkhoTheme.colors
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(colors.surface)
-            .border(1.dp, colors.hairline)
-            .padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp)
-    ) {
-        Text(
-            text = title,
-            fontFamily = LikkhoFontFamilies.Sans,
-            fontWeight = FontWeight.Bold,
-            fontSize = 11.sp,
-            color = colors.accent
-        )
-        lines.forEach { line ->
-            Text(
-                text = line,
-                fontFamily = LikkhoFontFamilies.Sans,
-                fontSize = 12.sp,
-                lineHeight = 18.sp,
-                color = colors.text
-            )
-        }
-    }
-}
 
 // ==================== Legal, About, Zip Export & Clear All Data Sub-Screen ====================
 
@@ -2122,16 +1104,16 @@ private fun LegalAndAboutSubScreen(
             LegalSectionCard(
                 title = "1. Privacy Policy",
                 paragraphs = listOf(
-                    "Likkho operates on a strict local-first, zero-server-storage architecture. Your diary entries, images, voice recordings, custom fonts, quick notes, saved passwords, and passcodes remain exclusively on your device.",
+                    "Likkho operates on a strict local-first, zero-server-storage architecture. Your notes, recurring trackers, reminders, personal documents, passwords, and passcodes remain exclusively on your device.",
                     "On Android, vault JSON records are encrypted at rest inside app-private storage using AndroidKeyStore AES-256-GCM keys, and screenshots/app switcher previews are protected with FLAG_SECURE when locked or configured.",
-                    "Network requests are only initiated manually by you—for Wikipedia reference lookup inside the writing workspace or checking GitHub Releases for app updates."
+                    "Network requests are only initiated manually by you when checking GitHub Releases for app updates."
                 )
             )
 
             LegalSectionCard(
                 title = "2. Terms of Service",
                 paragraphs = listOf(
-                    "Likkho is provided \"as is\" as a private personal writing workspace. Because no cloud servers hold your passcodes or encryption keys, lost PINs or forgotten Backup Encryption Keys cannot be recovered by the developer.",
+                    "Likkho is provided \"as is\" as a private personal organizer and workspace. Because no cloud servers hold your passcodes or encryption keys, lost PINs or forgotten Backup Encryption Keys cannot be recovered by the developer.",
                     "Please maintain regular encrypted LKSTRM02 backups to your selected Storage Access Framework folder or export `.zip` archives."
                 )
             )
@@ -2139,8 +1121,11 @@ private fun LegalAndAboutSubScreen(
             LegalSectionCard(
                 title = "3. Security & Cryptography Architecture",
                 paragraphs = listOf(
-                    "Streaming Vault Backups (`real_vault.db` / `decoy_vault.db`) use 1.5 MB chunked AES-256-GCM framing (`LKSTRM02`) with domain-separated PBKDF2 key derivation (`100,000` iterations SHA-256 for Primary; `210,000` iterations SHA-512 for Secondary/Covert Decoy Vault).",
-                    "Primary and Covert Decoy Vaults are strictly isolated in separate storage directories with independent passcodes, media references, and backup manifests."
+                    if (vaultMode == VaultMode.DECOY) {
+                        "Streaming Vault Backups (`decoy_vault.db`) use 1.5 MB chunked AES-256-GCM framing (`LKSTRM02`) with 210,000-iteration PBKDF2 SHA-512 key derivation, completely isolated from Everyday vault storage."
+                    } else {
+                        "Streaming Vault Backups (`real_vault.db`) use 1.5 MB chunked AES-256-GCM framing (`LKSTRM02`) with PBKDF2 key derivation and AndroidKeyStore hardware-backed local encryption."
+                    }
                 )
             )
 
@@ -2204,7 +1189,11 @@ private fun LegalAndAboutSubScreen(
                 )
                 HorizontalDivider(thickness = 1.dp, color = colors.hairline)
                 Text(
-                    text = "Export all diaries, embedded images, voice notes, fonts, quick notes, and saved passwords as a standard `.zip` archive, or permanently wipe all local app data.",
+                    text = if (vaultMode == VaultMode.DECOY) {
+                        "Export all Secret Writing entries, attached photos, and voice notes as a standard `.zip` archive, or permanently wipe local app data."
+                    } else {
+                        "Export all quick notes, trackers, reminders, documents, and saved passwords as a standard `.zip` archive, or permanently wipe all local app data."
+                    },
                     fontFamily = LikkhoFontFamilies.Sans,
                     fontSize = 12.sp,
                     lineHeight = 18.sp,
@@ -2323,7 +1312,7 @@ private fun LegalAndAboutSubScreen(
             }
         ) {
             Text(
-                text = "This permanently deletes all local diaries, media, voice notes, passwords, quick notes, and passcodes inside Likkho. External SAF backups are untouched.",
+                text = "This permanently deletes all local notes, trackers, reminders, documents, passwords, entries, media, and passcodes inside Likkho. External SAF backups are untouched.",
                 fontFamily = LikkhoFontFamilies.Sans,
                 fontSize = 12.sp,
                 lineHeight = 18.sp,
@@ -2426,50 +1415,6 @@ private tailrec fun Context.findSettingsFragmentActivity(): FragmentActivity? = 
     else -> null
 }
 
-private fun formatSampleRateLabel(sampleRate: Int): String = when (sampleRate) {
-    22050 -> "22.05 kHz"
-    44100 -> "44.1 kHz"
-    else -> "${sampleRate / 1000} kHz"
-}
-
-private fun parseWordAnalysisJsonArray(raw: String): List<SavedWordAnalysisRecord> {
-    return try {
-        val arr = JSONArray(raw)
-        buildList {
-            for (i in 0 until arr.length()) {
-                val obj = arr.optJSONObject(i) ?: continue
-                fun readStringList(key: String): List<String> {
-                    val sub = obj.optJSONArray(key) ?: return emptyList()
-                    return buildList {
-                        for (j in 0 until sub.length()) {
-                            sub.optString(j).takeIf { it.isNotBlank() }?.let { add(it) }
-                        }
-                    }
-                }
-                add(
-                    SavedWordAnalysisRecord(
-                        id = obj.optString("id").ifBlank { "wa_$i" },
-                        word = obj.optString("word", ""),
-                        sourceTitle = obj.optString("sourceTitle", ""),
-                        analyzedAt = obj.optLong("analyzedAt", 0L),
-                        phonetic = obj.optString("phonetic", ""),
-                        syllables = obj.optString("syllables", ""),
-                        partOfSpeech = obj.optString("partOfSpeech", ""),
-                        meanings = readStringList("meanings"),
-                        synonyms = readStringList("synonyms"),
-                        antonyms = readStringList("antonyms"),
-                        usageExamples = readStringList("usageExamples"),
-                        etymology = obj.optString("etymology", ""),
-                        mnemonic = obj.optString("mnemonic", ""),
-                        rawJson = obj
-                    )
-                )
-            }
-        }
-    } catch (_: Exception) {
-        emptyList()
-    }
-}
 
 private fun compareSemver(a: String, b: String): Int {
     val cleanA = a.trim().removePrefix("v").removePrefix("V").substringBefore('-')

@@ -8,7 +8,7 @@
  * 4. Throttle protection (checks once per session or on data connect).
  */
 
-export const APP_CURRENT_VERSION = '2.1.6';
+export const APP_CURRENT_VERSION = '3.0.0';
 export const DEFAULT_GITHUB_REPO = 'fofoxoxo/Likkho';
 
 export interface AppUpdateInfo {

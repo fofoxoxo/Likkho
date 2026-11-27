@@ -59,7 +59,7 @@ jobs:
           fi
           npx cap sync android
 
-      - name: Configure compileSdk 35, targetSdk 34, SAF (.likkho_backups + .nomedia) & Microphone Foreground Service
+      - name: Configure compileSdk 35, targetSdk 34, SAF (.likkho_backups + .nomedia) & Native Receivers
         run: |
           # 0. Fix Gradle distribution download timeouts & socket limits:
           #    - Switch -all.zip (~220MB) to -bin.zip (~110MB) to cut download size in half
@@ -133,14 +133,11 @@ jobs:
             cp -r app/src/main/res/* android/app/src/main/res/
           fi
 
-          # Ensure ProGuard rules keep Capacitor Bridge, WebView JavascriptInterface, Kotlin Compose classes, and Likkho native classes when isMinifyEnabled = true
+          # Ensure ProGuard rules keep Capacitor Bridge, Kotlin Compose classes, and Likkho native classes when isMinifyEnabled = true
           cat << 'EOF' >> android/app/proguard-rules.pro
           -keep class com.likkho.diary.** { *; }
           -keep class com.getcapacitor.** { *; }
-          -keepclassmembers class * {
-              @android.webkit.JavascriptInterface <methods>;
-          }
-          -keepattributes JavascriptInterface,Annotation,*Annotation*,Signature,InnerClasses,EnclosingMethod
+          -keepattributes Annotation,*Annotation*,Signature,InnerClasses,EnclosingMethod
           -dontwarn com.google.android.gms.**
           -dontwarn org.apache.cordova.**
           -dontwarn kotlin.**
@@ -148,8 +145,8 @@ jobs:
           EOF
 
           MANIFEST="android/app/src/main/AndroidManifest.xml"
-          if ! grep -q "FOREGROUND_SERVICE_MICROPHONE" "$MANIFEST"; then
-            sed -i 's/<application/<uses-permission android:name="android.permission.POST_NOTIFICATIONS" \/>\n    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" \/>\n    <uses-permission android:name="android.permission.USE_EXACT_ALARM" \/>\n    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" \/>\n    <uses-permission android:name="android.permission.VIBRATE" \/>\n    <uses-permission android:name="android.permission.WAKE_LOCK" \/>\n    <uses-permission android:name="android.permission.USE_BIOMETRIC" \/>\n    <uses-permission android:name="android.permission.USE_FINGERPRINT" \/>\n    <uses-permission android:name="android.permission.RECORD_AUDIO" \/>\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" \/>\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" \/>\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" \/>\n    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" \/>\n    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" \/>\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" \/>\n    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" \/>\n    <application android:hardwareAccelerated="true"/' "$MANIFEST"
+          if ! grep -q "SCHEDULE_EXACT_ALARM" "$MANIFEST"; then
+            sed -i 's/<application/<uses-permission android:name="android.permission.POST_NOTIFICATIONS" \/>\n    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" \/>\n    <uses-permission android:name="android.permission.USE_EXACT_ALARM" \/>\n    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" \/>\n    <uses-permission android:name="android.permission.VIBRATE" \/>\n    <uses-permission android:name="android.permission.USE_BIOMETRIC" \/>\n    <uses-permission android:name="android.permission.USE_FINGERPRINT" \/>\n    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" \/>\n    <application android:hardwareAccelerated="true"/' "$MANIFEST"
           fi
 
           # Ensure NativeMainActivity is the launcher Activity with adjustResize for smooth keyboard and toolbar docking, and registers custom intent filters for opening .likkho diary archives
@@ -387,9 +384,9 @@ jobs:
           </resources>
           EOF
 
-          # Register ReminderReceiver, QuickNoteReceiver, AudioControlReceiver, LikkhoWidgetProvider, MicForegroundService and QuickNoteTileService inside <application>
+          # Register ReminderReceiver, QuickNoteReceiver, LikkhoWidgetProvider and QuickNoteTileService inside <application>
           if ! grep -q "LikkhoWidgetProvider" "$MANIFEST"; then
-            sed -i 's/<\/application>/    <receiver android:name=".ReminderReceiver" android:exported="false">\n            <intent-filter>\n                <action android:name="android.intent.action.BOOT_COMPLETED" \/>\n                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" \/>\n                <action android:name="android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED" \/>\n            <\/intent-filter>\n        <\/receiver>\n        <receiver android:name=".QuickNoteReceiver" android:exported="false" \/>\n        <receiver android:name=".AudioControlReceiver" android:exported="false" \/>\n        <receiver android:name=".LikkhoWidgetProvider" android:exported="true" android:label="Likkho Quick Note \&amp; Diary">\n            <intent-filter>\n                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" \/>\n            <\/intent-filter>\n            <meta-data android:name="android.appwidget.provider" android:resource="@xml\/likkho_widget_info" \/>\n        <\/receiver>\n        <service android:name=".MicForegroundService" android:exported="false" android:stopWithTask="false" android:foregroundServiceType="microphone" \/>\n        <service android:name=".QuickNoteTileService" android:label="Quick Note" android:icon="@android:drawable\/ic_menu_edit" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE" android:exported="true">\n            <intent-filter>\n                <action android:name="android.service.quicksettings.action.QS_TILE" \/>\n            <\/intent-filter>\n        <\/service>\n    <\/application>/' "$MANIFEST"
+            sed -i 's/<\/application>/    <receiver android:name=".ReminderReceiver" android:exported="false">\n            <intent-filter>\n                <action android:name="android.intent.action.BOOT_COMPLETED" \/>\n                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" \/>\n                <action android:name="android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED" \/>\n            <\/intent-filter>\n        <\/receiver>\n        <receiver android:name=".QuickNoteReceiver" android:exported="false" \/>\n        <receiver android:name=".LikkhoWidgetProvider" android:exported="true" android:label="Likkho Quick Note \&amp; Diary">\n            <intent-filter>\n                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" \/>\n            <\/intent-filter>\n            <meta-data android:name="android.appwidget.provider" android:resource="@xml\/likkho_widget_info" \/>\n        <\/receiver>\n        <service android:name=".QuickNoteTileService" android:label="Quick Note" android:icon="@android:drawable\/ic_menu_edit" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE" android:exported="true">\n            <intent-filter>\n                <action android:name="android.service.quicksettings.action.QS_TILE" \/>\n            <\/intent-filter>\n        <\/service>\n    <\/application>/' "$MANIFEST"
           fi
 
           # Set Likkho launcher icon (white background with black "Likkho" text) in density-specific mipmap folders only
@@ -458,32 +455,6 @@ jobs:
                           SharedPreferences prefs = context.getSharedPreferences("likkho_saf_prefs", Context.MODE_PRIVATE);
                           prefs.edit().putString("pending_done_quick_note_id", noteId).apply();
                       }
-                  }
-              }
-          }
-          EOF
-
-          # 1c. Create AudioControlReceiver.java for Audio Playback Notification controls (Play/Pause & Stop)
-          cat << 'EOF' > "$PKG_DIR/AudioControlReceiver.java"
-          package com.likkho.diary;
-
-          import android.content.BroadcastReceiver;
-          import android.content.Context;
-          import android.content.Intent;
-          import com.likkho.diary.nativeapp.NativeMainActivity;
-
-          public class AudioControlReceiver extends BroadcastReceiver {
-              public static final String ACTION_TOGGLE = "com.likkho.diary.ACTION_AUDIO_TOGGLE";
-              public static final String ACTION_STOP = "com.likkho.diary.ACTION_AUDIO_STOP";
-
-              @Override
-              public void onReceive(Context context, Intent intent) {
-                  if (intent == null || NativeMainActivity.currentInstance == null) return;
-                  String action = intent.getAction();
-                  if (ACTION_TOGGLE.equals(action)) {
-                      NativeMainActivity.currentInstance.toggleNativeAudioFromNotification();
-                  } else if (ACTION_STOP.equals(action)) {
-                      NativeMainActivity.currentInstance.stopNativeAudioPlayback(null);
                   }
               }
           }
@@ -635,305 +606,10 @@ jobs:
           }
           EOF
 
-          # 2. Create MicForegroundService.java:
-          #    - Uses Microphone Foreground Service (foregroundServiceType="microphone") with START_STICKY and persistent Notification Bell
-          #    - Keeps recording when screen is off, phone is locked, or app is swiped away from Recent Apps WITHOUT requiring "Display over other apps" permission!
-          cat << 'EOF' > "$PKG_DIR/MicForegroundService.java"
-          package com.likkho.diary;
-
-          import android.app.AlarmManager;
-          import android.app.Notification;
-          import android.app.NotificationChannel;
-          import android.app.NotificationManager;
-          import android.app.PendingIntent;
-          import android.app.Service;
-          import android.content.Context;
-          import android.content.Intent;
-          import android.content.pm.ServiceInfo;
-          import android.media.AudioFormat;
-          import android.media.AudioRecord;
-          import android.media.MediaRecorder;
-          import android.os.Build;
-          import android.os.IBinder;
-          import android.os.PowerManager;
-          import android.os.SystemClock;
-          import androidx.core.app.NotificationCompat;
-          import com.likkho.diary.nativeapp.NativeMainActivity;
-          import java.io.File;
-          import java.io.FileOutputStream;
-          import java.io.RandomAccessFile;
-
-          public class MicForegroundService extends Service {
-              public static final String ACTION_START = "com.likkho.diary.ACTION_START_MIC";
-              public static final String ACTION_STOP = "com.likkho.diary.ACTION_STOP_MIC";
-              private static final String CHANNEL_ID = "likkho_mic_recording_channel";
-              private static final int NOTIF_ID = 8801;
-
-              public static volatile boolean isRecording = false;
-              public static volatile long recordingStartedAtMs = 0;
-              public static volatile String latestFinishedFilePath = null;
-              public static volatile int latestDurationSec = 1;
-              public static volatile String currentRecordingLogId = "";
-
-              private PowerManager.WakeLock wakeLock;
-              private AudioRecord audioRecord;
-              private Thread recordingThread;
-              private int sampleRate = 44100;
-
-              @Override
-              public void onCreate() {
-                  super.onCreate();
-                  PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
-                  if (pm != null) {
-                      wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Likkho::MicRecordingWakeLock");
-                      wakeLock.acquire(6 * 60 * 60 * 1000L);
-                  }
-              }
-
-              @Override
-              public int onStartCommand(Intent intent, int flags, int startId) {
-                  if (intent != null && ACTION_STOP.equals(intent.getAction())) {
-                      stopNativeRecordingAndFinish();
-                      return START_NOT_STICKY;
-                  }
-
-                  if (intent != null && intent.hasExtra("sampleRate")) {
-                      sampleRate = intent.getIntExtra("sampleRate", 44100);
-                  }
-                  if (intent != null && intent.hasExtra("logId")) {
-                      currentRecordingLogId = intent.getStringExtra("logId");
-                  }
-
-                  NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && nm != null) {
-                      NotificationChannel channel = new NotificationChannel(
-                          CHANNEL_ID,
-                          "Likkho Microphone Recording",
-                          NotificationManager.IMPORTANCE_LOW
-                      );
-                      nm.createNotificationChannel(channel);
-                  }
-
-                  Intent openIntent = new Intent(this, NativeMainActivity.class);
-                  openIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-                  PendingIntent pendingOpen = PendingIntent.getActivity(
-                      this,
-                      0,
-                      openIntent,
-                      PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
-                  );
-
-                  Intent stopIntent = new Intent(this, MicForegroundService.class);
-                  stopIntent.setAction(ACTION_STOP);
-                  PendingIntent pendingStop = PendingIntent.getService(
-                      this,
-                      1,
-                      stopIntent,
-                      PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
-                  );
-
-                  // Persistent Notification Bell so Android OS never kills the microphone process on screen off / task swipe
-                  Notification notification = new NotificationCompat.Builder(this, CHANNEL_ID)
-                      .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
-                      .setContentTitle("Likkho Microphone Active")
-                      .setContentText("Recording audio in background. Tap Stop to finish.")
-                      .setOngoing(true)
-                      .setPriority(NotificationCompat.PRIORITY_LOW)
-                      .setCategory(NotificationCompat.CATEGORY_SERVICE)
-                      .setContentIntent(pendingOpen)
-                      .addAction(android.R.drawable.ic_media_pause, "Stop", pendingStop)
-                      .build();
-
-                  if (Build.VERSION.SDK_INT >= 34) {
-                      startForeground(NOTIF_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
-                  } else {
-                      startForeground(NOTIF_ID, notification);
-                  }
-
-                  if (!isRecording) {
-                      startNativeAudioRecordLoop();
-                  }
-
-                  return START_STICKY;
-              }
-
-              private void startNativeAudioRecordLoop() {
-                  try {
-                      int channelConfig = AudioFormat.CHANNEL_IN_MONO;
-                      int audioEncoding = AudioFormat.ENCODING_PCM_16BIT;
-                      int minBufSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioEncoding);
-                      if (minBufSize <= 0) {
-                          sampleRate = 44100;
-                          minBufSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioEncoding);
-                      }
-                      final int bufferSize = Math.max(minBufSize * 2, 8192);
-
-                      audioRecord = new AudioRecord(
-                          MediaRecorder.AudioSource.MIC,
-                          sampleRate,
-                          channelConfig,
-                          audioEncoding,
-                          bufferSize
-                      );
-
-                      final File wavFile = new File(getFilesDir(), "likkho_active_mic_recording.wav");
-                      isRecording = true;
-                      recordingStartedAtMs = System.currentTimeMillis();
-
-                      audioRecord.startRecording();
-
-                      recordingThread = new Thread(() -> {
-                          try (FileOutputStream fos = new FileOutputStream(wavFile)) {
-                              fos.write(new byte[44]);
-                              byte[] buffer = new byte[bufferSize];
-                              long totalPcmBytes = 0;
-
-                              while (isRecording) {
-                                  int read = audioRecord.read(buffer, 0, buffer.length);
-                                  if (read > 0) {
-                                      fos.write(buffer, 0, read);
-                                      totalPcmBytes += read;
-                                  }
-                              }
-                              fos.flush();
-                              writeWavHeader(wavFile, totalPcmBytes, sampleRate, 1, 16);
-                              latestFinishedFilePath = wavFile.getAbsolutePath();
-                          } catch (Exception ignored) {}
-                      }, "LikkhoNativeMicThread");
-                      recordingThread.start();
-                  } catch (Exception e) {
-                      isRecording = false;
-                  }
-              }
-
-              private void writeWavHeader(File file, long totalAudioLen, long longSampleRate, int channels, int bitsPerSample) {
-                  try (RandomAccessFile raf = new RandomAccessFile(file, "rw")) {
-                      long totalDataLen = totalAudioLen + 36;
-                      long byteRate = longSampleRate * channels * bitsPerSample / 8;
-                      byte[] header = new byte[44];
-                      header[0] = 'R'; header[1] = 'I'; header[2] = 'F'; header[3] = 'F';
-                      header[4] = (byte) (totalDataLen & 0xff);
-                      header[5] = (byte) ((totalDataLen >> 8) & 0xff);
-                      header[6] = (byte) ((totalDataLen >> 16) & 0xff);
-                      header[7] = (byte) ((totalDataLen >> 24) & 0xff);
-                      header[8] = 'W'; header[9] = 'A'; header[10] = 'V'; header[11] = 'E';
-                      header[12] = 'f'; header[13] = 'm'; header[14] = 't'; header[15] = ' ';
-                      header[16] = 16; header[17] = 0; header[18] = 0; header[19] = 0;
-                      header[20] = 1; header[21] = 0;
-                      header[22] = (byte) channels; header[23] = 0;
-                      header[24] = (byte) (longSampleRate & 0xff);
-                      header[25] = (byte) ((longSampleRate >> 8) & 0xff);
-                      header[26] = (byte) ((longSampleRate >> 16) & 0xff);
-                      header[27] = (byte) ((longSampleRate >> 24) & 0xff);
-                      header[28] = (byte) (byteRate & 0xff);
-                      header[29] = (byte) ((byteRate >> 8) & 0xff);
-                      header[30] = (byte) ((byteRate >> 16) & 0xff);
-                      header[31] = (byte) ((byteRate >> 24) & 0xff);
-                      header[32] = (byte) (channels * bitsPerSample / 8); header[33] = 0;
-                      header[34] = (byte) bitsPerSample; header[35] = 0;
-                      header[36] = 'd'; header[37] = 'a'; header[38] = 't'; header[39] = 'a';
-                      header[40] = (byte) (totalAudioLen & 0xff);
-                      header[41] = (byte) ((totalAudioLen >> 8) & 0xff);
-                      header[42] = (byte) ((totalAudioLen >> 16) & 0xff);
-                      header[43] = (byte) ((totalAudioLen >> 24) & 0xff);
-                      raf.seek(0);
-                      raf.write(header, 0, 44);
-                  } catch (Exception ignored) {}
-              }
-
-              public void stopNativeRecordingAndFinish() {
-                  if (!isRecording) {
-                      stopForeground(true);
-                      stopSelf();
-                      return;
-                  }
-                  isRecording = false;
-                  latestDurationSec = Math.max(1, (int) ((System.currentTimeMillis() - recordingStartedAtMs) / 1000L));
-                  try {
-                      if (audioRecord != null) {
-                          audioRecord.stop();
-                          audioRecord.release();
-                          audioRecord = null;
-                      }
-                  } catch (Exception ignored) {}
-
-                  try {
-                      if (recordingThread != null) {
-                          recordingThread.join(1500);
-                          recordingThread = null;
-                      }
-                  } catch (Exception ignored) {}
-
-                  try {
-                      File wavFile = new File(getFilesDir(), "likkho_active_mic_recording.wav");
-                      File audioDir = new File(getFilesDir(), "likkho_audio");
-                      if (!audioDir.exists()) audioDir.mkdirs();
-                      File permFile = new File(audioDir, "audio_" + System.currentTimeMillis() + ".wav");
-                      if (wavFile.exists() && wavFile.length() > 44) {
-                          if (!wavFile.renameTo(permFile)) {
-                              permFile = wavFile;
-                          }
-                      } else {
-                          permFile = wavFile;
-                      }
-                      latestFinishedFilePath = permFile.getAbsolutePath();
-                      getSharedPreferences("likkho_recording_prefs", MODE_PRIVATE)
-                          .edit()
-                          .putString("pending_recording_path", permFile.getAbsolutePath())
-                          .putInt("pending_recording_duration", latestDurationSec)
-                          .putString("pending_recording_log_id", currentRecordingLogId != null ? currentRecordingLogId : "")
-                          .putLong("pending_recording_saved_at", System.currentTimeMillis())
-                          .apply();
-                  } catch (Exception ignored) {}
-
-                  NativeMainActivity.deliverFinishedNativeRecordingIfPossible(this);
-                  stopForeground(true);
-                  stopSelf();
-              }
-
-              @Override
-              public void onTaskRemoved(Intent rootIntent) {
-                  // Keep recording active even when Likkho is swiped away from Recent Apps (Task Manager)
-                  if (isRecording) {
-                      Intent restartServiceIntent = new Intent(getApplicationContext(), this.getClass());
-                      restartServiceIntent.setPackage(getPackageName());
-                      PendingIntent restartServicePendingIntent = PendingIntent.getService(
-                          getApplicationContext(),
-                          1,
-                          restartServiceIntent,
-                          PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_IMMUTABLE
-                      );
-                      AlarmManager alarmService = (AlarmManager) getApplicationContext().getSystemService(Context.ALARM_SERVICE);
-                      if (alarmService != null) {
-                          alarmService.set(
-                              AlarmManager.ELAPSED_REALTIME,
-                              SystemClock.elapsedRealtime() + 400,
-                              restartServicePendingIntent
-                          );
-                      }
-                  }
-                  super.onTaskRemoved(rootIntent);
-              }
-
-              @Override
-              public void onDestroy() {
-                  if (wakeLock != null && wakeLock.isHeld()) {
-                      wakeLock.release();
-                  }
-                  super.onDestroy();
-              }
-
-              @Override
-              public IBinder onBind(Intent intent) {
-                  return null;
-              }
-          }
-          EOF
-
-          # 3. Remove legacy Capacitor MainActivity.java stub (NativeMainActivity.kt is now the launcher Activity)
+          # 2. Remove legacy Capacitor MainActivity.java stub (NativeMainActivity.kt is now the launcher Activity)
           rm -f "$PKG_DIR/MainActivity.java"
 
-      - name: Build Android Debug APK (v2.1.6)
+      - name: Build Android Debug APK (v3.0.0)
         working-directory: ./android
         env:
           GRADLE_OPTS: "-Dorg.gradle.internal.http.connectionTimeout=180000 -Dorg.gradle.internal.http.socketTimeout=180000 -Dorg.gradle.daemon=false"
@@ -943,7 +619,7 @@ jobs:
 
           mkdir -p release-apks
           if [ -f app/build/outputs/apk/debug/app-debug.apk ]; then
-            cp app/build/outputs/apk/debug/app-debug.apk release-apks/likkho-debug-v2.1.6.apk
+            cp app/build/outputs/apk/debug/app-debug.apk release-apks/likkho-debug-v3.0.0.apk
           else
             echo "::error::FATAL: Debug APK (app-debug.apk) not found."
             exit 1
@@ -953,11 +629,11 @@ jobs:
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: likkho-debug-v2.1.6-apk
-          path: android/release-apks/likkho-debug-v2.1.6.apk
+          name: likkho-debug-v3.0.0-apk
+          path: android/release-apks/likkho-debug-v3.0.0.apk
           retention-days: 30
 
-      - name: Build Android Release APK & Release AAB (v2.1.6)
+      - name: Build Android Release APK & Release AAB (v3.0.0)
         if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || (github.event_name == 'workflow_dispatch' && inputs.build_release == true)
         working-directory: ./android
         env:
@@ -977,14 +653,14 @@ jobs:
 
           mkdir -p release-apks
           if [ -f app/build/outputs/apk/release/app-release.apk ]; then
-            cp app/build/outputs/apk/release/app-release.apk release-apks/likkho-release-v2.1.6.apk
+            cp app/build/outputs/apk/release/app-release.apk release-apks/likkho-release-v3.0.0.apk
           else
             echo "::error::FATAL: Signed release APK (app-release.apk) not found. Unsigned APK will not be uploaded."
             exit 1
           fi
 
           if [ -f app/build/outputs/bundle/release/app-release.aab ]; then
-            cp app/build/outputs/bundle/release/app-release.aab release-apks/likkho-release-v2.1.6.aab
+            cp app/build/outputs/bundle/release/app-release.aab release-apks/likkho-release-v3.0.0.aab
           else
             echo "::error::FATAL: Signed release AAB (app-release.aab) not found. Unsigned AAB will not be uploaded."
             exit 1
@@ -996,39 +672,41 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || (github.event_name == 'workflow_dispatch' && inputs.build_release == true)
         uses: actions/upload-artifact@v4
         with:
-          name: likkho-release-v2.1.6-apk
-          path: android/release-apks/likkho-release-v2.1.6.apk
+          name: likkho-release-v3.0.0-apk
+          path: android/release-apks/likkho-release-v3.0.0.apk
           retention-days: 30
 
       - name: Upload Release AAB Bundle Artifact
         if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || (github.event_name == 'workflow_dispatch' && inputs.build_release == true)
         uses: actions/upload-artifact@v4
         with:
-          name: likkho-release-v2.1.6-aab
-          path: android/release-apks/likkho-release-v2.1.6.aab
+          name: likkho-release-v3.0.0-aab
+          path: android/release-apks/likkho-release-v3.0.0.aab
           retention-days: 30
 
-      - name: Publish GitHub Release (v2.1.6)
+      - name: Publish GitHub Release (v3.0.0)
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || (github.event_name == 'workflow_dispatch' && inputs.build_release == true)
         with:
-          tag_name: v2.1.6
-          name: "Likkho v2.1.6 (Patch Release) - Canvas Media Insertion & Instant App Startup"
+          tag_name: v3.0.0
+          name: "Likkho v3.0.0 (Major Release) — Pure Native Everyday Utility & Secret Journal"
           body: |
-            ## Likkho v2.1.6 Release Notes
+            ## Likkho v3.0.0 Major Release Notes
 
-            ### 🛠️ Fixes & Performance Improvements:
-            - **Reliable Canvas Media Insertion (Images, Audio, PFP, Background & Documents):** Staged picked gallery/document URIs once into cache with `openFileDescriptor` + API 28+ `ImageDecoder` (HEIC/HEIF/AVIF) fallback, preserved picker state across activity recreation (`rememberSaveable`), added CORS/no-store headers on `/likkho-media/` & `/likkho-audio/`, removed colliding runtime storage permission prompts from toolbar menus/pickers, normalized file chooser filters (`.ttf`, `.docx`, `.md`, `.epub`), and eliminated React 19 impure state updaters + stale draft checks when inserting the first image/audio into a new diary.
-            - **Fast Cold App Startup:** Cached the AndroidKeyStore master key & decrypted security config in memory, skipped launching the offscreen legacy WebView migrator on clean/already-migrated installs via fast file-existence checks, rendered the initial UI immediately, and moved vault decryption onto parallel `Dispatchers.IO` coroutines without flashing `"No Logs Yet"`.
+            ### ✨ What's New in Likkho v3.0.0:
+            - **100% Pure Native Kotlin + Jetpack Compose Architecture:** Retired legacy WebView Canvas runtime and background Mic Foreground Service bloat for instant startup, smooth native scrolling, and minimal permissions.
+            - **Inverted Split-PIN Dual-Vault:**
+              - **Everyday Mode (Everyday PIN or Fingerprint):** 5-tab encrypted utility workspace — **Notes** (Quick Notes & Checklists synced with notification/widget/Quick Settings tile), **Trackers** (Calendar-based recurring Hisaab with daily `Present`/`Missed`/`Skipped` tracking, custom quantity, rate & monthly bill summary), **Reminders** (Scheduled exact `AlarmManager` notifications with `Once`/`Daily`/`Weekly`/`Monthly` repeats), **Documents** (Encrypted `.nomedia` `likkho_docs/` vault with built-in pinch-zoom Image & `PdfRenderer` PDF viewers, 1-tap ID copy & FileProvider sharing), and **Passwords** (Searchable credential manager with reveal, copy, and strong password generator). Zero hints of Secret Writing appear in Everyday UI.
+              - **Secret Writing Mode (Manual Secret PIN Only):** Distraction-free encrypted journal compatible with existing Secret diaries/media, plus safe one-time migration for legacy diaries and full `LKSTRM02` / `LKSTRM01` / `WIKILOG_VAULT_V1` backup compatibility.
 
             ### 📦 Release Downloads:
-            - **Signed Release APK**: `likkho-release-v2.1.6.apk`
-            - **Signed Google Play App Bundle**: `likkho-release-v2.1.6.aab`
-            - **Debug APK**: `likkho-debug-v2.1.6.apk`
+            - **Signed Release APK**: `likkho-release-v3.0.0.apk`
+            - **Signed Google Play App Bundle**: `likkho-release-v3.0.0.aab`
+            - **Debug APK**: `likkho-debug-v3.0.0.apk`
           files: |
-            android/release-apks/likkho-release-v2.1.6.apk
-            android/release-apks/likkho-release-v2.1.6.aab
-            android/release-apks/likkho-debug-v2.1.6.apk
+            android/release-apks/likkho-release-v3.0.0.apk
+            android/release-apks/likkho-release-v3.0.0.aab
+            android/release-apks/likkho-debug-v3.0.0.apk
           draft: false
           prerelease: false
         env:
