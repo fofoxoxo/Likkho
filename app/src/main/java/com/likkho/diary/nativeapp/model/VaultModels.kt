@@ -264,22 +264,37 @@ data class SavedPasswordItem(
     val id: String,
     val name: String,
     val password: String,
-    val createdAt: Long
+    val createdAt: Long,
+    val username: String = "",
+    val url: String = "",
+    val notes: String = "",
+    val updatedAt: Long = createdAt
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("id", id)
         put("name", name)
         put("password", password)
         put("createdAt", createdAt)
+        if (username.isNotEmpty()) put("username", username)
+        if (url.isNotEmpty()) put("url", url)
+        if (notes.isNotEmpty()) put("notes", notes)
+        put("updatedAt", updatedAt)
     }
 
     companion object {
-        fun fromJson(obj: JSONObject): SavedPasswordItem = SavedPasswordItem(
-            id = obj.optString("id"),
-            name = obj.optString("name"),
-            password = obj.optString("password"),
-            createdAt = obj.optLong("createdAt", 0L)
-        )
+        fun fromJson(obj: JSONObject): SavedPasswordItem {
+            val created = obj.optLong("createdAt", 0L)
+            return SavedPasswordItem(
+                id = obj.optString("id"),
+                name = obj.optString("name"),
+                password = obj.optString("password"),
+                createdAt = created,
+                username = obj.optString("username", ""),
+                url = obj.optString("url", ""),
+                notes = obj.optString("notes", ""),
+                updatedAt = obj.optLong("updatedAt", created)
+            )
+        }
     }
 }
 
@@ -352,12 +367,233 @@ data class QuickNote(
     }
 }
 
+enum class TrackerEntryStatus(val wireValue: String) {
+    PRESENT("present"),
+    ABSENT("absent"),
+    SKIPPED("skipped");
+
+    companion object {
+        fun fromWire(value: String?): TrackerEntryStatus =
+            entries.firstOrNull { it.wireValue.equals(value, ignoreCase = true) } ?: PRESENT
+    }
+}
+
+data class TrackerDayEntry(
+    val dateKey: String,
+    val status: TrackerEntryStatus = TrackerEntryStatus.PRESENT,
+    val quantity: Double? = null,
+    val note: String = "",
+    val updatedAt: Long = 0L
+) {
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("dateKey", dateKey)
+        put("status", status.wireValue)
+        if (quantity != null) put("quantity", quantity)
+        if (note.isNotEmpty()) put("note", note)
+        put("updatedAt", updatedAt)
+    }
+
+    companion object {
+        fun fromJson(obj: JSONObject, fallbackDateKey: String = ""): TrackerDayEntry = TrackerDayEntry(
+            dateKey = obj.optString("dateKey", fallbackDateKey).ifBlank { fallbackDateKey },
+            status = TrackerEntryStatus.fromWire(obj.optString("status", "present")),
+            quantity = if (obj.has("quantity") && !obj.isNull("quantity")) obj.optDouble("quantity") else null,
+            note = obj.optString("note", ""),
+            updatedAt = obj.optLong("updatedAt", 0L)
+        )
+    }
+}
+
+data class RecurringTracker(
+    val id: String,
+    val name: String,
+    val unitLabel: String = "",
+    val defaultQuantity: Double = 1.0,
+    val ratePerUnit: Double = 0.0,
+    val currencySymbol: String = "₹",
+    val accentHex: String = "#3366CC",
+    val notes: String = "",
+    val archived: Boolean = false,
+    val entries: Map<String, TrackerDayEntry> = emptyMap(),
+    val createdAt: Long = 0L,
+    val updatedAt: Long = 0L
+) {
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("id", id)
+        put("name", name)
+        put("unitLabel", unitLabel)
+        put("defaultQuantity", defaultQuantity)
+        put("ratePerUnit", ratePerUnit)
+        put("currencySymbol", currencySymbol)
+        put("accentHex", accentHex)
+        put("notes", notes)
+        put("archived", archived)
+        put("entries", JSONObject().apply {
+            entries.forEach { (key, entry) ->
+                put(key, entry.toJson())
+            }
+        })
+        put("createdAt", createdAt)
+        put("updatedAt", updatedAt)
+    }
+
+    companion object {
+        fun fromJson(obj: JSONObject): RecurringTracker {
+            val entriesObj = obj.optJSONObject("entries")
+            val parsedEntries = linkedMapOf<String, TrackerDayEntry>()
+            if (entriesObj != null) {
+                val keys = entriesObj.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    entriesObj.optJSONObject(key)?.let { entryObj ->
+                        parsedEntries[key] = TrackerDayEntry.fromJson(entryObj, fallbackDateKey = key)
+                    }
+                }
+            }
+            return RecurringTracker(
+                id = obj.optString("id"),
+                name = obj.optString("name", ""),
+                unitLabel = obj.optString("unitLabel", ""),
+                defaultQuantity = obj.optDouble("defaultQuantity", 1.0),
+                ratePerUnit = obj.optDouble("ratePerUnit", 0.0),
+                currencySymbol = obj.optString("currencySymbol", "₹").ifBlank { "₹" },
+                accentHex = obj.optString("accentHex", "#3366CC").ifBlank { "#3366CC" },
+                notes = obj.optString("notes", ""),
+                archived = obj.optBoolean("archived", false),
+                entries = parsedEntries,
+                createdAt = obj.optLong("createdAt", 0L),
+                updatedAt = obj.optLong("updatedAt", 0L)
+            )
+        }
+    }
+}
+
+enum class ReminderRepeat(val wireValue: String, val displayLabel: String) {
+    NONE("none", "Once"),
+    DAILY("daily", "Daily"),
+    WEEKLY("weekly", "Weekly"),
+    MONTHLY("monthly", "Monthly");
+
+    companion object {
+        fun fromWire(value: String?): ReminderRepeat =
+            entries.firstOrNull { it.wireValue.equals(value, ignoreCase = true) } ?: NONE
+    }
+}
+
+data class StandaloneReminder(
+    val id: String,
+    val title: String,
+    val note: String = "",
+    val triggerAtMs: Long,
+    val repeat: ReminderRepeat = ReminderRepeat.NONE,
+    val isCompleted: Boolean = false,
+    val completedAt: Long? = null,
+    val createdAt: Long = 0L,
+    val updatedAt: Long = 0L
+) {
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("id", id)
+        put("title", title)
+        put("note", note)
+        put("triggerAtMs", triggerAtMs)
+        put("repeat", repeat.wireValue)
+        put("isCompleted", isCompleted)
+        put("completedAt", completedAt ?: JSONObject.NULL)
+        put("createdAt", createdAt)
+        put("updatedAt", updatedAt)
+    }
+
+    companion object {
+        fun fromJson(obj: JSONObject): StandaloneReminder = StandaloneReminder(
+            id = obj.optString("id"),
+            title = obj.optString("title", ""),
+            note = obj.optString("note", ""),
+            triggerAtMs = obj.optLong("triggerAtMs", 0L),
+            repeat = ReminderRepeat.fromWire(obj.optString("repeat", "none")),
+            isCompleted = obj.optBoolean("isCompleted", false),
+            completedAt = if (obj.has("completedAt") && !obj.isNull("completedAt")) obj.optLong("completedAt") else null,
+            createdAt = obj.optLong("createdAt", 0L),
+            updatedAt = obj.optLong("updatedAt", 0L)
+        )
+    }
+}
+
+enum class DocumentCategory(val wireValue: String, val displayLabel: String) {
+    ID_CARD("id_card", "ID Card"),
+    FINANCE("finance", "Finance"),
+    TRAVEL("travel", "Travel"),
+    EDUCATION("education", "Education"),
+    MEDICAL("medical", "Medical"),
+    OTHER("other", "Other");
+
+    companion object {
+        fun fromWire(value: String?): DocumentCategory =
+            entries.firstOrNull { it.wireValue.equals(value, ignoreCase = true) } ?: OTHER
+    }
+}
+
+data class PersonalDocument(
+    val id: String,
+    val title: String,
+    val category: DocumentCategory = DocumentCategory.OTHER,
+    val idNumber: String = "",
+    val fileId: String? = null,
+    val fileName: String = "",
+    val mimeType: String = "",
+    val fileSizeBytes: Long = 0L,
+    val notes: String = "",
+    val issuedDate: String = "",
+    val expiryDate: String = "",
+    val pinned: Boolean = false,
+    val createdAt: Long = 0L,
+    val updatedAt: Long = 0L
+) {
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("id", id)
+        put("title", title)
+        put("category", category.wireValue)
+        put("idNumber", idNumber)
+        put("fileId", fileId ?: JSONObject.NULL)
+        put("fileName", fileName)
+        put("mimeType", mimeType)
+        put("fileSizeBytes", fileSizeBytes)
+        put("notes", notes)
+        put("issuedDate", issuedDate)
+        put("expiryDate", expiryDate)
+        put("pinned", pinned)
+        put("createdAt", createdAt)
+        put("updatedAt", updatedAt)
+    }
+
+    companion object {
+        fun fromJson(obj: JSONObject): PersonalDocument = PersonalDocument(
+            id = obj.optString("id"),
+            title = obj.optString("title", ""),
+            category = DocumentCategory.fromWire(obj.optString("category", "other")),
+            idNumber = obj.optString("idNumber", ""),
+            fileId = obj.optString("fileId").takeIf { it.isNotEmpty() && !obj.isNull("fileId") },
+            fileName = obj.optString("fileName", ""),
+            mimeType = obj.optString("mimeType", ""),
+            fileSizeBytes = obj.optLong("fileSizeBytes", 0L),
+            notes = obj.optString("notes", ""),
+            issuedDate = obj.optString("issuedDate", ""),
+            expiryDate = obj.optString("expiryDate", ""),
+            pinned = obj.optBoolean("pinned", false),
+            createdAt = obj.optLong("createdAt", 0L),
+            updatedAt = obj.optLong("updatedAt", 0L)
+        )
+    }
+}
+
 data class VaultBackupBundle(
     val logs: List<DiaryLog>,
     val customFonts: List<CustomFontItem> = emptyList(),
     val micSettings: MicRecordingSettings = MicRecordingSettings(),
     val savedPasswords: List<SavedPasswordItem> = emptyList(),
     val quickNotes: List<QuickNote> = emptyList(),
+    val trackers: List<RecurringTracker> = emptyList(),
+    val reminders: List<StandaloneReminder> = emptyList(),
+    val documents: List<PersonalDocument> = emptyList(),
     val skippedMediaCount: Int = 0,
     val skippedMediaIds: List<String> = emptyList()
 )

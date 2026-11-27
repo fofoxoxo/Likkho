@@ -5,20 +5,29 @@ import android.content.Intent
 import android.content.SharedPreferences
 import android.net.Uri
 import android.provider.DocumentsContract
+import android.provider.OpenableColumns
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import android.webkit.MimeTypeMap
 import com.likkho.diary.nativeapp.model.DiaryLog
 import com.likkho.diary.nativeapp.model.CustomFontItem
 import com.likkho.diary.nativeapp.model.EncryptedVaultMetadata
 import com.likkho.diary.nativeapp.model.MicRecordingSettings
+import com.likkho.diary.nativeapp.model.PersonalDocument
 import com.likkho.diary.nativeapp.model.QuickNote
+import com.likkho.diary.nativeapp.model.RecurringTracker
 import com.likkho.diary.nativeapp.model.SavedPasswordItem
+import com.likkho.diary.nativeapp.model.StandaloneReminder
+import com.likkho.diary.nativeapp.model.TrackerDayEntry
 import com.likkho.diary.nativeapp.model.VaultConfig
 import com.likkho.diary.nativeapp.model.VaultMode
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.BufferedInputStream
+import java.io.BufferedOutputStream
 import java.io.File
+import java.io.FileOutputStream
 import java.nio.charset.StandardCharsets
 import java.security.KeyStore
 import java.security.MessageDigest
@@ -39,6 +48,13 @@ data class PasscodeFailureResult(
     val failedAttempts: Int,
     val cooldownSeconds: Int,
     val cooldownUntilMs: Long
+)
+
+data class ImportedDocumentFile(
+    val fileId: String,
+    val fileName: String,
+    val mimeType: String,
+    val sizeBytes: Long
 )
 
 /**
@@ -69,6 +85,15 @@ class NativeVaultRepository(context: Context) {
 
     val mediaAudioDir: File
         get() = File(appContext.filesDir, MEDIA_AUDIO_DIR).apply { if (!exists()) mkdirs() }
+
+    val mediaDocsDir: File
+        get() = File(appContext.filesDir, MEDIA_DOCS_DIR).apply {
+            if (!exists()) mkdirs()
+            val nomedia = File(this, ".nomedia")
+            if (!nomedia.exists()) {
+                runCatching { nomedia.createNewFile() }
+            }
+        }
 
     val previewCacheDir: File
         get() = File(appContext.cacheDir, PREVIEW_CACHE_DIR).apply { if (!exists()) mkdirs() }
@@ -146,6 +171,107 @@ class NativeVaultRepository(context: Context) {
         } catch (_: Exception) {
             null
         }
+    }
+
+    fun resolveExistingDocumentFile(id: String): File? {
+        return try {
+            val safeName = sanitizeFileId(id)
+            val direct = resolveConfinedFile(mediaDocsDir, safeName)
+            if (direct.exists() && direct.isFile && direct.length() > 0L) return direct
+            for (ext in DOCUMENT_EXTENSIONS) {
+                val withExt = resolveConfinedFile(mediaDocsDir, "$safeName.$ext")
+                if (withExt.exists() && withExt.isFile && withExt.length() > 0L) return withExt
+            }
+            null
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    fun importDocumentFromUri(uri: Uri): ImportedDocumentFile? {
+        return try {
+            val resolver = appContext.contentResolver
+            var displayName = ""
+            resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                if (c.moveToFirst()) {
+                    displayName = c.getString(0) ?: ""
+                }
+            }
+            val mime = resolver.getType(uri)?.lowercase()?.trim()
+                ?: MimeTypeMap.getFileExtensionFromUrl(displayName)
+                    ?.lowercase()
+                    ?.let { MimeTypeMap.getSingleton().getMimeTypeFromExtension(it) }
+                ?: "application/octet-stream"
+
+            val rawExt = displayName.substringAfterLast('.', "").lowercase()
+                .takeIf { it.matches(Regex("[a-z0-9]{1,8}")) }
+                ?: when {
+                    mime == "application/pdf" -> "pdf"
+                    mime == "image/png" -> "png"
+                    mime == "image/webp" -> "webp"
+                    mime.startsWith("image/") -> "jpg"
+                    else -> "bin"
+                }
+
+            val fileId = "${DOCUMENT_ID_PREFIX}${System.currentTimeMillis()}_${java.util.UUID.randomUUID().toString().take(8)}.$rawExt"
+            val destFile = resolveConfinedFile(mediaDocsDir, fileId)
+            var totalBytes = 0L
+            val input = resolver.openInputStream(uri) ?: return null
+            BufferedInputStream(input, 32_768).use { bin ->
+                BufferedOutputStream(FileOutputStream(destFile), 32_768).use { bout ->
+                    val buf = ByteArray(32_768)
+                    while (true) {
+                        val read = bin.read(buf)
+                        if (read == -1) break
+                        bout.write(buf, 0, read)
+                        totalBytes += read
+                    }
+                    bout.flush()
+                }
+            }
+            if (totalBytes <= 0L) {
+                destFile.delete()
+                return null
+            }
+            ImportedDocumentFile(
+                fileId = fileId,
+                fileName = displayName.ifBlank { "Document.$rawExt" },
+                mimeType = mime,
+                sizeBytes = totalBytes
+            )
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    fun hasLegacyPrimaryLogs(): Boolean = loadLogs(VaultMode.PRIMARY).isNotEmpty()
+
+    fun getLegacyPrimaryLogsCount(): Int = loadLogs(VaultMode.PRIMARY).size
+
+    /**
+     * Safely merges legacy Real Vault (`PRIMARY`) diaries into Secret Writing (`DECOY`)
+     * without overwriting newer entries or losing any media references.
+     */
+    fun migrateLegacyPrimaryLogsToSecretVault(removeFromPrimary: Boolean = true): Int {
+        val legacyLogs = loadLogs(VaultMode.PRIMARY)
+        if (legacyLogs.isEmpty()) return 0
+        val decoyLogs = loadLogs(VaultMode.DECOY).toMutableList()
+        val existingIds = decoyLogs.mapTo(HashSet()) { it.id }
+        var addedCount = 0
+        for (log in legacyLogs) {
+            if (log.id !in existingIds) {
+                decoyLogs.add(log)
+                existingIds.add(log.id)
+                addedCount++
+            }
+        }
+        val sorted = decoyLogs.sortedWith(
+            compareByDescending<DiaryLog> { it.pinned }.thenByDescending { it.updatedAt }
+        )
+        if (saveLogs(VaultMode.DECOY, sorted) && removeFromPrimary) {
+            saveLogs(VaultMode.PRIMARY, emptyList())
+        }
+        return addedCount
     }
 
     // ==================== Diary Logs ====================
@@ -330,6 +456,152 @@ class NativeVaultRepository(context: Context) {
     fun saveSavedPasswords(mode: VaultMode, items: List<SavedPasswordItem>): Boolean {
         val arr = JSONArray().apply { items.forEach { put(it.toJson()) } }
         return writeEncryptedText(File(vaultDir(mode), FILE_SAVED_PASSWORDS), arr.toString())
+    }
+
+    // ==================== Calendar Recurring Trackers (v3.0) ====================
+
+    fun loadTrackers(mode: VaultMode): List<RecurringTracker> {
+        val raw = readEncryptedText(File(vaultDir(mode), FILE_TRACKERS)) ?: return emptyList()
+        return try {
+            val arr = JSONArray(raw)
+            buildList {
+                for (i in 0 until arr.length()) {
+                    arr.optJSONObject(i)?.let { add(RecurringTracker.fromJson(it)) }
+                }
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    fun saveTrackers(mode: VaultMode, trackers: List<RecurringTracker>): Boolean {
+        val arr = JSONArray().apply { trackers.forEach { put(it.toJson()) } }
+        return writeEncryptedText(File(vaultDir(mode), FILE_TRACKERS), arr.toString())
+    }
+
+    fun upsertTracker(mode: VaultMode, tracker: RecurringTracker): List<RecurringTracker> {
+        val current = loadTrackers(mode).toMutableList()
+        val idx = current.indexOfFirst { it.id == tracker.id }
+        if (idx >= 0) current[idx] = tracker else current.add(0, tracker)
+        saveTrackers(mode, current)
+        return current
+    }
+
+    fun setTrackerDayEntry(
+        mode: VaultMode,
+        trackerId: String,
+        dateKey: String,
+        entry: TrackerDayEntry?
+    ): List<RecurringTracker> {
+        val current = loadTrackers(mode).toMutableList()
+        val idx = current.indexOfFirst { it.id == trackerId }
+        if (idx < 0) return current
+        val target = current[idx]
+        val nextEntries = target.entries.toMutableMap()
+        if (entry == null) {
+            nextEntries.remove(dateKey)
+        } else {
+            nextEntries[dateKey] = entry
+        }
+        current[idx] = target.copy(
+            entries = nextEntries,
+            updatedAt = System.currentTimeMillis()
+        )
+        saveTrackers(mode, current)
+        return current
+    }
+
+    fun deleteTracker(mode: VaultMode, trackerId: String): List<RecurringTracker> {
+        val remaining = loadTrackers(mode).filterNot { it.id == trackerId }
+        saveTrackers(mode, remaining)
+        return remaining
+    }
+
+    // ==================== Standalone Reminders (v3.0) ====================
+
+    fun loadReminders(mode: VaultMode): List<StandaloneReminder> {
+        val raw = readEncryptedText(File(vaultDir(mode), FILE_REMINDERS)) ?: return emptyList()
+        return try {
+            val arr = JSONArray(raw)
+            buildList {
+                for (i in 0 until arr.length()) {
+                    arr.optJSONObject(i)?.let { add(StandaloneReminder.fromJson(it)) }
+                }
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    fun saveReminders(mode: VaultMode, reminders: List<StandaloneReminder>): Boolean {
+        val arr = JSONArray().apply { reminders.forEach { put(it.toJson()) } }
+        return writeEncryptedText(File(vaultDir(mode), FILE_REMINDERS), arr.toString())
+    }
+
+    fun upsertReminder(mode: VaultMode, reminder: StandaloneReminder): List<StandaloneReminder> {
+        val current = loadReminders(mode).toMutableList()
+        val idx = current.indexOfFirst { it.id == reminder.id }
+        if (idx >= 0) current[idx] = reminder else current.add(0, reminder)
+        val sorted = current.sortedWith(
+            compareBy<StandaloneReminder> { it.isCompleted }.thenBy { it.triggerAtMs }
+        )
+        saveReminders(mode, sorted)
+        return sorted
+    }
+
+    fun deleteReminder(mode: VaultMode, reminderId: String): List<StandaloneReminder> {
+        val remaining = loadReminders(mode).filterNot { it.id == reminderId }
+        saveReminders(mode, remaining)
+        return remaining
+    }
+
+    // ==================== Personal Documents Vault (v3.0) ====================
+
+    fun loadDocuments(mode: VaultMode): List<PersonalDocument> {
+        val raw = readEncryptedText(File(vaultDir(mode), FILE_DOCUMENTS)) ?: return emptyList()
+        return try {
+            val arr = JSONArray(raw)
+            buildList {
+                for (i in 0 until arr.length()) {
+                    arr.optJSONObject(i)?.let { add(PersonalDocument.fromJson(it)) }
+                }
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    fun saveDocuments(mode: VaultMode, documents: List<PersonalDocument>): Boolean {
+        val arr = JSONArray().apply { documents.forEach { put(it.toJson()) } }
+        return writeEncryptedText(File(vaultDir(mode), FILE_DOCUMENTS), arr.toString())
+    }
+
+    fun upsertDocument(mode: VaultMode, document: PersonalDocument): List<PersonalDocument> {
+        val current = loadDocuments(mode).toMutableList()
+        val idx = current.indexOfFirst { it.id == document.id }
+        if (idx >= 0) current[idx] = document else current.add(0, document)
+        val sorted = current.sortedWith(
+            compareByDescending<PersonalDocument> { it.pinned }.thenByDescending { it.updatedAt }
+        )
+        saveDocuments(mode, sorted)
+        return sorted
+    }
+
+    fun deleteDocument(mode: VaultMode, documentId: String, pruneFile: Boolean = true): List<PersonalDocument> {
+        val current = loadDocuments(mode)
+        val removed = current.firstOrNull { it.id == documentId }
+        val remaining = current.filterNot { it.id == documentId }
+        saveDocuments(mode, remaining)
+        val removedFileId = removed?.fileId
+        if (pruneFile && !removedFileId.isNullOrBlank()) {
+            val otherMode = if (mode == VaultMode.PRIMARY) VaultMode.DECOY else VaultMode.PRIMARY
+            val stillUsed = remaining.any { it.fileId == removedFileId } ||
+                loadDocuments(otherMode).any { it.fileId == removedFileId }
+            if (!stillUsed) {
+                resolveExistingDocumentFile(removedFileId)?.delete()
+            }
+        }
+        return remaining
     }
 
     // ==================== Saved Word Analyses (JSON preserved 1:1) ====================
@@ -690,6 +962,7 @@ class NativeVaultRepository(context: Context) {
         File(appContext.filesDir, VAULTS_ROOT_DIR).deleteRecursively()
         mediaImagesDir.deleteRecursively()
         mediaAudioDir.deleteRecursively()
+        mediaDocsDir.deleteRecursively()
         previewCacheDir.deleteRecursively()
         File(appContext.filesDir, "likkho_internal_data").deleteRecursively()
         safPrefs.edit().clear().apply()
@@ -783,13 +1056,18 @@ class NativeVaultRepository(context: Context) {
         private const val VAULTS_ROOT_DIR = "likkho_vaults"
         private const val MEDIA_IMAGES_DIR = "likkho_media"
         private const val MEDIA_AUDIO_DIR = "likkho_audio"
+        private const val MEDIA_DOCS_DIR = "likkho_docs"
         private const val PREVIEW_CACHE_DIR = "likkho_previews"
+        const val DOCUMENT_ID_PREFIX = "lkdoc_"
 
         private const val FILE_LOGS = "logs.enc"
         private const val FILE_CUSTOM_FONTS = "custom_fonts.enc"
         private const val FILE_MIC_SETTINGS = "mic_settings.enc"
         private const val FILE_QUICK_NOTES = "quick_notes.enc"
         private const val FILE_SAVED_PASSWORDS = "saved_passwords.enc"
+        private const val FILE_TRACKERS = "trackers.enc"
+        private const val FILE_REMINDERS = "reminders.enc"
+        private const val FILE_DOCUMENTS = "documents.enc"
         private const val FILE_WORD_ANALYSES = "word_analyses.enc"
         private const val FILE_BACKUP_META = "backup_meta.enc"
         private const val FILE_KEY_HASH = "encryption_key_hash.enc"
@@ -805,6 +1083,7 @@ class NativeVaultRepository(context: Context) {
         private val SAFE_ID_REGEX = Regex("[^A-Za-z0-9._-]")
         private val IMAGE_EXTENSIONS = listOf("jpg", "jpeg", "png", "webp", "gif")
         private val AUDIO_EXTENSIONS = listOf("wav", "m4a", "mp3", "aac", "flac", "ogg", "webm")
+        private val DOCUMENT_EXTENSIONS = listOf("pdf", "jpg", "jpeg", "png", "webp", "bin")
 
         /**
          * Exact 1:1 parity with `hashPassphrase(passphrase, vaultMode)` in `src/utils/cryptoVault.ts`.

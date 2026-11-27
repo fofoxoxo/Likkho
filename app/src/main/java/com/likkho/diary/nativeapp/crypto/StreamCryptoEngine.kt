@@ -12,8 +12,11 @@ import com.likkho.diary.nativeapp.model.CustomFontItem
 import com.likkho.diary.nativeapp.model.DiaryLog
 import com.likkho.diary.nativeapp.model.EncryptedVaultMetadata
 import com.likkho.diary.nativeapp.model.MicRecordingSettings
+import com.likkho.diary.nativeapp.model.PersonalDocument
 import com.likkho.diary.nativeapp.model.QuickNote
+import com.likkho.diary.nativeapp.model.RecurringTracker
 import com.likkho.diary.nativeapp.model.SavedPasswordItem
+import com.likkho.diary.nativeapp.model.StandaloneReminder
 import com.likkho.diary.nativeapp.model.VaultBackupBundle
 import com.likkho.diary.nativeapp.model.VaultConfig
 import com.likkho.diary.nativeapp.model.VaultMode
@@ -55,7 +58,9 @@ data class StreamBackupResult(
 private data class PendingMediaItem(
     val id: String,
     val isAudio: Boolean,
-    val audioAttachment: CanvasAudioAttachment? = null
+    val audioAttachment: CanvasAudioAttachment? = null,
+    val isDocument: Boolean = false,
+    val docMimeType: String? = null
 )
 
 private data class MultiChunkTracker(
@@ -377,6 +382,9 @@ class StreamCryptoEngine(
         // 2. Write Manifest Record (0x01)
         val effectiveSavedPasswords = bundle.savedPasswords.ifEmpty { repository.loadSavedPasswords(vaultMode) }
         val effectiveQuickNotes = bundle.quickNotes.ifEmpty { repository.loadQuickNotes(vaultMode) }
+        val effectiveTrackers = bundle.trackers.ifEmpty { repository.loadTrackers(vaultMode) }
+        val effectiveReminders = bundle.reminders.ifEmpty { repository.loadReminders(vaultMode) }
+        val effectiveDocuments = bundle.documents.ifEmpty { repository.loadDocuments(vaultMode) }
         val manifestObj = JSONObject().apply {
             put("magic", "WIKILOG_STREAM_V1")
             put("dbTarget", cfg.dbFilename)
@@ -386,6 +394,9 @@ class StreamCryptoEngine(
             put("micSettings", bundle.micSettings.toJson())
             put("savedPasswords", JSONArray().apply { effectiveSavedPasswords.forEach { put(it.toJson()) } })
             put("quickNotes", JSONArray().apply { effectiveQuickNotes.forEach { put(it.toJson()) } })
+            put("trackers", JSONArray().apply { effectiveTrackers.forEach { put(it.toJson()) } })
+            put("reminders", JSONArray().apply { effectiveReminders.forEach { put(it.toJson()) } })
+            put("documents", JSONArray().apply { effectiveDocuments.forEach { put(it.toJson()) } })
         }
         val manifestPlainBytes = manifestObj.toString().toByteArray(StandardCharsets.UTF_8)
         val manifestId = "manifest"
@@ -403,7 +414,7 @@ class StreamCryptoEngine(
             cipherData = encryptedManifest
         )
 
-        // 3. Collect unique media references
+        // 3. Collect unique media & personal document references
         val mediaQueue = ArrayList<PendingMediaItem>()
         val seenIds = HashSet<String>()
         for (log in bundle.logs) {
@@ -428,6 +439,19 @@ class StreamCryptoEngine(
                 if (att.id.isNotBlank() && seenIds.add(att.id)) {
                     mediaQueue.add(PendingMediaItem(id = att.id, isAudio = true, audioAttachment = att))
                 }
+            }
+        }
+        for (doc in effectiveDocuments) {
+            val fileId = doc.fileId?.trim().orEmpty()
+            if (fileId.isNotEmpty() && seenIds.add(fileId)) {
+                mediaQueue.add(
+                    PendingMediaItem(
+                        id = fileId,
+                        isAudio = false,
+                        isDocument = true,
+                        docMimeType = doc.mimeType
+                    )
+                )
             }
         }
 
@@ -492,9 +516,18 @@ class StreamCryptoEngine(
         )
 
         outputStream.flush()
+        val computedEntryCount = if (bundle.logs.isNotEmpty()) {
+            bundle.logs.size
+        } else {
+            effectiveTrackers.size +
+                effectiveReminders.size +
+                effectiveDocuments.size +
+                effectiveQuickNotes.size +
+                effectiveSavedPasswords.size
+        }
         return StreamBackupResult(
             totalBytes = totalBytesWritten,
-            entryCount = bundle.logs.size,
+            entryCount = computedEntryCount,
             failedMediaCount = failedMediaIds.size,
             failedMediaIds = failedMediaIds,
             vaultPath = vaultPath
@@ -502,6 +535,13 @@ class StreamCryptoEngine(
     }
 
     private fun openMediaInputAndSize(item: PendingMediaItem): Pair<InputStream, Long>? {
+        if (item.isDocument) {
+            val docFile = repository.resolveExistingDocumentFile(item.id)
+            if (docFile != null && docFile.exists() && docFile.length() > 0L) {
+                return BufferedInputStream(FileInputStream(docFile), IO_BUFFER_SIZE) to docFile.length()
+            }
+            return null
+        }
         if (!item.isAudio) {
             val imgFile = repository.resolveExistingImageFile(item.id)
             if (imgFile != null && imgFile.exists() && imgFile.length() > 0L) {
@@ -543,6 +583,18 @@ class StreamCryptoEngine(
     }
 
     private fun resolveMimeTypeForMedia(item: PendingMediaItem): String {
+        if (item.isDocument) {
+            val explicit = item.docMimeType?.trim().orEmpty()
+            if (explicit.isNotEmpty()) return explicit
+            val file = repository.resolveExistingDocumentFile(item.id)
+            return when (file?.extension?.lowercase()) {
+                "pdf" -> "application/pdf"
+                "png" -> "image/png"
+                "webp" -> "image/webp"
+                "jpg", "jpeg" -> "image/jpeg"
+                else -> "application/octet-stream"
+            }
+        }
         if (!item.isAudio) {
             val file = repository.resolveExistingImageFile(item.id)
             return when (file?.extension?.lowercase()) {
@@ -582,7 +634,8 @@ class StreamCryptoEngine(
         treeUri: Uri? = repository.getSafTreeUri(vaultMode),
         writeMediaToDisk: Boolean = true,
         targetImageDir: File = repository.mediaImagesDir,
-        targetAudioDir: File = repository.mediaAudioDir
+        targetAudioDir: File = repository.mediaAudioDir,
+        targetDocsDir: File = repository.mediaDocsDir
     ): VaultBackupBundle {
         require(treeUri != null) { "Backup folder is not selected." }
         val fileUri = resolveSafBackupFileUri(appContext.contentResolver, treeUri, vaultMode)
@@ -593,7 +646,8 @@ class StreamCryptoEngine(
             vaultMode = vaultMode,
             writeMediaToDisk = writeMediaToDisk,
             targetImageDir = targetImageDir,
-            targetAudioDir = targetAudioDir
+            targetAudioDir = targetAudioDir,
+            targetDocsDir = targetDocsDir
         )
     }
 
@@ -603,7 +657,8 @@ class StreamCryptoEngine(
         vaultMode: VaultMode,
         writeMediaToDisk: Boolean = true,
         targetImageDir: File = repository.mediaImagesDir,
-        targetAudioDir: File = repository.mediaAudioDir
+        targetAudioDir: File = repository.mediaAudioDir,
+        targetDocsDir: File = repository.mediaDocsDir
     ): VaultBackupBundle {
         val rawStream = appContext.contentResolver.openInputStream(uri)
             ?: throw IOException("Unable to open backup file.")
@@ -614,7 +669,8 @@ class StreamCryptoEngine(
                 vaultMode = vaultMode,
                 writeMediaToDisk = writeMediaToDisk,
                 targetImageDir = targetImageDir,
-                targetAudioDir = targetAudioDir
+                targetAudioDir = targetAudioDir,
+                targetDocsDir = targetDocsDir
             )
         }
     }
@@ -625,7 +681,8 @@ class StreamCryptoEngine(
         vaultMode: VaultMode,
         writeMediaToDisk: Boolean = true,
         targetImageDir: File = repository.mediaImagesDir,
-        targetAudioDir: File = repository.mediaAudioDir
+        targetAudioDir: File = repository.mediaAudioDir,
+        targetDocsDir: File = repository.mediaDocsDir
     ): VaultBackupBundle {
         val buffered = BufferedInputStream(inputStream, IO_BUFFER_SIZE)
         val pushback = PushbackInputStream(buffered, 64)
@@ -644,7 +701,8 @@ class StreamCryptoEngine(
                 vaultMode = vaultMode,
                 writeMediaToDisk = writeMediaToDisk,
                 targetImageDir = targetImageDir,
-                targetAudioDir = targetAudioDir
+                targetAudioDir = targetAudioDir,
+                targetDocsDir = targetDocsDir
             )
         }
 
@@ -667,7 +725,8 @@ class StreamCryptoEngine(
         vaultMode: VaultMode,
         writeMediaToDisk: Boolean,
         targetImageDir: File,
-        targetAudioDir: File
+        targetAudioDir: File,
+        targetDocsDir: File
     ): VaultBackupBundle {
         val dataIn = DataInputStream(stream)
         val first42 = ByteArray(42)
@@ -757,8 +816,13 @@ class StreamCryptoEngine(
                     RECORD_TYPE_MEDIA_CHUNK -> {
                         if (writeMediaToDisk) {
                             val safeId = repository.sanitizeFileId(id)
-                            val isAudio = mimeType.startsWith("audio/")
-                            val destDir = if (isAudio) targetAudioDir else targetImageDir
+                            val isDoc = safeId.startsWith(NativeVaultRepository.DOCUMENT_ID_PREFIX)
+                            val isAudio = !isDoc && mimeType.startsWith("audio/")
+                            val destDir = when {
+                                isDoc -> targetDocsDir
+                                isAudio -> targetAudioDir
+                                else -> targetImageDir
+                            }
 
                             if (totalChunks <= 1) {
                                 val outFile = repository.resolveConfinedFile(destDir, safeId)
@@ -812,6 +876,9 @@ class StreamCryptoEngine(
             val micSettings = MicRecordingSettings.fromJson(manifest.optJSONObject("micSettings"))
             val savedPasswords = parseSavedPasswords(manifest.optJSONArray("savedPasswords"))
             val quickNotes = parseQuickNotes(manifest.optJSONArray("quickNotes"))
+            val trackers = parseTrackers(manifest.optJSONArray("trackers"))
+            val reminders = parseReminders(manifest.optJSONArray("reminders"))
+            val documents = parseDocuments(manifest.optJSONArray("documents"))
 
             return VaultBackupBundle(
                 logs = logs,
@@ -819,6 +886,9 @@ class StreamCryptoEngine(
                 micSettings = micSettings,
                 savedPasswords = savedPasswords,
                 quickNotes = quickNotes,
+                trackers = trackers,
+                reminders = reminders,
+                documents = documents,
                 skippedMediaCount = skippedMediaIds.size,
                 skippedMediaIds = skippedMediaIds
             )
@@ -983,6 +1053,33 @@ class StreamCryptoEngine(
         return buildList {
             for (i in 0 until arr.length()) {
                 arr.optJSONObject(i)?.let { add(QuickNote.fromJson(it)) }
+            }
+        }
+    }
+
+    private fun parseTrackers(arr: JSONArray?): List<RecurringTracker> {
+        if (arr == null) return emptyList()
+        return buildList {
+            for (i in 0 until arr.length()) {
+                arr.optJSONObject(i)?.let { add(RecurringTracker.fromJson(it)) }
+            }
+        }
+    }
+
+    private fun parseReminders(arr: JSONArray?): List<StandaloneReminder> {
+        if (arr == null) return emptyList()
+        return buildList {
+            for (i in 0 until arr.length()) {
+                arr.optJSONObject(i)?.let { add(StandaloneReminder.fromJson(it)) }
+            }
+        }
+    }
+
+    private fun parseDocuments(arr: JSONArray?): List<PersonalDocument> {
+        if (arr == null) return emptyList()
+        return buildList {
+            for (i in 0 until arr.length()) {
+                arr.optJSONObject(i)?.let { add(PersonalDocument.fromJson(it)) }
             }
         }
     }
