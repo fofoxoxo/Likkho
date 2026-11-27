@@ -2,7 +2,6 @@ package com.likkho.diary.nativeapp
 
 import android.Manifest
 import android.annotation.SuppressLint
-import android.app.AlarmManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -83,6 +82,7 @@ import com.likkho.diary.nativeapp.model.SavedPasswordItem
 import com.likkho.diary.nativeapp.model.StandaloneReminder
 import com.likkho.diary.nativeapp.model.VaultBackupBundle
 import com.likkho.diary.nativeapp.model.VaultMode
+import com.likkho.diary.nativeapp.notifications.ReminderAlarmScheduler
 import com.likkho.diary.nativeapp.ui.screens.CanvasWebViewScreen
 import com.likkho.diary.nativeapp.ui.screens.EverydayShellScreen
 import com.likkho.diary.nativeapp.ui.screens.HomeScreen
@@ -105,7 +105,6 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
-import kotlin.math.abs
 
 private enum class NativeScreenRoute {
     HOME,
@@ -347,6 +346,9 @@ class NativeMainActivity : FragmentActivity(), NativeCanvasActivityHost {
                                             },
                                             onTrackersUpdated = { updatedTrackers ->
                                                 trackers = updatedTrackers
+                                            },
+                                            onRemindersUpdated = { updatedReminders ->
+                                                reminders = updatedReminders
                                             }
                                         )
                                     } else {
@@ -685,6 +687,13 @@ class NativeMainActivity : FragmentActivity(), NativeCanvasActivityHost {
                     quickNotes
                 )
             }
+            val syncedReminders = withContext(Dispatchers.IO) {
+                ReminderAlarmScheduler.rescheduleAllPendingAlarms(
+                    this@NativeMainActivity,
+                    VaultMode.PRIMARY
+                )
+            }
+            reminders = syncedReminders
 
             checkPendingQuickNoteDoneFromNotification()
             attachOrDispatchPendingRecording()
@@ -775,6 +784,15 @@ class NativeMainActivity : FragmentActivity(), NativeCanvasActivityHost {
                     quickNotes
                 )
             }
+            if (mode == VaultMode.PRIMARY) {
+                val syncedReminders = withContext(Dispatchers.IO) {
+                    ReminderAlarmScheduler.rescheduleAllPendingAlarms(
+                        this@NativeMainActivity,
+                        VaultMode.PRIMARY
+                    )
+                }
+                reminders = syncedReminders
+            }
 
             applyPasscodeSecurityFlags(repository.isAppPasscodeProtectionEnabled())
             attachOrDispatchPendingRecording()
@@ -829,11 +847,14 @@ class NativeMainActivity : FragmentActivity(), NativeCanvasActivityHost {
                 cancelNativeReminder(l.id)
             }
         }
+        for (r in reminders) {
+            ReminderAlarmScheduler.cancelReminder(this, r.id)
+        }
     }
 
     private fun applyRestoredBackupBundle(bundle: VaultBackupBundle) {
         lifecycleScope.launch {
-            withContext(Dispatchers.IO) {
+            val restoredReminders = withContext(Dispatchers.IO) {
                 repository.saveLogs(currentVaultMode, bundle.logs)
                 repository.saveCustomFonts(currentVaultMode, bundle.customFonts)
                 repository.saveMicSettings(currentVaultMode, bundle.micSettings)
@@ -846,13 +867,21 @@ class NativeMainActivity : FragmentActivity(), NativeCanvasActivityHost {
                     this@NativeMainActivity,
                     bundle.quickNotes
                 )
+                if (currentVaultMode == VaultMode.PRIMARY) {
+                    ReminderAlarmScheduler.rescheduleAllPendingAlarms(
+                        this@NativeMainActivity,
+                        VaultMode.PRIMARY
+                    )
+                } else {
+                    bundle.reminders
+                }
             }
             logs = bundle.logs
             customFonts = bundle.customFonts
             micSettings = bundle.micSettings
             quickNotes = bundle.quickNotes
             trackers = bundle.trackers
-            reminders = bundle.reminders
+            reminders = restoredReminders
             documents = bundle.documents
             savedPasswords = bundle.savedPasswords
             currentRoute = NativeScreenRoute.HOME
@@ -1682,6 +1711,21 @@ class NativeMainActivity : FragmentActivity(), NativeCanvasActivityHost {
 
     // ==================== AlarmManager OS Reminders ====================
 
+    fun refreshRemindersFromVault() {
+        mainHandler.post {
+            if (isLocked) return@post
+            val targetMode = currentVaultMode
+            lifecycleScope.launch {
+                val loaded = withContext(Dispatchers.IO) {
+                    repository.loadReminders(targetMode)
+                }
+                if (!isLocked && currentVaultMode == targetMode) {
+                    reminders = loaded
+                }
+            }
+        }
+    }
+
     @SuppressLint("MissingPermission")
     override fun scheduleNativeReminder(logId: String, title: String, body: String, triggerAtMs: Long) {
         mainHandler.post {
@@ -1692,53 +1736,20 @@ class NativeMainActivity : FragmentActivity(), NativeCanvasActivityHost {
                 ) {
                     notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                 }
-                val am = getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return@post
-                val reqCode = abs(logId.hashCode())
-                val intent = Intent().apply {
-                    component = ComponentName(this@NativeMainActivity, "com.likkho.diary.ReminderReceiver")
-                    putExtra("title", title)
-                    putExtra("body", body)
-                    putExtra("notifId", reqCode)
-                }
-                val pi = PendingIntent.getBroadcast(
-                    this,
-                    reqCode,
-                    intent,
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                ReminderAlarmScheduler.scheduleDiaryReminder(
+                    context = this,
+                    logId = logId,
+                    title = title,
+                    body = body,
+                    triggerAtMs = triggerAtMs
                 )
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    if (am.canScheduleExactAlarms()) {
-                        am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMs, pi)
-                    } else {
-                        am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMs, pi)
-                    }
-                } else {
-                    try {
-                        am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMs, pi)
-                    } catch (_: SecurityException) {
-                        am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMs, pi)
-                    }
-                }
             }
         }
     }
 
     override fun cancelNativeReminder(logId: String) {
         mainHandler.post {
-            runCatching {
-                val am = getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return@post
-                val reqCode = abs(logId.hashCode())
-                val intent = Intent().apply {
-                    component = ComponentName(this@NativeMainActivity, "com.likkho.diary.ReminderReceiver")
-                }
-                val pi = PendingIntent.getBroadcast(
-                    this,
-                    reqCode,
-                    intent,
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                )
-                am.cancel(pi)
-            }
+            ReminderAlarmScheduler.cancelDiaryReminder(this, logId)
         }
     }
 

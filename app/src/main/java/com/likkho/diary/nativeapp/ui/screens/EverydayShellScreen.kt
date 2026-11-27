@@ -103,6 +103,7 @@ fun EverydayShellScreen(
     onOpenPasswordsSettings: () -> Unit,
     onQuickNotesUpdated: (List<QuickNote>) -> Unit,
     onTrackersUpdated: (List<RecurringTracker>) -> Unit,
+    onRemindersUpdated: (List<StandaloneReminder>) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val colors = LikkhoTheme.colors
@@ -238,11 +239,12 @@ fun EverydayShellScreen(
                     }
 
                     EverydayTab.REMINDERS -> {
-                        EverydayPlaceholderTab(
-                            icon = Icons.Outlined.NotificationsActive,
-                            title = "Reminders",
-                            countLabel = "${reminders.size} saved",
-                            description = "Scheduled date & time alerts with once, daily, weekly, and monthly repeats."
+                        RemindersTabScreen(
+                            reminders = reminders,
+                            searchQuery = searchQuery,
+                            vaultMode = VaultMode.PRIMARY,
+                            repository = repository,
+                            onRemindersUpdated = onRemindersUpdated
                         )
                     }
 
