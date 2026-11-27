@@ -76,6 +76,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
@@ -646,16 +647,6 @@ fun QuickNoteModal(
                     .padding(horizontal = 12.dp),
                 contentAlignment = Alignment.CenterStart
             ) {
-                if (title.isEmpty()) {
-                    Text(
-                        text = "Note title (e.g. Shopping, Ideas, Code, Reminders)...",
-                        fontFamily = LikkhoFontFamilies.Sans,
-                        fontSize = 12.sp,
-                        color = colors.muted,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
                 BasicTextField(
                     value = title,
                     onValueChange = {
@@ -670,9 +661,32 @@ fun QuickNoteModal(
                         color = colors.text
                     ),
                     cursorBrush = SolidColor(colors.accent),
+                    keyboardOptions = KeyboardOptions(
+                        capitalization = KeyboardCapitalization.Sentences,
+                        imeAction = ImeAction.Next
+                    ),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .focusRequester(titleFocusRequester)
+                        .focusRequester(titleFocusRequester),
+                    decorationBox = { innerTextField ->
+                        Box(
+                            modifier = Modifier.fillMaxWidth(),
+                            contentAlignment = Alignment.CenterStart
+                        ) {
+                            if (title.isEmpty()) {
+                                Text(
+                                    text = "Note title (e.g. Shopping, Ideas, Code, Reminders)...",
+                                    fontFamily = LikkhoFontFamilies.Sans,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 12.sp,
+                                    color = colors.muted.copy(alpha = 0.62f),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            innerTextField()
+                        }
+                    }
                 )
             }
         }
@@ -698,14 +712,6 @@ fun QuickNoteModal(
                         .padding(12.dp),
                     contentAlignment = Alignment.TopStart
                 ) {
-                    if (content.isEmpty()) {
-                        Text(
-                            text = "Type your quick note content here...",
-                            fontFamily = LikkhoFontFamilies.Sans,
-                            fontSize = 12.sp,
-                            color = colors.muted
-                        )
-                    }
                     BasicTextField(
                         value = content,
                         onValueChange = {
@@ -719,9 +725,29 @@ fun QuickNoteModal(
                             color = colors.text
                         ),
                         cursorBrush = SolidColor(colors.accent),
+                        keyboardOptions = KeyboardOptions(
+                            capitalization = KeyboardCapitalization.Sentences
+                        ),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(min = 140.dp)
+                            .heightIn(min = 140.dp),
+                        decorationBox = { innerTextField ->
+                            Box(
+                                modifier = Modifier.fillMaxWidth(),
+                                contentAlignment = Alignment.TopStart
+                            ) {
+                                if (content.isEmpty()) {
+                                    Text(
+                                        text = "Type your quick note content here...",
+                                        fontFamily = LikkhoFontFamilies.Sans,
+                                        fontSize = 12.sp,
+                                        lineHeight = 19.sp,
+                                        color = colors.muted.copy(alpha = 0.62f)
+                                    )
+                                }
+                                innerTextField()
+                            }
+                        }
                     )
                 }
             } else {
@@ -793,6 +819,10 @@ fun QuickNoteModal(
                                         textDecoration = if (item.checked) TextDecoration.LineThrough else TextDecoration.None
                                     ),
                                     cursorBrush = SolidColor(colors.accent),
+                                    keyboardOptions = KeyboardOptions(
+                                        capitalization = KeyboardCapitalization.Sentences,
+                                        imeAction = ImeAction.Next
+                                    ),
                                     modifier = Modifier.fillMaxWidth()
                                 )
                             }
@@ -852,7 +882,10 @@ fun QuickNoteModal(
                                     color = colors.text
                                 ),
                                 cursorBrush = SolidColor(colors.accent),
-                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                keyboardOptions = KeyboardOptions(
+                                    capitalization = KeyboardCapitalization.Sentences,
+                                    imeAction = ImeAction.Done
+                                ),
                                 keyboardActions = KeyboardActions(onDone = { addTodoItem() }),
                                 modifier = Modifier.fillMaxWidth()
                             )

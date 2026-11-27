@@ -74,6 +74,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
@@ -642,7 +643,10 @@ private fun SecretWritingHeaderBar(
                                 color = colors.text
                             ),
                             cursorBrush = SolidColor(colors.accent),
-                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                            keyboardOptions = KeyboardOptions(
+                                capitalization = KeyboardCapitalization.Sentences,
+                                imeAction = ImeAction.Search
+                            ),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .focusRequester(focusRequester)

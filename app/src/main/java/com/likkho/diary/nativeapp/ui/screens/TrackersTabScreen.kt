@@ -66,6 +66,8 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -2294,7 +2296,15 @@ private fun TrackerLabeledField(
                 value = value,
                 onValueChange = onValueChange,
                 singleLine = singleLine,
-                keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
+                keyboardOptions = KeyboardOptions(
+                    capitalization = if (keyboardType == KeyboardType.Text) {
+                        KeyboardCapitalization.Sentences
+                    } else {
+                        KeyboardCapitalization.None
+                    },
+                    keyboardType = keyboardType,
+                    imeAction = if (singleLine) ImeAction.Next else ImeAction.Default
+                ),
                 textStyle = TextStyle(
                     fontFamily = LikkhoFontFamilies.Sans,
                     fontSize = 13.sp,
