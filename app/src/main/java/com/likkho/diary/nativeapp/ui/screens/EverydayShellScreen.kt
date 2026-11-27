@@ -62,7 +62,6 @@ import com.likkho.diary.nativeapp.model.RecurringTracker
 import com.likkho.diary.nativeapp.model.SavedPasswordItem
 import com.likkho.diary.nativeapp.model.StandaloneReminder
 import com.likkho.diary.nativeapp.model.VaultMode
-import com.likkho.diary.nativeapp.ui.components.LikkhoDialogOutlineButton
 import com.likkho.diary.nativeapp.ui.components.LikkhoHairlineBorder
 import com.likkho.diary.nativeapp.ui.theme.LikkhoFontFamilies
 import com.likkho.diary.nativeapp.ui.theme.LikkhoTheme
@@ -100,10 +99,12 @@ fun EverydayShellScreen(
     onDismissStatusBanner: () -> Unit = {},
     onLockApp: () -> Unit,
     onOpenSettings: () -> Unit,
-    onOpenPasswordsSettings: () -> Unit,
     onQuickNotesUpdated: (List<QuickNote>) -> Unit,
     onTrackersUpdated: (List<RecurringTracker>) -> Unit,
     onRemindersUpdated: (List<StandaloneReminder>) -> Unit,
+    onDocumentsUpdated: (List<PersonalDocument>) -> Unit,
+    onPasswordsUpdated: (List<SavedPasswordItem>) -> Unit,
+    onSystemPickerStateChanged: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val colors = LikkhoTheme.colors
@@ -249,22 +250,23 @@ fun EverydayShellScreen(
                     }
 
                     EverydayTab.DOCUMENTS -> {
-                        EverydayPlaceholderTab(
-                            icon = Icons.Outlined.Description,
-                            title = "Personal Documents",
-                            countLabel = "${documents.size} stored",
-                            description = "Encrypted offline storage for ID cards, PDFs, finance, travel, and medical records."
+                        DocumentsTabScreen(
+                            documents = documents,
+                            searchQuery = searchQuery,
+                            vaultMode = VaultMode.PRIMARY,
+                            repository = repository,
+                            onDocumentsUpdated = onDocumentsUpdated,
+                            onSystemPickerStateChanged = onSystemPickerStateChanged
                         )
                     }
 
                     EverydayTab.PASSWORDS -> {
-                        EverydayPlaceholderTab(
-                            icon = Icons.Outlined.VpnKey,
-                            title = "Password Vault",
-                            countLabel = "${savedPasswords.size} saved",
-                            description = "Searchable offline manager for your encrypted usernames, passwords, and login notes.",
-                            actionLabel = "Open Passwords Manager",
-                            onActionClick = onOpenPasswordsSettings
+                        PasswordsTabScreen(
+                            passwords = savedPasswords,
+                            searchQuery = searchQuery,
+                            vaultMode = VaultMode.PRIMARY,
+                            repository = repository,
+                            onPasswordsUpdated = onPasswordsUpdated
                         )
                     }
                 }
@@ -530,83 +532,3 @@ private fun EverydayBottomNavBar(
     }
 }
 
-@Composable
-private fun EverydayPlaceholderTab(
-    icon: ImageVector,
-    title: String,
-    countLabel: String,
-    description: String,
-    actionLabel: String? = null,
-    onActionClick: (() -> Unit)? = null
-) {
-    val colors = LikkhoTheme.colors
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(colors.surface)
-                .border(LikkhoHairlineBorder, colors.border, RectangleShape)
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(48.dp)
-                    .background(colors.bg)
-                    .border(LikkhoHairlineBorder, colors.border, RectangleShape),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = colors.accent,
-                    modifier = Modifier.size(22.dp)
-                )
-            }
-            Spacer(modifier = Modifier.height(14.dp))
-            Text(
-                text = title,
-                fontFamily = LikkhoFontFamilies.Serif,
-                fontWeight = FontWeight.Bold,
-                fontSize = 19.sp,
-                color = colors.text,
-                textAlign = TextAlign.Center
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            Box(
-                modifier = Modifier
-                    .background(colors.bg)
-                    .border(LikkhoHairlineBorder, colors.hairline, RectangleShape)
-                    .padding(horizontal = 8.dp, vertical = 2.dp)
-            ) {
-                Text(
-                    text = countLabel,
-                    fontFamily = LikkhoFontFamilies.Mono,
-                    fontSize = 10.sp,
-                    color = colors.accent
-                )
-            }
-            Spacer(modifier = Modifier.height(10.dp))
-            Text(
-                text = description,
-                fontFamily = LikkhoFontFamilies.Sans,
-                fontSize = 12.sp,
-                lineHeight = 18.sp,
-                color = colors.muted,
-                textAlign = TextAlign.Center
-            )
-            if (!actionLabel.isNullOrBlank() && onActionClick != null) {
-                Spacer(modifier = Modifier.height(14.dp))
-                LikkhoDialogOutlineButton(
-                    text = actionLabel,
-                    onClick = onActionClick
-                )
-            }
-        }
-    }
-}

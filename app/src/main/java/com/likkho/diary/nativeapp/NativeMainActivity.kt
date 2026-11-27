@@ -337,10 +337,6 @@ class NativeMainActivity : FragmentActivity(), NativeCanvasActivityHost {
                                                 settingsInitialSubPage = SettingsSubPage.MAIN
                                                 currentRoute = NativeScreenRoute.SETTINGS
                                             },
-                                            onOpenPasswordsSettings = {
-                                                settingsInitialSubPage = SettingsSubPage.PASSWORDS
-                                                currentRoute = NativeScreenRoute.SETTINGS
-                                            },
                                             onQuickNotesUpdated = { updatedNotes ->
                                                 quickNotes = updatedNotes
                                             },
@@ -349,6 +345,15 @@ class NativeMainActivity : FragmentActivity(), NativeCanvasActivityHost {
                                             },
                                             onRemindersUpdated = { updatedReminders ->
                                                 reminders = updatedReminders
+                                            },
+                                            onDocumentsUpdated = { updatedDocuments ->
+                                                documents = updatedDocuments
+                                            },
+                                            onPasswordsUpdated = { updatedPasswords ->
+                                                savedPasswords = updatedPasswords
+                                            },
+                                            onSystemPickerStateChanged = { isOpen ->
+                                                isSystemPickerActive = isOpen
                                             }
                                         )
                                     } else {
