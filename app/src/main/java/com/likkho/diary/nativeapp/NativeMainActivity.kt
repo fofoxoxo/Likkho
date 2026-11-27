@@ -76,10 +76,15 @@ import com.likkho.diary.nativeapp.model.CanvasDraggableImage
 import com.likkho.diary.nativeapp.model.CustomFontItem
 import com.likkho.diary.nativeapp.model.DiaryLog
 import com.likkho.diary.nativeapp.model.MicRecordingSettings
+import com.likkho.diary.nativeapp.model.PersonalDocument
 import com.likkho.diary.nativeapp.model.QuickNote
+import com.likkho.diary.nativeapp.model.RecurringTracker
+import com.likkho.diary.nativeapp.model.SavedPasswordItem
+import com.likkho.diary.nativeapp.model.StandaloneReminder
 import com.likkho.diary.nativeapp.model.VaultBackupBundle
 import com.likkho.diary.nativeapp.model.VaultMode
 import com.likkho.diary.nativeapp.ui.screens.CanvasWebViewScreen
+import com.likkho.diary.nativeapp.ui.screens.EverydayShellScreen
 import com.likkho.diary.nativeapp.ui.screens.HomeScreen
 import com.likkho.diary.nativeapp.ui.screens.NativeCanvasActivityHost
 import com.likkho.diary.nativeapp.ui.screens.PasscodeLockScreen
@@ -146,6 +151,10 @@ class NativeMainActivity : FragmentActivity(), NativeCanvasActivityHost {
     private var customFonts by mutableStateOf<List<CustomFontItem>>(emptyList())
     private var micSettings by mutableStateOf(MicRecordingSettings())
     private var quickNotes by mutableStateOf<List<QuickNote>>(emptyList())
+    private var trackers by mutableStateOf<List<RecurringTracker>>(emptyList())
+    private var reminders by mutableStateOf<List<StandaloneReminder>>(emptyList())
+    private var documents by mutableStateOf<List<PersonalDocument>>(emptyList())
+    private var savedPasswords by mutableStateOf<List<SavedPasswordItem>>(emptyList())
     private var savedWordAnalysesJson by mutableStateOf("[]")
 
     // Canvas Workspace State
@@ -302,7 +311,7 @@ class NativeMainActivity : FragmentActivity(), NativeCanvasActivityHost {
                         isLocked -> {
                             PasscodeLockScreen(
                                 repository = repository,
-                                biometricsEnabled = repository.isBiometricEnabled(),
+                                biometricsEnabled = repository.isBiometricEnabled() && repository.hasPrimaryPasscode(),
                                 onUnlocked = { unlockedMode ->
                                     onVaultUnlocked(unlockedMode)
                                 }
@@ -312,55 +321,85 @@ class NativeMainActivity : FragmentActivity(), NativeCanvasActivityHost {
                         else -> {
                             when (currentRoute) {
                                 NativeScreenRoute.HOME -> {
-                                    HomeScreen(
-                                        logs = logs,
-                                        repository = repository,
-                                        mediaEngine = mediaEngine,
-                                        isLoadingLogs = isHydratingVault,
-                                        statusBanner = statusBanner,
-                                        processingBanner = processingBanner,
-                                        onDismissStatusBanner = { statusBanner = null },
-                                        onLockApp = { lockVault() },
-                                        onOpenSettings = {
-                                            settingsInitialSubPage = SettingsSubPage.MAIN
-                                            currentRoute = NativeScreenRoute.SETTINGS
-                                        },
-                                        onCreateDiary = {
-                                            editingLog = null
-                                            canvasStartInEditMode = true
-                                            currentRoute = NativeScreenRoute.CANVAS
-                                        },
-                                        onOpenDiary = { log ->
-                                            editingLog = log
-                                            canvasStartInEditMode = false
-                                            currentRoute = NativeScreenRoute.CANVAS
-                                        },
-                                        onTogglePin = { log ->
-                                            val updated = log.copy(pinned = !log.pinned)
-                                            lifecycleScope.launch {
-                                                val refreshed = withContext(Dispatchers.IO) {
-                                                    repository.upsertLog(currentVaultMode, updated)
-                                                }
-                                                logs = refreshed
+                                    if (currentVaultMode == VaultMode.PRIMARY) {
+                                        EverydayShellScreen(
+                                            quickNotes = quickNotes,
+                                            trackers = trackers,
+                                            reminders = reminders,
+                                            documents = documents,
+                                            savedPasswords = savedPasswords,
+                                            repository = repository,
+                                            isLoadingVault = isHydratingVault,
+                                            statusBanner = statusBanner,
+                                            processingBanner = processingBanner,
+                                            onDismissStatusBanner = { statusBanner = null },
+                                            onLockApp = { lockVault() },
+                                            onOpenSettings = {
+                                                settingsInitialSubPage = SettingsSubPage.MAIN
+                                                currentRoute = NativeScreenRoute.SETTINGS
+                                            },
+                                            onOpenPasswordsSettings = {
+                                                settingsInitialSubPage = SettingsSubPage.PASSWORDS
+                                                currentRoute = NativeScreenRoute.SETTINGS
+                                            },
+                                            onQuickNotesUpdated = { updatedNotes ->
+                                                quickNotes = updatedNotes
+                                            },
+                                            onTrackersUpdated = { updatedTrackers ->
+                                                trackers = updatedTrackers
                                             }
-                                        },
-                                        onShareLikkho = { log ->
-                                            shareDiaryAsLikkho(log)
-                                        },
-                                        onExportDiary = { log, format ->
-                                            exportSingleDiary(log, format)
-                                        },
-                                        onDeleteDiary = { log ->
-                                            cancelNativeReminder(log.id)
-                                            lifecycleScope.launch {
-                                                val remaining = withContext(Dispatchers.IO) {
-                                                    repository.deleteLog(currentVaultMode, log.id)
+                                        )
+                                    } else {
+                                        HomeScreen(
+                                            logs = logs,
+                                            repository = repository,
+                                            mediaEngine = mediaEngine,
+                                            isLoadingLogs = isHydratingVault,
+                                            statusBanner = statusBanner,
+                                            processingBanner = processingBanner,
+                                            onDismissStatusBanner = { statusBanner = null },
+                                            onLockApp = { lockVault() },
+                                            onOpenSettings = {
+                                                settingsInitialSubPage = SettingsSubPage.MAIN
+                                                currentRoute = NativeScreenRoute.SETTINGS
+                                            },
+                                            onCreateDiary = {
+                                                editingLog = null
+                                                canvasStartInEditMode = true
+                                                currentRoute = NativeScreenRoute.CANVAS
+                                            },
+                                            onOpenDiary = { log ->
+                                                editingLog = log
+                                                canvasStartInEditMode = false
+                                                currentRoute = NativeScreenRoute.CANVAS
+                                            },
+                                            onTogglePin = { log ->
+                                                val updated = log.copy(pinned = !log.pinned)
+                                                lifecycleScope.launch {
+                                                    val refreshed = withContext(Dispatchers.IO) {
+                                                        repository.upsertLog(currentVaultMode, updated)
+                                                    }
+                                                    logs = refreshed
                                                 }
-                                                logs = remaining
-                                                statusBanner = "Deleted \"${log.heading.ifBlank { "Untitled" }}\"."
+                                            },
+                                            onShareLikkho = { log ->
+                                                shareDiaryAsLikkho(log)
+                                            },
+                                            onExportDiary = { log, format ->
+                                                exportSingleDiary(log, format)
+                                            },
+                                            onDeleteDiary = { log ->
+                                                cancelNativeReminder(log.id)
+                                                lifecycleScope.launch {
+                                                    val remaining = withContext(Dispatchers.IO) {
+                                                        repository.deleteLog(currentVaultMode, log.id)
+                                                    }
+                                                    logs = remaining
+                                                    statusBanner = "Deleted \"${log.heading.ifBlank { "Untitled" }}\"."
+                                                }
                                             }
-                                        }
-                                    )
+                                        )
+                                    }
                                 }
 
                                 NativeScreenRoute.CANVAS -> {
@@ -459,6 +498,11 @@ class NativeMainActivity : FragmentActivity(), NativeCanvasActivityHost {
                                         onBack = {
                                             applyPasscodeSecurityFlags(repository.isAppPasscodeProtectionEnabled())
                                             currentRoute = NativeScreenRoute.HOME
+                                            lifecycleScope.launch {
+                                                savedPasswords = withContext(Dispatchers.IO) {
+                                                    repository.loadSavedPasswords(currentVaultMode)
+                                                }
+                                            }
                                         },
                                         initialSubPage = settingsInitialSubPage
                                     )
@@ -624,6 +668,10 @@ class NativeMainActivity : FragmentActivity(), NativeCanvasActivityHost {
                 customFonts = hydrated.customFonts
                 micSettings = hydrated.micSettings
                 quickNotes = hydrated.quickNotes
+                trackers = hydrated.trackers
+                reminders = hydrated.reminders
+                documents = hydrated.documents
+                savedPasswords = hydrated.savedPasswords
                 savedWordAnalysesJson = hydrated.wordAnalysesJson
                 isLocked = false
                 isMigratingLegacyData = false
@@ -650,12 +698,20 @@ class NativeMainActivity : FragmentActivity(), NativeCanvasActivityHost {
         val fontsDeferred = async(Dispatchers.IO) { repository.loadCustomFonts(mode) }
         val micDeferred = async(Dispatchers.IO) { repository.loadMicSettings(mode) }
         val notesDeferred = async(Dispatchers.IO) { repository.loadQuickNotes(mode) }
+        val trackersDeferred = async(Dispatchers.IO) { repository.loadTrackers(mode) }
+        val remindersDeferred = async(Dispatchers.IO) { repository.loadReminders(mode) }
+        val docsDeferred = async(Dispatchers.IO) { repository.loadDocuments(mode) }
+        val passwordsDeferred = async(Dispatchers.IO) { repository.loadSavedPasswords(mode) }
         val wordDeferred = async(Dispatchers.IO) { repository.loadSavedWordAnalysesJson(mode) }
         HydratedVaultData(
             logs = logsDeferred.await(),
             customFonts = fontsDeferred.await(),
             micSettings = micDeferred.await(),
             quickNotes = notesDeferred.await(),
+            trackers = trackersDeferred.await(),
+            reminders = remindersDeferred.await(),
+            documents = docsDeferred.await(),
+            savedPasswords = passwordsDeferred.await(),
             wordAnalysesJson = wordDeferred.await()
         )
     }
@@ -668,8 +724,8 @@ class NativeMainActivity : FragmentActivity(), NativeCanvasActivityHost {
         applyPasscodeSecurityFlags(passcodeProtected)
 
         if (!passcodeProtected) {
-            // Keep isMigratingLegacyData = true until logs finish loading inside onVaultUnlocked
-            // so the Homepage never flashes "No Logs Yet" prior to vault hydration.
+            // Keep isMigratingLegacyData = true until vault data finishes loading inside onVaultUnlocked
+            // so Everyday/Secret shells never flash empty placeholders prior to hydration.
             onVaultUnlocked(VaultMode.PRIMARY)
         } else {
             isMigratingLegacyData = false
@@ -699,6 +755,10 @@ class NativeMainActivity : FragmentActivity(), NativeCanvasActivityHost {
                 customFonts = hydrated.customFonts
                 micSettings = hydrated.micSettings
                 quickNotes = hydrated.quickNotes
+                trackers = hydrated.trackers
+                reminders = hydrated.reminders
+                documents = hydrated.documents
+                savedPasswords = hydrated.savedPasswords
                 savedWordAnalysesJson = hydrated.wordAnalysesJson
                 editingLog = null
                 statusBanner = null
@@ -729,6 +789,10 @@ class NativeMainActivity : FragmentActivity(), NativeCanvasActivityHost {
         logs = emptyList()
         customFonts = emptyList()
         quickNotes = emptyList()
+        trackers = emptyList()
+        reminders = emptyList()
+        documents = emptyList()
+        savedPasswords = emptyList()
         savedWordAnalysesJson = "[]"
         statusBanner = null
         currentRoute = NativeScreenRoute.HOME
@@ -745,6 +809,10 @@ class NativeMainActivity : FragmentActivity(), NativeCanvasActivityHost {
         customFonts = emptyList()
         micSettings = MicRecordingSettings()
         quickNotes = emptyList()
+        trackers = emptyList()
+        reminders = emptyList()
+        documents = emptyList()
+        savedPasswords = emptyList()
         savedWordAnalysesJson = "[]"
         editingLog = null
         currentVaultMode = VaultMode.PRIMARY
@@ -771,6 +839,9 @@ class NativeMainActivity : FragmentActivity(), NativeCanvasActivityHost {
                 repository.saveMicSettings(currentVaultMode, bundle.micSettings)
                 repository.saveQuickNotes(currentVaultMode, bundle.quickNotes)
                 repository.saveSavedPasswords(currentVaultMode, bundle.savedPasswords)
+                repository.saveTrackers(currentVaultMode, bundle.trackers)
+                repository.saveReminders(currentVaultMode, bundle.reminders)
+                repository.saveDocuments(currentVaultMode, bundle.documents)
                 QuickNoteSystemSync.syncActiveNoteToHomeWidgetAndTile(
                     this@NativeMainActivity,
                     bundle.quickNotes
@@ -780,11 +851,24 @@ class NativeMainActivity : FragmentActivity(), NativeCanvasActivityHost {
             customFonts = bundle.customFonts
             micSettings = bundle.micSettings
             quickNotes = bundle.quickNotes
+            trackers = bundle.trackers
+            reminders = bundle.reminders
+            documents = bundle.documents
+            savedPasswords = bundle.savedPasswords
             currentRoute = NativeScreenRoute.HOME
-            statusBanner = if (bundle.skippedMediaCount > 0) {
-                "Restored ${bundle.logs.size} diaries (${bundle.skippedMediaCount} media skipped)."
+            statusBanner = if (bundle.logs.isNotEmpty()) {
+                if (bundle.skippedMediaCount > 0) {
+                    "Restored ${bundle.logs.size} entries (${bundle.skippedMediaCount} media skipped)."
+                } else {
+                    "Restored ${bundle.logs.size} encrypted entries to vault."
+                }
             } else {
-                "Restored ${bundle.logs.size} encrypted diaries to vault."
+                val restoredItems = bundle.quickNotes.size +
+                    bundle.trackers.size +
+                    bundle.reminders.size +
+                    bundle.documents.size +
+                    bundle.savedPasswords.size
+                "Restored $restoredItems items to vault."
             }
         }
     }
@@ -1001,6 +1085,31 @@ class NativeMainActivity : FragmentActivity(), NativeCanvasActivityHost {
         val shared = pendingSharedContent
         if (shared != null) {
             pendingSharedContent = null
+            if (currentVaultMode == VaultMode.PRIMARY) {
+                lifecycleScope.launch {
+                    val now = System.currentTimeMillis()
+                    val sharedBody = shared.text.ifBlank { shared.title }
+                    val newNote = QuickNote(
+                        id = "qn_share_${now}_${UUID.randomUUID().toString().take(4)}",
+                        title = shared.title.ifBlank { "Shared Note" },
+                        content = sharedBody,
+                        createdAt = now,
+                        updatedAt = now,
+                        isDone = false,
+                        isChecklist = false,
+                        isPinnedToNotification = true
+                    )
+                    val nextNotes = withContext(Dispatchers.IO) {
+                        val updated = listOf(newNote) + repository.loadQuickNotes(VaultMode.PRIMARY)
+                        repository.saveQuickNotes(VaultMode.PRIMARY, updated)
+                        QuickNoteSystemSync.syncActiveNoteToHomeWidgetAndTile(this@NativeMainActivity, updated)
+                        updated
+                    }
+                    quickNotes = nextNotes
+                    statusBanner = "Saved shared note \"${newNote.title}\"."
+                }
+                return
+            }
             processingBanner = "Creating shared diary draft..."
             lifecycleScope.launch {
                 val created = withContext(Dispatchers.IO) {
@@ -1055,9 +1164,13 @@ class NativeMainActivity : FragmentActivity(), NativeCanvasActivityHost {
 
         if (pendingNewDiaryIntent) {
             pendingNewDiaryIntent = false
-            editingLog = null
-            canvasStartInEditMode = true
-            currentRoute = NativeScreenRoute.CANVAS
+            if (currentVaultMode == VaultMode.PRIMARY) {
+                showStandaloneQuickNoteModal = true
+            } else {
+                editingLog = null
+                canvasStartInEditMode = true
+                currentRoute = NativeScreenRoute.CANVAS
+            }
         }
     }
 
@@ -1822,6 +1935,10 @@ class NativeMainActivity : FragmentActivity(), NativeCanvasActivityHost {
         val customFonts: List<CustomFontItem>,
         val micSettings: MicRecordingSettings,
         val quickNotes: List<QuickNote>,
+        val trackers: List<RecurringTracker>,
+        val reminders: List<StandaloneReminder>,
+        val documents: List<PersonalDocument>,
+        val savedPasswords: List<SavedPasswordItem>,
         val wordAnalysesJson: String
     )
 

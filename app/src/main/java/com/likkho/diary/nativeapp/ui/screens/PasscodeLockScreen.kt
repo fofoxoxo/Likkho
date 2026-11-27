@@ -97,6 +97,10 @@ fun PasscodeLockScreen(
     var cooldownSec by remember {
         mutableIntStateOf(repository.getRemainingPasscodeCooldownSeconds())
     }
+    val hasPrimaryPasscode = remember(biometricsEnabled) {
+        repository.hasPrimaryPasscode()
+    }
+    val effectiveBiometricsEnabled = biometricsEnabled && hasPrimaryPasscode
     var hasAutoPromptedBio by remember { mutableStateOf(false) }
     var activePrompt by remember { mutableStateOf<BiometricPrompt?>(null) }
     var pendingVerifyJob by remember { mutableStateOf<Job?>(null) }
@@ -129,7 +133,7 @@ fun PasscodeLockScreen(
     }
 
     fun launchBiometric() {
-        if (cooldownSec > 0) return
+        if (!effectiveBiometricsEnabled || cooldownSec > 0) return
         bioMessage = null
         if (onRequestBiometric != null) {
             onRequestBiometric.invoke()
@@ -155,17 +159,22 @@ fun PasscodeLockScreen(
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                     activePrompt = null
                     scope.launch {
-                        val rem = withContext(Dispatchers.IO) {
-                            repository.getRemainingPasscodeCooldownSeconds()
+                        val (rem, primaryExists) = withContext(Dispatchers.IO) {
+                            repository.getRemainingPasscodeCooldownSeconds() to repository.hasPrimaryPasscode()
                         }
                         if (rem > 0) {
                             cooldownSec = rem
+                            return@launch
+                        }
+                        if (!primaryExists) {
+                            bioMessage = "Enter your passcode to unlock."
                             return@launch
                         }
                         withContext(Dispatchers.IO) {
                             repository.resetPasscodeFailures()
                         }
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        // Biometrics strictly unlock Everyday Mode (PRIMARY) and never Secret Writing (DECOY)
                         onUnlocked(VaultMode.PRIMARY)
                     }
                 }
@@ -189,7 +198,7 @@ fun PasscodeLockScreen(
         )
         val info = BiometricPrompt.PromptInfo.Builder()
             .setTitle("Unlock Likkho")
-            .setSubtitle("Verify your identity to access your vault")
+            .setSubtitle("Verify your identity to continue")
             .setNegativeButtonText("Use Passcode")
             .setAllowedAuthenticators(authenticators)
             .build()
@@ -203,8 +212,8 @@ fun PasscodeLockScreen(
     }
 
     // Prompt biometrics ONCE when lockscreen opens (never interrupts typing)
-    LaunchedEffect(biometricsEnabled) {
-        if (biometricsEnabled && !hasAutoPromptedBio) {
+    LaunchedEffect(effectiveBiometricsEnabled) {
+        if (effectiveBiometricsEnabled && !hasAutoPromptedBio) {
             hasAutoPromptedBio = true
             delay(220L)
             val rem = withContext(Dispatchers.IO) {
@@ -351,7 +360,7 @@ fun PasscodeLockScreen(
             Text(
                 text = when {
                     isCoolingDown -> "Too many failed attempts. Try again in ${cooldownSec}s"
-                    biometricsEnabled -> "Unlock with Biometrics or enter your passcode"
+                    effectiveBiometricsEnabled -> "Unlock with Biometrics or enter your passcode"
                     else -> "Enter your passcode to unlock"
                 },
                 fontFamily = LikkhoFontFamilies.Sans,
@@ -511,7 +520,7 @@ fun PasscodeLockScreen(
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 when {
-                    biometricsEnabled -> {
+                    effectiveBiometricsEnabled -> {
                         Box(
                             modifier = Modifier
                                 .weight(1f)

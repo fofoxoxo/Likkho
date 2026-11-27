@@ -348,6 +348,7 @@ object QuickNoteSystemSync {
 @Composable
 fun QuickNoteModal(
     initialNote: QuickNote? = null,
+    initialIsChecklist: Boolean = false,
     onDismiss: () -> Unit,
     onSave: (QuickNote) -> Unit
 ) {
@@ -355,7 +356,12 @@ fun QuickNoteModal(
     val haptic = LocalHapticFeedback.current
     val titleFocusRequester = remember { FocusRequester() }
 
-    val isChecklist = initialNote?.isChecklist ?: false
+    var isChecklist by remember(initialNote?.id, initialIsChecklist) {
+        mutableStateOf(initialNote?.isChecklist ?: initialIsChecklist)
+    }
+    var isPinnedToNotification by remember(initialNote?.id) {
+        mutableStateOf(initialNote?.isPinnedToNotification ?: true)
+    }
 
     var title by remember(initialNote?.id) { mutableStateOf(initialNote?.title ?: "") }
     var content by remember(initialNote?.id) {
@@ -387,6 +393,32 @@ fun QuickNoteModal(
 
     LaunchedEffect(Unit) {
         titleFocusRequester.requestFocus()
+    }
+
+    fun switchMode(toChecklist: Boolean) {
+        if (isChecklist == toChecklist) return
+        if (toChecklist) {
+            val lines = content
+                .split('\n')
+                .map { it.trim().removePrefix("[ ] ").removePrefix("[x] ").trim() }
+                .filter { it.isNotEmpty() }
+            if (lines.isNotEmpty()) {
+                items = lines.mapIndexed { idx, text ->
+                    QuickNoteChecklistItem(
+                        id = "item_${System.currentTimeMillis()}_$idx",
+                        text = text,
+                        checked = false
+                    )
+                }
+            }
+        } else {
+            val joined = items.map { it.text.trim() }.filter { it.isNotEmpty() }.joinToString("\n")
+            if (joined.isNotEmpty()) {
+                content = joined
+            }
+        }
+        errorMsg = null
+        isChecklist = toChecklist
     }
 
     fun addTodoItem() {
@@ -452,7 +484,7 @@ fun QuickNoteModal(
             isDone = if (isChecklist) finalItems.isNotEmpty() && finalItems.all { it.checked } else false,
             content = finalContent,
             isChecklist = isChecklist,
-            isPinnedToNotification = true
+            isPinnedToNotification = isPinnedToNotification
         )
         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
         onSave(saved)
@@ -460,29 +492,54 @@ fun QuickNoteModal(
 
     LikkhoHairlineDialog(
         onDismissRequest = onDismiss,
-        title = if (initialNote != null) "Edit Quick Note" else "Quick Note",
-        leadingIcon = Icons.Outlined.Description,
+        title = when {
+            initialNote != null -> if (isChecklist) "Edit Checklist" else "Edit Note"
+            isChecklist -> "New Checklist"
+            else -> "New Note"
+        },
+        leadingIcon = if (isChecklist) Icons.Outlined.CheckBox else Icons.Outlined.Description,
         maxWidth = 460.dp,
         maxHeight = 640.dp,
         bodyPadding = 16.dp,
         footer = {
-            Text(
-                text = "Shows in Notification Shade",
-                fontFamily = LikkhoFontFamilies.Sans,
-                fontSize = 11.sp,
-                color = colors.muted,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f)
-            )
-            Spacer(modifier = Modifier.width(8.dp))
+            Row(
+                modifier = Modifier
+                    .height(32.dp)
+                    .background(if (isPinnedToNotification) colors.accent.copy(alpha = 0.10f) else colors.bg)
+                    .border(
+                        LikkhoHairlineBorder,
+                        if (isPinnedToNotification) colors.accent else colors.border,
+                        RectangleShape
+                    )
+                    .clickable { isPinnedToNotification = !isPinnedToNotification }
+                    .padding(horizontal = 9.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(5.dp)
+            ) {
+                Icon(
+                    imageVector = if (isPinnedToNotification) Icons.Outlined.Notifications else Icons.Outlined.NotificationsOff,
+                    contentDescription = null,
+                    tint = if (isPinnedToNotification) colors.accent else colors.muted,
+                    modifier = Modifier.size(13.dp)
+                )
+                Text(
+                    text = if (isPinnedToNotification) "Notif On" else "Notif Off",
+                    fontFamily = LikkhoFontFamilies.Sans,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 11.sp,
+                    color = if (isPinnedToNotification) colors.accent else colors.muted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Spacer(modifier = Modifier.weight(1f))
             LikkhoDialogOutlineButton(
                 text = "Cancel",
                 onClick = onDismiss
             )
             Spacer(modifier = Modifier.width(8.dp))
             LikkhoDialogPrimaryButton(
-                text = "Save Note",
+                text = "Save",
                 onClick = { submitNote() },
                 leadingIcon = Icons.Outlined.Check
             )
@@ -501,6 +558,69 @@ fun QuickNoteModal(
                     .border(LikkhoHairlineBorder, colors.crimson, RectangleShape)
                     .padding(10.dp)
             )
+        }
+
+        // Note vs Checklist Mode Toggle
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(LikkhoHairlineBorder, colors.border, RectangleShape),
+            horizontalArrangement = Arrangement.spacedBy(0.dp)
+        ) {
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(36.dp)
+                    .background(if (!isChecklist) colors.accent.copy(alpha = 0.12f) else colors.surface)
+                    .clickable { switchMode(false) },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Description,
+                    contentDescription = null,
+                    tint = if (!isChecklist) colors.accent else colors.muted,
+                    modifier = Modifier.size(14.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = "Text Note",
+                    fontFamily = LikkhoFontFamilies.Sans,
+                    fontWeight = if (!isChecklist) FontWeight.Bold else FontWeight.Medium,
+                    fontSize = 12.sp,
+                    color = if (!isChecklist) colors.accent else colors.muted
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .width(LikkhoHairlineBorder)
+                    .height(36.dp)
+                    .background(colors.border)
+            )
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(36.dp)
+                    .background(if (isChecklist) colors.accent.copy(alpha = 0.12f) else colors.surface)
+                    .clickable { switchMode(true) },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.CheckBox,
+                    contentDescription = null,
+                    tint = if (isChecklist) colors.accent else colors.muted,
+                    modifier = Modifier.size(14.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = "Checklist",
+                    fontFamily = LikkhoFontFamilies.Sans,
+                    fontWeight = if (isChecklist) FontWeight.Bold else FontWeight.Medium,
+                    fontSize = 12.sp,
+                    color = if (isChecklist) colors.accent else colors.muted
+                )
+            }
         }
 
         // Title
