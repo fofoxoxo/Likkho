@@ -134,13 +134,14 @@ class NativeExportEngine(
     }
 
     fun exportLikkhoArchiveToDownloads(log: DiaryLog): ExportedDestinationResult {
-        val tempLikkho = packDiaryToLikkhoFile(log)
+        val slug = sanitizeArchiveSlug(log.heading, "Likkho_Diary")
+        val downloadName = "$slug.likkho"
+        val tempLikkho = File(appContext.cacheDir, "likkho_dl_${System.nanoTime()}.likkho")
         return try {
-            saveFileToDownloads(tempLikkho, tempLikkho.name, LIKKHO_MIME_TYPE)
+            packDiaryToLikkhoFile(log, outputFile = tempLikkho)
+            saveFileToDownloads(tempLikkho, downloadName, LIKKHO_MIME_TYPE)
         } finally {
-            if (tempLikkho.parentFile?.name == "shared_likkho") {
-                // Keep cached copy or let caller clean up; Downloads now has its own copy
-            }
+            tempLikkho.delete()
         }
     }
 

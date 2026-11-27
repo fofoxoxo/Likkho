@@ -832,12 +832,22 @@ class StreamCryptoEngine(
                                 }
                                 if (isAudio) savedAudioIds.add(id)
                             } else {
-                                val chunkFile = repository.resolveConfinedFile(tempDir, "${safeId}_chunk_$chunkIndex")
-                                FileOutputStream(chunkFile).use { fos ->
-                                    fos.write(decrypted)
+                                if (chunkIndex < 0 || chunkIndex >= totalChunks) {
+                                    throw IncompleteBackupException(
+                                        "Backup frame chunk index invalid: $chunkIndex/$totalChunks"
+                                    )
                                 }
                                 val tracker = multiChunkTrackers.getOrPut(id) {
                                     MultiChunkTracker(totalChunks = totalChunks, mimeType = mimeType)
+                                }
+                                if (tracker.totalChunks != totalChunks) {
+                                    throw IncompleteBackupException(
+                                        "Backup frame chunk count mismatch for $id: ${tracker.totalChunks} vs $totalChunks"
+                                    )
+                                }
+                                val chunkFile = repository.resolveConfinedFile(tempDir, "${safeId}_chunk_$chunkIndex")
+                                FileOutputStream(chunkFile).use { fos ->
+                                    fos.write(decrypted)
                                 }
                                 tracker.receivedIndices.add(chunkIndex)
 
@@ -846,7 +856,7 @@ class StreamCryptoEngine(
                                     assembleChunksOnDisk(tempDir, safeId, totalChunks, finalFile)
                                     deleteTempChunks(tempDir, safeId, totalChunks)
                                     multiChunkTrackers.remove(id)
-                                    if (tracker.mimeType.startsWith("audio/")) {
+                                    if (!isDoc && tracker.mimeType.startsWith("audio/")) {
                                         savedAudioIds.add(id)
                                     }
                                 }

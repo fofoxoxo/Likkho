@@ -158,40 +158,41 @@ fun SecretWritingEditorScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    val nowAtOpen = remember(initialLog?.id) { System.currentTimeMillis() }
-    val stableLogId = remember(initialLog?.id) {
+    val sessionKey = remember { initialLog?.id?.takeIf { it.isNotBlank() } ?: "draft_${System.nanoTime()}_${UUID.randomUUID()}" }
+    val nowAtOpen = remember(sessionKey) { System.currentTimeMillis() }
+    val stableLogId = remember(sessionKey) {
         initialLog?.id?.takeIf { it.isNotBlank() } ?: "log_${nowAtOpen}_${UUID.randomUUID().toString().take(6)}"
     }
-    val stableCreatedAt = remember(initialLog?.id) { initialLog?.createdAt?.takeIf { it > 0L } ?: nowAtOpen }
-    val stableDateStamp = remember(initialLog?.id) {
+    val stableCreatedAt = remember(sessionKey) { initialLog?.createdAt?.takeIf { it > 0L } ?: nowAtOpen }
+    val stableDateStamp = remember(sessionKey) {
         initialLog?.dateStamp?.takeIf { it.isNotBlank() }
             ?: SimpleDateFormat("dd MMM yyyy", Locale.ENGLISH).format(Date(stableCreatedAt))
     }
-    val stableTimeStamp = remember(initialLog?.id) {
+    val stableTimeStamp = remember(sessionKey) {
         initialLog?.timeStamp?.takeIf { it.isNotBlank() }
             ?: SimpleDateFormat("hh:mm a", Locale.ENGLISH).format(Date(stableCreatedAt))
     }
 
-    val initialEditableBody = remember(initialLog?.id) {
+    val initialEditableBody = remember(sessionKey) {
         if (initialLog == null) "" else htmlToEditableText(initialLog.contentHtml, initialLog.plainPreview)
     }
 
-    var isEditMode by remember(initialLog?.id) { mutableStateOf(startInEditMode || initialLog == null) }
-    var heading by remember(initialLog?.id) { mutableStateOf(initialLog?.heading.orEmpty()) }
-    var bodyText by remember(initialLog?.id) { mutableStateOf(initialEditableBody) }
-    var baselineHeading by remember(initialLog?.id) { mutableStateOf(initialLog?.heading.orEmpty()) }
-    var baselineBodyText by remember(initialLog?.id) { mutableStateOf(initialEditableBody) }
+    var isEditMode by remember(sessionKey) { mutableStateOf(startInEditMode || initialLog == null) }
+    var heading by remember(sessionKey) { mutableStateOf(initialLog?.heading.orEmpty()) }
+    var bodyText by remember(sessionKey) { mutableStateOf(initialEditableBody) }
+    var baselineHeading by remember(sessionKey) { mutableStateOf(initialLog?.heading.orEmpty()) }
+    var baselineBodyText by remember(sessionKey) { mutableStateOf(initialEditableBody) }
 
-    var isPinned by remember(initialLog?.id) { mutableStateOf(initialLog?.pinned ?: false) }
-    var entryLockPin by remember(initialLog?.id) { mutableStateOf(initialLog?.diaryLockPin) }
-    var canvasImages by remember(initialLog?.id) { mutableStateOf(initialLog?.canvasImages ?: emptyList()) }
-    var audioAttachments by remember(initialLog?.id) { mutableStateOf(initialLog?.audioAttachments ?: emptyList()) }
-    var currentContentHtml by remember(initialLog?.id) { mutableStateOf(initialLog?.contentHtml.orEmpty()) }
-    var lastHtmlDecodedText by remember(initialLog?.id) { mutableStateOf(initialEditableBody) }
-    var lastUpdatedAt by remember(initialLog?.id) { mutableLongStateOf(initialLog?.updatedAt ?: nowAtOpen) }
-    var baselineImageCount by remember(initialLog?.id) { mutableIntStateOf(initialLog?.canvasImages?.size ?: 0) }
-    var baselineAudioCount by remember(initialLog?.id) { mutableIntStateOf(initialLog?.audioAttachments?.size ?: 0) }
-    var hasSavedOnce by remember(initialLog?.id) { mutableStateOf(initialLog != null) }
+    var isPinned by remember(sessionKey) { mutableStateOf(initialLog?.pinned ?: false) }
+    var entryLockPin by remember(sessionKey) { mutableStateOf(initialLog?.diaryLockPin) }
+    var canvasImages by remember(sessionKey) { mutableStateOf(initialLog?.canvasImages ?: emptyList()) }
+    var audioAttachments by remember(sessionKey) { mutableStateOf(initialLog?.audioAttachments ?: emptyList()) }
+    var currentContentHtml by remember(sessionKey) { mutableStateOf(initialLog?.contentHtml.orEmpty()) }
+    var lastHtmlDecodedText by remember(sessionKey) { mutableStateOf(initialEditableBody) }
+    var lastUpdatedAt by remember(sessionKey) { mutableLongStateOf(initialLog?.updatedAt ?: nowAtOpen) }
+    var baselineImageCount by remember(sessionKey) { mutableIntStateOf(initialLog?.canvasImages?.size ?: 0) }
+    var baselineAudioCount by remember(sessionKey) { mutableIntStateOf(initialLog?.audioAttachments?.size ?: 0) }
+    var hasSavedOnce by remember(sessionKey) { mutableStateOf(initialLog != null) }
 
     var isMenuOpen by remember { mutableStateOf(false) }
     var showDiscardDialog by remember { mutableStateOf(false) }
@@ -208,11 +209,18 @@ fun SecretWritingEditorScreen(
     var audioDurationMs by remember(stableLogId) { mutableIntStateOf(0) }
     var audioSpeed by remember(stableLogId) { mutableFloatStateOf(1.0f) }
     var activeMediaPlayer by remember(stableLogId) { mutableStateOf<MediaPlayer?>(null) }
+    var activeTempAudioFile by remember(stableLogId) { mutableStateOf<File?>(null) }
 
     fun stopLocalAudio() {
         runCatching { activeMediaPlayer?.stop() }
         runCatching { activeMediaPlayer?.release() }
         activeMediaPlayer = null
+        activeTempAudioFile?.let { tmp ->
+            if (tmp.name.startsWith("tmp_secret_play_")) {
+                runCatching { tmp.delete() }
+            }
+        }
+        activeTempAudioFile = null
         playingAudioId = null
         isAudioPaused = false
         audioProgressMs = 0
@@ -278,10 +286,12 @@ fun SecretWritingEditorScreen(
                     audioDurationMs = duration.coerceAtLeast(1)
                     start()
                 }
+                activeTempAudioFile = file
                 activeMediaPlayer = mp
                 playingAudioId = att.id
                 isAudioPaused = false
             }.onFailure {
+                activeTempAudioFile = file
                 stopLocalAudio()
                 Toast.makeText(context, "Unable to play voice note.", Toast.LENGTH_SHORT).show()
             }
@@ -326,7 +336,13 @@ fun SecretWritingEditorScreen(
     fun buildCurrentDiaryLog(overridePin: String? = entryLockPin, overridePinned: Boolean = isPinned): DiaryLog {
         val saveTime = System.currentTimeMillis()
         val bodyChanged = bodyText != lastHtmlDecodedText || currentContentHtml.isBlank()
-        val finalHtml = if (bodyChanged) editableTextToHtml(bodyText) else currentContentHtml
+        val finalHtml = if (bodyChanged) {
+            val baseHtml = editableTextToHtml(bodyText)
+            val preservedImgTags = extractInlineHtmlImgTags(currentContentHtml)
+            if (preservedImgTags.isNotEmpty()) baseHtml + preservedImgTags.joinToString("") else baseHtml
+        } else {
+            currentContentHtml
+        }
         val cleanPreview = bodyText
             .replace(Regex("\\s+"), " ")
             .trim()
@@ -1645,11 +1661,20 @@ private fun spannedToAnnotatedString(spanned: Spanned): AnnotatedString = buildA
 }
 
 private val INLINE_IMG_SRC_REGEX = Regex("<img[^>]+src=[\"']([^\"']+)[\"']", RegexOption.IGNORE_CASE)
+private val INLINE_IMG_TAG_REGEX = Regex("<img\\b[^>]*>", RegexOption.IGNORE_CASE)
 
 private fun extractInlineHtmlImageRefs(html: String): List<String> {
     if (html.isBlank()) return emptyList()
     return INLINE_IMG_SRC_REGEX.findAll(html)
         .mapNotNull { it.groupValues.getOrNull(1)?.trim()?.takeIf { s -> s.isNotBlank() } }
+        .toList()
+}
+
+private fun extractInlineHtmlImgTags(html: String): List<String> {
+    if (html.isBlank()) return emptyList()
+    return INLINE_IMG_TAG_REGEX.findAll(html)
+        .map { it.value }
+        .distinct()
         .toList()
 }
 

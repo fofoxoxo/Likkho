@@ -252,9 +252,9 @@ class NativeVaultRepository(context: Context) {
      * Safely merges legacy Real Vault (`PRIMARY`) diaries into Secret Writing (`DECOY`)
      * without overwriting newer entries or losing any media references.
      */
-    fun migrateLegacyPrimaryLogsToSecretVault(removeFromPrimary: Boolean = true): Int {
+    fun migrateLegacyPrimaryLogsToSecretVault(removeFromPrimary: Boolean = true): Int = synchronized(vaultIoLock) {
         val legacyLogs = loadLogs(VaultMode.PRIMARY)
-        if (legacyLogs.isEmpty()) return 0
+        if (legacyLogs.isEmpty()) return@synchronized 0
         val decoyLogs = loadLogs(VaultMode.DECOY).toMutableList()
         val existingIds = decoyLogs.mapTo(HashSet()) { it.id }
         var addedCount = 0
@@ -271,7 +271,7 @@ class NativeVaultRepository(context: Context) {
         if (saveLogs(VaultMode.DECOY, sorted) && removeFromPrimary) {
             saveLogs(VaultMode.PRIMARY, emptyList())
         }
-        return addedCount
+        addedCount
     }
 
     // ==================== Diary Logs ====================
@@ -300,7 +300,7 @@ class NativeVaultRepository(context: Context) {
         return writeEncryptedText(File(vaultDir(mode), FILE_LOGS), arr.toString())
     }
 
-    fun upsertLog(mode: VaultMode, log: DiaryLog): List<DiaryLog> {
+    fun upsertLog(mode: VaultMode, log: DiaryLog): List<DiaryLog> = synchronized(vaultIoLock) {
         val current = loadLogs(mode).toMutableList()
         val idx = current.indexOfFirst { it.id == log.id }
         if (idx >= 0) {
@@ -309,32 +309,56 @@ class NativeVaultRepository(context: Context) {
             current.add(0, log)
         }
         saveLogs(mode, current)
-        return current
+        current
     }
 
-    fun deleteLog(mode: VaultMode, logId: String, pruneUnreferencedMedia: Boolean = true): List<DiaryLog> {
+    fun deleteLog(mode: VaultMode, logId: String, pruneUnreferencedMedia: Boolean = true): List<DiaryLog> = synchronized(vaultIoLock) {
         val current = loadLogs(mode)
         val removed = current.firstOrNull { it.id == logId }
         val remaining = current.filterNot { it.id == logId }
         saveLogs(mode, remaining)
         if (pruneUnreferencedMedia && removed != null) {
-            cleanupUnreferencedMediaForLog(removed, otherMode = if (mode == VaultMode.PRIMARY) VaultMode.DECOY else VaultMode.PRIMARY, sameModeLogs = remaining)
+            cleanupUnreferencedMediaForLog(
+                removed = removed,
+                otherMode = if (mode == VaultMode.PRIMARY) VaultMode.DECOY else VaultMode.PRIMARY,
+                sameModeLogs = remaining
+            )
         }
-        return remaining
+        remaining
+    }
+
+    private fun extractInlineHtmlAssetRefs(html: String): List<String> {
+        if (html.isBlank()) return emptyList()
+        return INLINE_IMG_SRC_REGEX.findAll(html)
+            .mapNotNull { it.groupValues.getOrNull(1)?.trim() }
+            .filter {
+                it.isNotEmpty() &&
+                    !it.startsWith("data:") &&
+                    !it.startsWith("blob:") &&
+                    (!it.startsWith("http") || it.startsWith(ASSET_MEDIA_PREFIX))
+            }
+            .toList()
     }
 
     private fun collectReferencedMediaIds(logs: List<DiaryLog>): Set<String> {
         val refs = HashSet<String>()
         for (log in logs) {
             listOfNotNull(log.pfpDataUrl, log.canvasBgDataUrl).forEach {
-                if (!it.startsWith("data:") && !it.startsWith("blob:") && !it.startsWith("http")) {
+                if (!it.startsWith("data:") && !it.startsWith("blob:") &&
+                    (!it.startsWith("http") || it.startsWith(ASSET_MEDIA_PREFIX))
+                ) {
                     refs.add(normalizeMediaId(it))
                 }
             }
             log.canvasImages.forEach { img ->
-                if (!img.dataUrl.startsWith("data:") && !img.dataUrl.startsWith("blob:") && !img.dataUrl.startsWith("http")) {
+                if (!img.dataUrl.startsWith("data:") && !img.dataUrl.startsWith("blob:") &&
+                    (!img.dataUrl.startsWith("http") || img.dataUrl.startsWith(ASSET_MEDIA_PREFIX))
+                ) {
                     refs.add(normalizeMediaId(img.dataUrl))
                 }
+            }
+            extractInlineHtmlAssetRefs(log.contentHtml).forEach { inlineRef ->
+                refs.add(normalizeMediaId(inlineRef))
             }
             log.audioAttachments.forEach { aud ->
                 if (aud.id.isNotBlank()) refs.add(aud.id)
@@ -357,9 +381,14 @@ class NativeVaultRepository(context: Context) {
             removed.pfpDataUrl?.let { add(it) }
             removed.canvasBgDataUrl?.let { add(it) }
             removed.canvasImages.forEach { add(it.dataUrl) }
+            addAll(extractInlineHtmlAssetRefs(removed.contentHtml))
         }
         for (ref in candidateImages) {
-            if (ref.startsWith("data:") || ref.startsWith("blob:") || ref.startsWith("http")) continue
+            if (ref.startsWith("data:") || ref.startsWith("blob:") ||
+                (ref.startsWith("http") && !ref.startsWith(ASSET_MEDIA_PREFIX))
+            ) {
+                continue
+            }
             val clean = normalizeMediaId(ref)
             if (clean !in stillReferenced) {
                 resolveExistingImageFile(clean)?.delete()
@@ -479,12 +508,12 @@ class NativeVaultRepository(context: Context) {
         return writeEncryptedText(File(vaultDir(mode), FILE_TRACKERS), arr.toString())
     }
 
-    fun upsertTracker(mode: VaultMode, tracker: RecurringTracker): List<RecurringTracker> {
+    fun upsertTracker(mode: VaultMode, tracker: RecurringTracker): List<RecurringTracker> = synchronized(vaultIoLock) {
         val current = loadTrackers(mode).toMutableList()
         val idx = current.indexOfFirst { it.id == tracker.id }
         if (idx >= 0) current[idx] = tracker else current.add(0, tracker)
         saveTrackers(mode, current)
-        return current
+        current
     }
 
     fun setTrackerDayEntry(
@@ -492,10 +521,10 @@ class NativeVaultRepository(context: Context) {
         trackerId: String,
         dateKey: String,
         entry: TrackerDayEntry?
-    ): List<RecurringTracker> {
+    ): List<RecurringTracker> = synchronized(vaultIoLock) {
         val current = loadTrackers(mode).toMutableList()
         val idx = current.indexOfFirst { it.id == trackerId }
-        if (idx < 0) return current
+        if (idx < 0) return@synchronized current
         val target = current[idx]
         val nextEntries = target.entries.toMutableMap()
         if (entry == null) {
@@ -508,13 +537,13 @@ class NativeVaultRepository(context: Context) {
             updatedAt = System.currentTimeMillis()
         )
         saveTrackers(mode, current)
-        return current
+        current
     }
 
-    fun deleteTracker(mode: VaultMode, trackerId: String): List<RecurringTracker> {
+    fun deleteTracker(mode: VaultMode, trackerId: String): List<RecurringTracker> = synchronized(vaultIoLock) {
         val remaining = loadTrackers(mode).filterNot { it.id == trackerId }
         saveTrackers(mode, remaining)
-        return remaining
+        remaining
     }
 
     // ==================== Standalone Reminders (v3.0) ====================
@@ -538,7 +567,7 @@ class NativeVaultRepository(context: Context) {
         return writeEncryptedText(File(vaultDir(mode), FILE_REMINDERS), arr.toString())
     }
 
-    fun upsertReminder(mode: VaultMode, reminder: StandaloneReminder): List<StandaloneReminder> {
+    fun upsertReminder(mode: VaultMode, reminder: StandaloneReminder): List<StandaloneReminder> = synchronized(vaultIoLock) {
         val current = loadReminders(mode).toMutableList()
         val idx = current.indexOfFirst { it.id == reminder.id }
         if (idx >= 0) current[idx] = reminder else current.add(0, reminder)
@@ -546,13 +575,13 @@ class NativeVaultRepository(context: Context) {
             compareBy<StandaloneReminder> { it.isCompleted }.thenBy { it.triggerAtMs }
         )
         saveReminders(mode, sorted)
-        return sorted
+        sorted
     }
 
-    fun deleteReminder(mode: VaultMode, reminderId: String): List<StandaloneReminder> {
+    fun deleteReminder(mode: VaultMode, reminderId: String): List<StandaloneReminder> = synchronized(vaultIoLock) {
         val remaining = loadReminders(mode).filterNot { it.id == reminderId }
         saveReminders(mode, remaining)
-        return remaining
+        remaining
     }
 
     // ==================== Personal Documents Vault (v3.0) ====================
@@ -576,7 +605,7 @@ class NativeVaultRepository(context: Context) {
         return writeEncryptedText(File(vaultDir(mode), FILE_DOCUMENTS), arr.toString())
     }
 
-    fun upsertDocument(mode: VaultMode, document: PersonalDocument): List<PersonalDocument> {
+    fun upsertDocument(mode: VaultMode, document: PersonalDocument): List<PersonalDocument> = synchronized(vaultIoLock) {
         val current = loadDocuments(mode).toMutableList()
         val idx = current.indexOfFirst { it.id == document.id }
         if (idx >= 0) current[idx] = document else current.add(0, document)
@@ -584,10 +613,10 @@ class NativeVaultRepository(context: Context) {
             compareByDescending<PersonalDocument> { it.pinned }.thenByDescending { it.updatedAt }
         )
         saveDocuments(mode, sorted)
-        return sorted
+        sorted
     }
 
-    fun deleteDocument(mode: VaultMode, documentId: String, pruneFile: Boolean = true): List<PersonalDocument> {
+    fun deleteDocument(mode: VaultMode, documentId: String, pruneFile: Boolean = true): List<PersonalDocument> = synchronized(vaultIoLock) {
         val current = loadDocuments(mode)
         val removed = current.firstOrNull { it.id == documentId }
         val remaining = current.filterNot { it.id == documentId }
@@ -601,7 +630,7 @@ class NativeVaultRepository(context: Context) {
                 resolveExistingDocumentFile(removedFileId)?.delete()
             }
         }
-        return remaining
+        remaining
     }
 
     // ==================== Saved Word Analyses (JSON preserved 1:1) ====================
@@ -777,6 +806,7 @@ class NativeVaultRepository(context: Context) {
         )
         obj.put("primaryPinSalt", Base64.encodeToString(salt, Base64.NO_WRAP))
         obj.put("primaryPinHash", hashB64)
+        obj.put("primaryPinPrefixHashes", buildPrefixHashArray(clean, salt))
         writeSecurityJson(obj)
     }
 
@@ -791,6 +821,7 @@ class NativeVaultRepository(context: Context) {
         )
         obj.put("decoyPinSalt", Base64.encodeToString(salt, Base64.NO_WRAP))
         obj.put("decoyPinHash", hashB64)
+        obj.put("decoyPinPrefixHashes", buildPrefixHashArray(clean, salt))
         writeSecurityJson(obj)
     }
 
@@ -798,6 +829,7 @@ class NativeVaultRepository(context: Context) {
         val obj = readSecurityJson()
         obj.remove("primaryPinSalt")
         obj.remove("primaryPinHash")
+        obj.remove("primaryPinPrefixHashes")
         writeSecurityJson(obj)
     }
 
@@ -805,23 +837,103 @@ class NativeVaultRepository(context: Context) {
         val obj = readSecurityJson()
         obj.remove("decoyPinSalt")
         obj.remove("decoyPinHash")
+        obj.remove("decoyPinPrefixHashes")
         writeSecurityJson(obj)
     }
 
     fun verifyPrimaryPasscode(pin: String): Boolean {
+        val clean = pin.trim()
         val obj = readSecurityJson()
         val saltB64 = obj.optString("primaryPinSalt")
         val hashB64 = obj.optString("primaryPinHash")
         if (saltB64.isEmpty() || hashB64.isEmpty()) return false
-        return verifyPinHash(pin.trim(), saltB64, hashB64)
+        val ok = verifyPinHash(clean, saltB64, hashB64)
+        if (ok && !obj.has("primaryPinPrefixHashes")) {
+            runCatching {
+                val salt = Base64.decode(saltB64, Base64.NO_WRAP)
+                obj.put("primaryPinPrefixHashes", buildPrefixHashArray(clean, salt))
+                writeSecurityJson(obj)
+            }
+        }
+        return ok
     }
 
     fun verifyDecoyPasscode(pin: String): Boolean {
+        val clean = pin.trim()
         val obj = readSecurityJson()
         val saltB64 = obj.optString("decoyPinSalt")
         val hashB64 = obj.optString("decoyPinHash")
         if (saltB64.isEmpty() || hashB64.isEmpty()) return false
-        return verifyPinHash(pin.trim(), saltB64, hashB64)
+        val ok = verifyPinHash(clean, saltB64, hashB64)
+        if (ok && !obj.has("decoyPinPrefixHashes")) {
+            runCatching {
+                val salt = Base64.decode(saltB64, Base64.NO_WRAP)
+                obj.put("decoyPinPrefixHashes", buildPrefixHashArray(clean, salt))
+                writeSecurityJson(obj)
+            }
+        }
+        return ok
+    }
+
+    fun doesPrimaryConflictWithCandidate(candidatePin: String): Boolean =
+        doesPinConflictWithStored(
+            candidatePin = candidatePin,
+            saltKey = "primaryPinSalt",
+            hashKey = "primaryPinHash",
+            prefixArrayKey = "primaryPinPrefixHashes"
+        )
+
+    fun doesDecoyConflictWithCandidate(candidatePin: String): Boolean =
+        doesPinConflictWithStored(
+            candidatePin = candidatePin,
+            saltKey = "decoyPinSalt",
+            hashKey = "decoyPinHash",
+            prefixArrayKey = "decoyPinPrefixHashes"
+        )
+
+    private fun doesPinConflictWithStored(
+        candidatePin: String,
+        saltKey: String,
+        hashKey: String,
+        prefixArrayKey: String
+    ): Boolean {
+        val clean = candidatePin.trim()
+        if (clean.length < 4) return false
+        val obj = readSecurityJson()
+        val saltB64 = obj.optString(saltKey)
+        val hashB64 = obj.optString(hashKey)
+        if (saltB64.isEmpty() || hashB64.isEmpty()) return false
+
+        // 1. Check if any 4..clean.length prefix of candidate equals the stored shorter PIN
+        for (len in 4..clean.length) {
+            if (verifyPinHash(clean.take(len), saltB64, hashB64)) {
+                return true
+            }
+        }
+        // 2. Check if candidate equals any stored prefix hash of a longer stored PIN
+        val prefixArr = obj.optJSONArray(prefixArrayKey)
+        if (prefixArr != null) {
+            for (i in 0 until prefixArr.length()) {
+                val expectedPrefixHash = prefixArr.optString(i)
+                if (expectedPrefixHash.isNotEmpty() && verifyPinHash(clean, saltB64, expectedPrefixHash)) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    private fun buildPrefixHashArray(pin: String, salt: ByteArray): JSONArray {
+        val arr = JSONArray()
+        for (len in 4..pin.length) {
+            val prefix = pin.take(len)
+            val h = Base64.encodeToString(
+                pbkdf2Hmac(prefix.toByteArray(StandardCharsets.UTF_8), salt, PIN_KDF_ITERATIONS, 32, "HmacSHA256"),
+                Base64.NO_WRAP
+            )
+            arr.put(h)
+        }
+        return arr
     }
 
     /**
@@ -955,7 +1067,7 @@ class NativeVaultRepository(context: Context) {
 
     // ==================== Clear All Data ====================
 
-    fun clearAllVaultData() {
+    fun clearAllVaultData() = synchronized(vaultIoLock) {
         synchronized(securityLock) {
             cachedSecurityJson = null
         }
@@ -998,8 +1110,9 @@ class NativeVaultRepository(context: Context) {
         }
     }
 
-    private fun writeEncryptedText(targetFile: File, plaintext: String): Boolean {
-        return try {
+    private fun writeEncryptedText(targetFile: File, plaintext: String): Boolean = synchronized(vaultIoLock) {
+        var tmpFile: File? = null
+        try {
             targetFile.parentFile?.let { if (!it.exists()) it.mkdirs() }
             val key = getOrCreateMasterKey()
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
@@ -1008,7 +1121,7 @@ class NativeVaultRepository(context: Context) {
             val encrypted = cipher.doFinal(plaintext.toByteArray(StandardCharsets.UTF_8))
             val payload = "v1:${Base64.encodeToString(iv, Base64.NO_WRAP)}:${Base64.encodeToString(encrypted, Base64.NO_WRAP)}"
 
-            val tmpFile = File(targetFile.parentFile, "${targetFile.name}.tmp")
+            tmpFile = File(targetFile.parentFile, "${targetFile.name}.${java.util.UUID.randomUUID().toString().take(6)}.tmp")
             tmpFile.writeText(payload, StandardCharsets.UTF_8)
             if (!tmpFile.renameTo(targetFile)) {
                 targetFile.writeText(payload, StandardCharsets.UTF_8)
@@ -1016,20 +1129,21 @@ class NativeVaultRepository(context: Context) {
             }
             true
         } catch (_: Exception) {
+            runCatching { tmpFile?.delete() }
             false
         }
     }
 
-    private fun readEncryptedText(targetFile: File): String? {
-        if (!targetFile.exists() || !targetFile.isFile) return null
-        return try {
+    private fun readEncryptedText(targetFile: File): String? = synchronized(vaultIoLock) {
+        if (!targetFile.exists() || !targetFile.isFile) return@synchronized null
+        try {
             val raw = targetFile.readText(StandardCharsets.UTF_8).trim()
-            if (raw.isEmpty()) return null
+            if (raw.isEmpty()) return@synchronized null
             if (!raw.startsWith("v1:")) {
-                return raw
+                return@synchronized raw
             }
             val parts = raw.split(':', limit = 3)
-            if (parts.size != 3) return null
+            if (parts.size != 3) return@synchronized null
             val iv = Base64.decode(parts[1], Base64.NO_WRAP)
             val ct = Base64.decode(parts[2], Base64.NO_WRAP)
             val key = getOrCreateMasterKey()
@@ -1073,6 +1187,7 @@ class NativeVaultRepository(context: Context) {
         private const val FILE_KEY_HASH = "encryption_key_hash.enc"
         private const val FILE_SECURITY = "app_security.enc"
 
+        private val vaultIoLock = Any()
         private val masterKeyLock = Any()
         @Volatile
         private var cachedMasterKey: SecretKey? = null
@@ -1081,6 +1196,7 @@ class NativeVaultRepository(context: Context) {
         private const val ASSET_MEDIA_PREFIX = "https://appassets.androidplatform.net/likkho-media/"
         private const val ASSET_AUDIO_PREFIX = "https://appassets.androidplatform.net/likkho-audio/"
         private val SAFE_ID_REGEX = Regex("[^A-Za-z0-9._-]")
+        private val INLINE_IMG_SRC_REGEX = Regex("<img[^>]+src=[\"']([^\"']+)[\"']", RegexOption.IGNORE_CASE)
         private val IMAGE_EXTENSIONS = listOf("jpg", "jpeg", "png", "webp", "gif")
         private val AUDIO_EXTENSIONS = listOf("wav", "m4a", "mp3", "aac", "flac", "ogg", "webm")
         private val DOCUMENT_EXTENSIONS = listOf("pdf", "jpg", "jpeg", "png", "webp", "bin")

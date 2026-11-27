@@ -176,6 +176,9 @@ object QuickNoteSystemSync {
         }
     }
 
+    private fun notifIdForNote(noteId: String): Int =
+        88_000 + (abs(noteId.hashCode().toLong()) % 10_000L).toInt()
+
     fun syncQuickNoteNotification(
         context: Context,
         note: QuickNote?,
@@ -187,7 +190,7 @@ object QuickNoteSystemSync {
         if (note == null || note.isDone || !note.isPinnedToNotification) {
             val idToCancel = note?.id ?: cancelNoteId
             if (!idToCancel.isNullOrBlank()) {
-                val notifId = 88000 + abs(idToCancel.hashCode() % 1000)
+                val notifId = notifIdForNote(idToCancel)
                 runCatching { nm.cancel(notifId) }
             }
             return
@@ -213,7 +216,7 @@ object QuickNoteSystemSync {
             nm.createNotificationChannel(ch)
         }
 
-        val notifId = 88000 + abs(note.id.hashCode() % 1000)
+        val notifId = notifIdForNote(note.id)
 
         val openIntent = resolveLaunchIntent(appCtx).apply {
             action = ACTION_QUICK_NOTE
@@ -235,7 +238,7 @@ object QuickNoteSystemSync {
         }
         val donePi = PendingIntent.getBroadcast(
             appCtx,
-            notifId + 1,
+            notifId + 100_000,
             doneIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
@@ -247,7 +250,7 @@ object QuickNoteSystemSync {
         }
         val dismissPi = PendingIntent.getBroadcast(
             appCtx,
-            notifId + 2,
+            notifId + 200_000,
             dismissIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
@@ -295,6 +298,7 @@ object QuickNoteSystemSync {
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setDefaults(NotificationCompat.DEFAULT_ALL)
+            .setOnlyAlertOnce(true)
             .setOngoing(true)
             .setContentIntent(openPi)
             .addAction(android.R.drawable.checkbox_on_background, "Done", donePi)

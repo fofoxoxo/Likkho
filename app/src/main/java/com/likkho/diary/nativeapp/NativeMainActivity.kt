@@ -50,6 +50,7 @@ import com.likkho.diary.nativeapp.export.NativeExportFormat
 import com.likkho.diary.nativeapp.media.NativeMediaEngine
 import com.likkho.diary.nativeapp.model.CanvasDraggableImage
 import com.likkho.diary.nativeapp.model.DiaryLog
+import com.likkho.diary.nativeapp.model.DocumentCategory
 import com.likkho.diary.nativeapp.model.PersonalDocument
 import com.likkho.diary.nativeapp.model.QuickNote
 import com.likkho.diary.nativeapp.model.RecurringTracker
@@ -457,7 +458,7 @@ class NativeMainActivity : FragmentActivity() {
 
     override fun onPause() {
         clearNativeSelection()
-        if (repository.isAppPasscodeProtectionEnabled() && !isSystemPickerActive && isFinishing) {
+        if (repository.isAppPasscodeProtectionEnabled() && !isSystemPickerActive) {
             showRecentsPrivacyShield()
         }
         super.onPause()
@@ -668,14 +669,6 @@ class NativeMainActivity : FragmentActivity() {
     private fun applyRestoredBackupBundle(bundle: VaultBackupBundle) {
         lifecycleScope.launch {
             val (restoredReminders, nextLegacyCount) = withContext(Dispatchers.IO) {
-                repository.saveLogs(currentVaultMode, bundle.logs)
-                repository.saveCustomFonts(currentVaultMode, bundle.customFonts)
-                repository.saveMicSettings(currentVaultMode, bundle.micSettings)
-                repository.saveQuickNotes(currentVaultMode, bundle.quickNotes)
-                repository.saveSavedPasswords(currentVaultMode, bundle.savedPasswords)
-                repository.saveTrackers(currentVaultMode, bundle.trackers)
-                repository.saveReminders(currentVaultMode, bundle.reminders)
-                repository.saveDocuments(currentVaultMode, bundle.documents)
                 QuickNoteSystemSync.syncActiveNoteToHomeWidgetAndTile(
                     this@NativeMainActivity,
                     bundle.quickNotes
@@ -954,7 +947,41 @@ class NativeMainActivity : FragmentActivity() {
             if (currentVaultMode == VaultMode.PRIMARY) {
                 lifecycleScope.launch {
                     val now = System.currentTimeMillis()
+                    if (shared.mediaUri != null) {
+                        val importedResult = withContext(Dispatchers.IO) {
+                            val imp = repository.importDocumentFromUri(shared.mediaUri)
+                            if (imp != null) {
+                                val fallbackTitle = imp.fileName.substringBeforeLast('.').ifBlank { "Shared Document" }
+                                val doc = PersonalDocument(
+                                    id = "doc_share_${now}_${UUID.randomUUID().toString().take(4)}",
+                                    title = shared.title.ifBlank { fallbackTitle },
+                                    category = DocumentCategory.OTHER,
+                                    fileId = imp.fileId,
+                                    fileName = imp.fileName,
+                                    mimeType = imp.mimeType,
+                                    fileSizeBytes = imp.sizeBytes,
+                                    notes = shared.text,
+                                    pinned = false,
+                                    createdAt = now,
+                                    updatedAt = now
+                                )
+                                doc to repository.upsertDocument(VaultMode.PRIMARY, doc)
+                            } else {
+                                null
+                            }
+                        }
+                        if (importedResult != null) {
+                            documents = importedResult.second
+                            statusBanner = "Saved document \"${importedResult.first.title}\"."
+                            return@launch
+                        }
+                    }
+
                     val sharedBody = shared.text.ifBlank { shared.title }
+                    if (sharedBody.isBlank() && shared.title.isBlank()) {
+                        statusBanner = "Could not import shared file."
+                        return@launch
+                    }
                     val newNote = QuickNote(
                         id = "qn_share_${now}_${UUID.randomUUID().toString().take(4)}",
                         title = shared.title.ifBlank { "Shared Note" },
@@ -968,6 +995,7 @@ class NativeMainActivity : FragmentActivity() {
                     val nextNotes = withContext(Dispatchers.IO) {
                         val updated = listOf(newNote) + repository.loadQuickNotes(VaultMode.PRIMARY)
                         repository.saveQuickNotes(VaultMode.PRIMARY, updated)
+                        QuickNoteSystemSync.syncQuickNoteNotification(this@NativeMainActivity, newNote)
                         QuickNoteSystemSync.syncActiveNoteToHomeWidgetAndTile(this@NativeMainActivity, updated)
                         updated
                     }
@@ -1131,10 +1159,19 @@ class NativeMainActivity : FragmentActivity() {
 
     private fun checkPendingQuickNoteDoneFromNotification() {
         val prefs = getSharedPreferences("likkho_saf_prefs", Context.MODE_PRIVATE)
-        val pendingId = prefs.getString("pending_done_quick_note_id", null)
-        if (!pendingId.isNullOrBlank()) {
-            prefs.edit().remove("pending_done_quick_note_id").apply()
-            onQuickNoteMarkedDone(pendingId)
+        val pendingIds = LinkedHashSet<String>()
+        prefs.getStringSet("pending_done_quick_note_ids", null)?.let { set ->
+            set.filterTo(pendingIds) { it.isNotBlank() }
+        }
+        prefs.getString("pending_done_quick_note_id", null)?.takeIf { it.isNotBlank() }?.let {
+            pendingIds.add(it)
+        }
+        if (pendingIds.isNotEmpty()) {
+            prefs.edit()
+                .remove("pending_done_quick_note_ids")
+                .remove("pending_done_quick_note_id")
+                .apply()
+            pendingIds.forEach { onQuickNoteMarkedDone(it) }
         }
     }
 

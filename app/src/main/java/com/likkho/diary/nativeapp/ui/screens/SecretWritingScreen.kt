@@ -101,6 +101,7 @@ import java.util.Locale
 
 private enum class SecretEntryUnlockAction {
     OPEN,
+    SHARE,
     EXPORT,
     DELETE
 }
@@ -362,7 +363,14 @@ fun SecretWritingScreen(
                             },
                             onShare = {
                                 openMenuLogId = null
-                                onShareLikkho(log)
+                                if (!log.diaryLockPin.isNullOrEmpty()) {
+                                    pendingUnlockRequest = SecretEntryUnlockRequest(
+                                        log = log,
+                                        action = SecretEntryUnlockAction.SHARE
+                                    )
+                                } else {
+                                    onShareLikkho(log)
+                                }
                             },
                             onExport = {
                                 openMenuLogId = null
@@ -432,6 +440,7 @@ fun SecretWritingScreen(
                 pendingUnlockRequest = null
                 when (req.action) {
                     SecretEntryUnlockAction.OPEN -> onOpenEntry(req.log)
+                    SecretEntryUnlockAction.SHARE -> onShareLikkho(req.log)
                     SecretEntryUnlockAction.EXPORT -> exportingLog = req.log
                     SecretEntryUnlockAction.DELETE -> pendingDeleteLog = req.log
                 }

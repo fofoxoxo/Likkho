@@ -1302,6 +1302,15 @@ private fun BackedUpDiaryReaderDialog(
 
     var playingAudioId by remember(diary.id) { mutableStateOf<String?>(null) }
     var activePlayer by remember(diary.id) { mutableStateOf<MediaPlayer?>(null) }
+    var activeTempAudioFile by remember(diary.id) { mutableStateOf<File?>(null) }
+
+    fun cleanupTempAudioFile() {
+        val tempFile = activeTempAudioFile
+        activeTempAudioFile = null
+        if (tempFile != null && tempFile.name.startsWith("tmp_play_")) {
+            runCatching { tempFile.delete() }
+        }
+    }
 
     fun stopPlayback() {
         runCatching {
@@ -1312,6 +1321,7 @@ private fun BackedUpDiaryReaderDialog(
         }
         activePlayer = null
         playingAudioId = null
+        cleanupTempAudioFile()
     }
 
     DisposableEffect(diary.id) {
@@ -1327,6 +1337,9 @@ private fun BackedUpDiaryReaderDialog(
         }
         stopPlayback()
         val audioFile = resolvePlayableAudioFile(context, repository, mediaEngine, attachment) ?: return
+        if (audioFile.name.startsWith("tmp_play_")) {
+            activeTempAudioFile = audioFile
+        }
         runCatching {
             val mp = MediaPlayer().apply {
                 setDataSource(audioFile.absolutePath)
@@ -1334,12 +1347,15 @@ private fun BackedUpDiaryReaderDialog(
                     playingAudioId = null
                     runCatching { it.release() }
                     if (activePlayer === it) activePlayer = null
+                    cleanupTempAudioFile()
                 }
                 prepare()
                 start()
             }
             activePlayer = mp
             playingAudioId = attachment.id
+        }.onFailure {
+            cleanupTempAudioFile()
         }
     }
 

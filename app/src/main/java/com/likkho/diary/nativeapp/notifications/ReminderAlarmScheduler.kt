@@ -9,6 +9,7 @@ import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.media.AudioAttributes
 import android.media.RingtoneManager
 import android.os.Build
 import android.os.Handler
@@ -60,6 +61,11 @@ object ReminderAlarmScheduler {
 
     fun requestCodeForSnooze(reminderId: String): Int {
         return requestCodeForReminder(reminderId) + 500_000
+    }
+
+    fun requestCodeForDiaryReminder(logId: String): Int {
+        val positiveHash = abs(logId.hashCode().toLong())
+        return (positiveHash % 400_000L).toInt() + 1_500_000
     }
 
     fun canScheduleExactAlarms(context: Context): Boolean {
@@ -201,7 +207,7 @@ object ReminderAlarmScheduler {
         body: String,
         triggerAtMs: Long
     ) {
-        val reqCode = abs(logId.hashCode())
+        val reqCode = requestCodeForDiaryReminder(logId)
         scheduleExactBroadcast(
             context = context.applicationContext,
             requestCode = reqCode,
@@ -216,7 +222,7 @@ object ReminderAlarmScheduler {
     }
 
     fun cancelDiaryReminder(context: Context, logId: String) {
-        val reqCode = abs(logId.hashCode())
+        val reqCode = requestCodeForDiaryReminder(logId)
         cancelBroadcast(context.applicationContext, reqCode)
     }
 
@@ -499,13 +505,17 @@ object ReminderAlarmScheduler {
         val soundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val audioAttrs = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build()
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 "Likkho Reminders",
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
                 enableVibration(true)
-                setSound(soundUri, null)
+                setSound(soundUri, audioAttrs)
             }
             nm.createNotificationChannel(channel)
         }
@@ -595,7 +605,7 @@ object ReminderAlarmScheduler {
             }
         }
 
-        nm.notify(notifId, builder.build())
+        runCatching { nm.notify(notifId, builder.build()) }
     }
 
     private fun notifyMainActivityRemindersChanged() {

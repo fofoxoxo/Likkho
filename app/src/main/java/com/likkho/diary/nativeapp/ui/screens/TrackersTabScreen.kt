@@ -1919,7 +1919,7 @@ private fun TrackerEditorDialog(
                 name = it
                 errorMsg = null
             },
-            modifier = Modifier.focusRequester(focusRequester)
+            focusRequester = focusRequester
         )
 
         // Unit & Default Qty
@@ -2248,7 +2248,8 @@ private fun TrackerLabeledField(
     onValueChange: (String) -> Unit,
     modifier: Modifier = Modifier,
     singleLine: Boolean = true,
-    keyboardType: KeyboardType = KeyboardType.Text
+    keyboardType: KeyboardType = KeyboardType.Text,
+    focusRequester: FocusRequester? = null
 ) {
     val colors = LikkhoTheme.colors
     Column(
@@ -2282,6 +2283,13 @@ private fun TrackerLabeledField(
                     overflow = TextOverflow.Ellipsis
                 )
             }
+            val fieldModifier = if (focusRequester != null) {
+                Modifier
+                    .fillMaxWidth()
+                    .focusRequester(focusRequester)
+            } else {
+                Modifier.fillMaxWidth()
+            }
             BasicTextField(
                 value = value,
                 onValueChange = onValueChange,
@@ -2293,7 +2301,7 @@ private fun TrackerLabeledField(
                     color = colors.text
                 ),
                 cursorBrush = SolidColor(colors.accent),
-                modifier = Modifier.fillMaxWidth()
+                modifier = fieldModifier
             )
         }
     }

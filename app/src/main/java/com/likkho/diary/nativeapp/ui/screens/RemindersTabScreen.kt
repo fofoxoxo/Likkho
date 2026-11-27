@@ -1100,7 +1100,7 @@ private fun ReminderEditorDialog(
             },
             cal.get(Calendar.HOUR_OF_DAY),
             cal.get(Calendar.MINUTE),
-            false
+            android.text.format.DateFormat.is24HourFormat(context)
         ).show()
     }
 
@@ -1512,7 +1512,7 @@ private fun SnoozeReminderDialog(
                     },
                     base.get(Calendar.HOUR_OF_DAY),
                     base.get(Calendar.MINUTE),
-                    false
+                    android.text.format.DateFormat.is24HourFormat(context)
                 ).show()
             },
             base.get(Calendar.YEAR),

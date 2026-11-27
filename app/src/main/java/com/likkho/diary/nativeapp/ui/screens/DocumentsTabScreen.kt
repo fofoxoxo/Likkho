@@ -123,8 +123,10 @@ import com.likkho.diary.nativeapp.ui.components.LikkhoHairlineBorder
 import com.likkho.diary.nativeapp.ui.components.LikkhoHairlineDialog
 import com.likkho.diary.nativeapp.ui.theme.LikkhoFontFamilies
 import com.likkho.diary.nativeapp.ui.theme.LikkhoTheme
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -134,6 +136,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 
 private sealed class DocumentFilter {
     data object All : DocumentFilter()
@@ -181,8 +184,8 @@ fun DocumentsTabScreen(
     var pendingDeleteDoc by remember { mutableStateOf<PersonalDocument?>(null) }
     var feedbackBanner by remember { mutableStateOf<String?>(null) }
 
-    DisposableEffect(Unit) {
-        onDispose {
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) {
             cleanupSharedDocsCache(context)
         }
     }
@@ -1934,7 +1937,8 @@ private fun NativePdfRendererViewer(
     onOpenExternal: () -> Unit
 ) {
     val colors = LikkhoTheme.colors
-    val pdfMutex = remember { Mutex() }
+    val pdfMutex = remember(file.absolutePath) { Mutex() }
+    val isDisposed = remember(file.absolutePath) { AtomicBoolean(false) }
     var pfd by remember(file.absolutePath) { mutableStateOf<ParcelFileDescriptor?>(null) }
     var renderer by remember(file.absolutePath) { mutableStateOf<PdfRenderer?>(null) }
     var pdfInfo by remember(file.absolutePath) { mutableStateOf<PdfPageInfo?>(null) }
@@ -1970,9 +1974,18 @@ private fun NativePdfRendererViewer(
             }
         }
         openRes.onSuccess { (fd, pdf, info) ->
-            pfd = fd
-            renderer = pdf
-            pdfInfo = info
+            if (isDisposed.get() || !isActive) {
+                CoroutineScope(Dispatchers.IO).launch {
+                    pdfMutex.withLock {
+                        runCatching { pdf.close() }
+                        runCatching { fd.close() }
+                    }
+                }
+            } else {
+                pfd = fd
+                renderer = pdf
+                pdfInfo = info
+            }
         }.onFailure { err ->
             errorMsg = err.message ?: "Unable to render PDF."
         }
@@ -1980,11 +1993,20 @@ private fun NativePdfRendererViewer(
 
     DisposableEffect(file.absolutePath) {
         onDispose {
-            runCatching { renderer?.close() }
-            runCatching { pfd?.close() }
+            isDisposed.set(true)
+            val r = renderer
+            val fd = pfd
             renderer = null
             pfd = null
             pageCache.clear()
+            if (r != null || fd != null) {
+                CoroutineScope(Dispatchers.IO).launch {
+                    pdfMutex.withLock {
+                        runCatching { r?.close() }
+                        runCatching { fd?.close() }
+                    }
+                }
+            }
         }
     }
 
@@ -2093,6 +2115,7 @@ private fun NativePdfRendererViewer(
                                     if (pageCache[pageIdx] == null) {
                                         val bmp = withContext(Dispatchers.IO) {
                                             pdfMutex.withLock {
+                                                if (isDisposed.get() || !isActive) return@withLock null
                                                 runCatching {
                                                     activeRenderer.openPage(pageIdx).use { page ->
                                                         val targetW = 1440
@@ -2219,12 +2242,18 @@ private fun NativePdfRendererViewer(
 }
 
 private const val SHARED_DOCS_CACHE_DIR = "shared_docs"
+private const val SHARED_DOCS_MAX_AGE_MS = 30L * 60L * 1000L
 
 private fun cleanupSharedDocsCache(context: Context) {
     runCatching {
         val dir = File(context.cacheDir, SHARED_DOCS_CACHE_DIR)
         if (dir.exists() && dir.isDirectory) {
-            dir.listFiles()?.forEach { it.delete() }
+            val cutoff = System.currentTimeMillis() - SHARED_DOCS_MAX_AGE_MS
+            dir.listFiles()?.forEach { file ->
+                if (file.lastModified() < cutoff) {
+                    file.delete()
+                }
+            }
         }
     }
 }

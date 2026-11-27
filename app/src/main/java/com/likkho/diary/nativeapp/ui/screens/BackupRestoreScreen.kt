@@ -1,6 +1,8 @@
 package com.likkho.diary.nativeapp.ui.screens
 
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -128,12 +130,14 @@ fun BackupRestoreScreen(
         mutableStateOf(repository.loadBackupMetadata(vaultMode))
     }
 
-    var newKey by remember { mutableStateOf("") }
-    var confirmKey by remember { mutableStateOf("") }
-    var showKeyText by remember { mutableStateOf(false) }
+    val mainHandler = remember { Handler(Looper.getMainLooper()) }
 
-    var backupPassphrase by remember { mutableStateOf("") }
-    var restorePassphrase by remember { mutableStateOf("") }
+    var newKey by remember(vaultMode) { mutableStateOf("") }
+    var confirmKey by remember(vaultMode) { mutableStateOf("") }
+    var showKeyText by remember(vaultMode) { mutableStateOf(false) }
+
+    var backupPassphrase by remember(vaultMode) { mutableStateOf("") }
+    var restorePassphrase by remember(vaultMode) { mutableStateOf("") }
 
     var statusBanner by remember { mutableStateOf<BackupStatusBanner?>(null) }
     var isBackingUp by remember { mutableStateOf(false) }
@@ -298,9 +302,11 @@ fun BackupRestoreScreen(
                         vaultMode = vaultMode,
                         treeUri = uri
                     ) { currentItem, totalItems, bytesWritten ->
-                        progressCurrent = currentItem
-                        progressTotal = totalItems
-                        progressBytes = bytesWritten
+                        mainHandler.post {
+                            progressCurrent = currentItem
+                            progressTotal = totalItems
+                            progressBytes = bytesWritten
+                        }
                     }
                 }
 
@@ -389,6 +395,8 @@ fun BackupRestoreScreen(
                     repository.saveDocuments(vaultMode, restoredBundle.documents)
                 }
 
+                savedKeyHash = withContext(Dispatchers.IO) { repository.getEncryptionKeyHintHash(vaultMode) }
+                backupMeta = withContext(Dispatchers.IO) { repository.loadBackupMetadata(vaultMode) }
                 onBundleRestored(restoredBundle)
                 restorePassphrase = ""
                 val restoredCount = if (vaultMode == VaultMode.PRIMARY) {

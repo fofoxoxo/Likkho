@@ -121,7 +121,7 @@ private data class GithubUpdateCheckResult(
     val error: String? = null
 )
 
-private const val APP_CURRENT_VERSION = "3.0.0"
+private const val APP_CURRENT_VERSION = "3.0.1"
 private const val DEFAULT_GITHUB_REPO = "fofoxoxo/Likkho"
 private const val AUTHOR_NAME = "Sayan Saha"
 private const val AUTHOR_EMAIL = "sayan996969saha@gmail.com"
@@ -862,9 +862,9 @@ private fun PasscodeSetupDialog(
         scope.launch {
             val conflict = withContext(Dispatchers.IO) {
                 if (isDecoyTarget) {
-                    repository.verifyPrimaryPasscode(clean)
+                    repository.doesPrimaryConflictWithCandidate(clean)
                 } else {
-                    repository.verifyDecoyPasscode(clean)
+                    repository.doesDecoyConflictWithCandidate(clean)
                 }
             }
             if (conflict) {
